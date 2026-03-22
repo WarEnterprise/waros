@@ -29,8 +29,7 @@ pub extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFram
 /// Divide-by-zero exception handler.
 pub extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame) {
     print_stack("DIVIDE ERROR", stack_frame);
-    crate::display::console::try_write_fmt(format_args!("\n[KERNEL PANIC] DIVIDE ERROR\n"));
-    crate::arch::x86_64::hlt_loop();
+    panic!("Divide error exception");
 }
 
 /// General protection fault handler.
@@ -40,10 +39,7 @@ pub extern "x86-interrupt" fn general_protection_fault_handler(
 ) {
     serial_println!("[EXCEPTION] GENERAL PROTECTION FAULT ({error_code:#x})");
     serial_println!("{:#?}", stack_frame);
-    crate::display::console::try_write_fmt(format_args!(
-        "\n[KERNEL PANIC] GENERAL PROTECTION FAULT ({error_code:#x})\n"
-    ));
-    crate::arch::x86_64::hlt_loop();
+    panic!("General protection fault ({error_code:#x})");
 }
 
 /// Double fault handler.
@@ -53,8 +49,7 @@ pub extern "x86-interrupt" fn double_fault_handler(
 ) -> ! {
     serial_println!("[EXCEPTION] DOUBLE FAULT ({error_code:#x})");
     serial_println!("{:#?}", stack_frame);
-    crate::display::console::try_write_fmt(format_args!("\n[KERNEL PANIC] DOUBLE FAULT\n"));
-    crate::arch::x86_64::hlt_loop();
+    panic!("Double fault ({error_code:#x})");
 }
 
 /// Page fault handler.
@@ -67,8 +62,11 @@ pub extern "x86-interrupt" fn page_fault_handler(
     serial_println!("  accessed address: {:?}", accessed_address);
     serial_println!("  error code: {:?}", error_code);
     serial_println!("{:#?}", stack_frame);
-    crate::display::console::try_write_fmt(format_args!("\n[KERNEL PANIC] PAGE FAULT\n"));
-    crate::arch::x86_64::hlt_loop();
+    panic!(
+        "Page fault while accessing {:?} with error {:?}",
+        accessed_address,
+        error_code
+    );
 }
 
 /// Timer interrupt handler (IRQ0 -> vector 32).

@@ -26,10 +26,8 @@ impl Framebuffer {
 
     /// Fill the whole framebuffer with a single ARGB color.
     pub fn clear(&mut self, color: u32) {
-        for y in 0..self.info.height {
-            for x in 0..self.info.width {
-                self.write_pixel(x, y, color);
-            }
+        for offset in (0..self.buffer.len()).step_by(self.info.bytes_per_pixel) {
+            self.write_color_at_offset(offset, color);
         }
     }
 
@@ -44,12 +42,8 @@ impl Framebuffer {
 
         self.buffer.copy_within(byte_rows.., 0);
         let buffer_len = self.buffer.len();
-        self.buffer[buffer_len - byte_rows..].fill(0);
-
-        for y in self.info.height.saturating_sub(pixel_rows)..self.info.height {
-            for x in 0..self.info.width {
-                self.write_pixel(x, y, color);
-            }
+        for offset in ((buffer_len - byte_rows)..buffer_len).step_by(self.info.bytes_per_pixel) {
+            self.write_color_at_offset(offset, color);
         }
     }
 
@@ -61,18 +55,34 @@ impl Framebuffer {
 
         let pixel_index = y * self.info.stride + x;
         let byte_index = pixel_index * self.info.bytes_per_pixel;
+        self.write_color_at_offset(byte_index, color);
+    }
+
+    fn write_color_at_offset(&mut self, byte_index: usize, color: u32) {
+        if byte_index + self.info.bytes_per_pixel > self.buffer.len() {
+            return;
+        }
+
         let [_, red, green, blue] = color.to_be_bytes();
 
         match self.info.pixel_format {
             PixelFormat::Rgb => {
                 self.buffer[byte_index] = red;
-                self.buffer[byte_index + 1] = green;
-                self.buffer[byte_index + 2] = blue;
+                if self.info.bytes_per_pixel > 1 {
+                    self.buffer[byte_index + 1] = green;
+                }
+                if self.info.bytes_per_pixel > 2 {
+                    self.buffer[byte_index + 2] = blue;
+                }
             }
             PixelFormat::Bgr => {
                 self.buffer[byte_index] = blue;
-                self.buffer[byte_index + 1] = green;
-                self.buffer[byte_index + 2] = red;
+                if self.info.bytes_per_pixel > 1 {
+                    self.buffer[byte_index + 1] = green;
+                }
+                if self.info.bytes_per_pixel > 2 {
+                    self.buffer[byte_index + 2] = red;
+                }
             }
             PixelFormat::U8 => {
                 let luminance = ((u16::from(red) + u16::from(green) + u16::from(blue)) / 3) as u8;
@@ -93,8 +103,12 @@ impl Framebuffer {
             }
             _ => {
                 self.buffer[byte_index] = red;
-                self.buffer[byte_index + 1] = green;
-                self.buffer[byte_index + 2] = blue;
+                if self.info.bytes_per_pixel > 1 {
+                    self.buffer[byte_index + 1] = green;
+                }
+                if self.info.bytes_per_pixel > 2 {
+                    self.buffer[byte_index + 2] = blue;
+                }
             }
         }
 

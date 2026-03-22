@@ -7,12 +7,20 @@ use x86_64::instructions::interrupts;
 use crate::display::font;
 use crate::display::framebuffer::Framebuffer;
 
-pub const BACKGROUND_COLOR: u32 = 0x001a1a2e;
-pub const FOREGROUND_COLOR: u32 = 0x0000ff41;
-pub const ACCENT_COLOR: u32 = 0x00e94560;
-pub const OK_COLOR: u32 = 0x0016c60c;
-pub const ERROR_COLOR: u32 = 0x00ff0000;
-pub const INFO_COLOR: u32 = 0x000f3460;
+/// Shared framebuffer palette for WarOS text UI.
+pub struct Colors;
+
+impl Colors {
+    pub const BG: u32 = 0x0D1117;
+    pub const FG: u32 = 0xE6EDF3;
+    pub const GREEN: u32 = 0x3FB950;
+    pub const RED: u32 = 0xFF7B72;
+    pub const BLUE: u32 = 0x79C0FF;
+    pub const YELLOW: u32 = 0xD29922;
+    pub const PURPLE: u32 = 0xD2A8FF;
+    pub const DIM: u32 = 0x8B949E;
+    pub const CYAN: u32 = 0x56D4DD;
+}
 
 pub static CONSOLE: Mutex<Option<FramebufferConsole>> = Mutex::new(None);
 
@@ -39,8 +47,8 @@ impl FramebufferConsole {
             framebuffer,
             cursor_col: 0,
             cursor_row: 0,
-            fg_color: FOREGROUND_COLOR,
-            bg_color: BACKGROUND_COLOR,
+            fg_color: Colors::FG,
+            bg_color: Colors::BG,
         }
     }
 
@@ -51,15 +59,14 @@ impl FramebufferConsole {
         *CONSOLE.lock() = Some(console);
     }
 
-    /// Set the active text colors.
-    pub fn set_colors(&mut self, fg_color: u32, bg_color: u32) {
+    /// Set the active text foreground color.
+    pub fn set_color(&mut self, fg_color: u32) {
         self.fg_color = fg_color;
-        self.bg_color = bg_color;
     }
 
-    /// Restore the default WarOS terminal palette.
-    pub fn reset_colors(&mut self) {
-        self.set_colors(FOREGROUND_COLOR, BACKGROUND_COLOR);
+    /// Restore the default foreground color.
+    pub fn reset_color(&mut self) {
+        self.set_color(Colors::FG);
     }
 
     /// Clear the full screen and reset the cursor to the origin.
@@ -158,15 +165,6 @@ pub fn with_console<R>(function: impl FnOnce(&mut FramebufferConsole) -> R) -> O
     guard.as_mut().map(function)
 }
 
-/// Attempt to print without blocking if the console is currently locked.
-pub fn try_write_fmt(args: fmt::Arguments<'_>) {
-    if let Some(mut guard) = CONSOLE.try_lock() {
-        if let Some(console) = guard.as_mut() {
-            let _ = console.write_fmt(args);
-        }
-    }
-}
-
 /// Clear the screen using the active background color.
 pub fn clear_screen() {
     let _ = with_console(FramebufferConsole::clear_screen);
@@ -177,22 +175,25 @@ pub fn backspace() {
     let _ = with_console(FramebufferConsole::backspace);
 }
 
-/// Set the active text colors for subsequent output.
-pub fn set_colors(fg_color: u32, bg_color: u32) {
-    let _ = with_console(|console| console.set_colors(fg_color, bg_color));
-}
-
-/// Restore the default text colors.
-pub fn reset_colors() {
-    let _ = with_console(FramebufferConsole::reset_colors);
-}
-
 /// Print formatted text to the framebuffer console.
 pub fn _print(args: fmt::Arguments<'_>) {
     interrupts::without_interrupts(|| {
         let mut guard = CONSOLE.lock();
         if let Some(console) = guard.as_mut() {
             let _ = console.write_fmt(args);
+        }
+    });
+}
+
+/// Print formatted text using a temporary foreground color.
+pub fn _print_colored(color: u32, args: fmt::Arguments<'_>) {
+    interrupts::without_interrupts(|| {
+        let mut guard = CONSOLE.lock();
+        if let Some(console) = guard.as_mut() {
+            let previous = console.fg_color;
+            console.set_color(color);
+            let _ = console.write_fmt(args);
+            console.set_color(previous);
         }
     });
 }
@@ -217,18 +218,61 @@ fn blend(background: u32, foreground: u32, alpha: u8) -> u32 {
 }
 
 #[macro_export]
-macro_rules! print {
+macro_rules! kprint {
     ($($arg:tt)*) => {
         $crate::display::console::_print(format_args!($($arg)*))
     };
 }
 
 #[macro_export]
-macro_rules! println {
+macro_rules! kprintln {
     () => {
-        $crate::print!("\n")
+        $crate::kprint!("\n")
     };
     ($($arg:tt)*) => {
         $crate::display::console::_print(format_args!("{}\n", format_args!($($arg)*)))
+    };
+}
+
+#[macro_export]
+macro_rules! kprint_colored {
+    ($color:expr, $($arg:tt)*) => {
+        $crate::display::console::_print_colored($color, format_args!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! log_print {
+    ($($arg:tt)*) => {{
+        $crate::kprint!($($arg)*);
+        $crate::serial_print!($($arg)*);
+    }};
+}
+
+#[macro_export]
+macro_rules! log_println {
+    () => {
+        $crate::log_print!("\n")
+    };
+    ($($arg:tt)*) => {{
+        $crate::kprintln!($($arg)*);
+        $crate::serial_println!($($arg)*);
+    }};
+}
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => {
+        $crate::kprint!($($arg)*)
+    };
+}
+
+#[macro_export]
+macro_rules! println {
+    () => {
+        $crate::kprintln!()
+    };
+    ($($arg:tt)*) => {
+        $crate::kprintln!($($arg)*)
     };
 }
