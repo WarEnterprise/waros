@@ -228,7 +228,7 @@ impl Simulator {
         Ok(QuantumResult::new(output_qubits, shots, counts))
     }
 
-    fn make_rng(&self) -> rand::rngs::StdRng {
+    pub(crate) fn make_rng(&self) -> rand::rngs::StdRng {
         use rand::SeedableRng;
 
         match self.seed {

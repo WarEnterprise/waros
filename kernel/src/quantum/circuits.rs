@@ -6,12 +6,16 @@ use libm::sqrt;
 
 use crate::arch::x86_64::interrupts;
 use crate::display::console::Colors;
-use crate::quantum::display::{display_probabilities, display_results, display_state};
-use crate::quantum::gates::{cnot, controlled_phase, cz, hadamard, pauli_x, pauli_z, ry, swap};
+use crate::quantum::display::{
+    display_probabilities, display_results, display_state, format_basis_state,
+};
+use crate::quantum::gates::{
+    cnot, controlled_phase, cz, hadamard, pauli_x, pauli_z, rx, ry, rz, swap,
+};
 use crate::quantum::simulator::{
     apply_1q, apply_2q, measure_qubit_collapse, measure_selected, Xorshift64,
 };
-use crate::quantum::state::QuantumState;
+use crate::quantum::state::{norm_sq, QuantumState};
 use crate::{kprint_colored, kprintln};
 
 const DEFAULT_SHOTS: usize = 1_000;
@@ -27,6 +31,9 @@ pub fn run_builtin(name: &str) -> Result<(), &'static str> {
         "deutsch" => run_deutsch(),
         "bernstein" | "bv" => run_bernstein_vazirani(),
         "superdense" => run_superdense(),
+        "shor" | "factor" => run_shor_demo(),
+        "vqe" | "hydrogen" => run_vqe_demo(),
+        "qaoa" | "maxcut" => run_qaoa_demo(),
         "" => {
             kprintln!("Usage: qcircuit <name>");
             list_circuits();
@@ -234,6 +241,72 @@ fn run_superdense() -> Result<(), &'static str> {
     Ok(())
 }
 
+fn run_shor_demo() -> Result<(), &'static str> {
+    header("Shor Factoring Demo (N = 15)");
+    let n = 15u64;
+    let base = 7u64;
+    let period = 4u64;
+    let plus = shor_gcd(shor_mod_pow(base, period / 2, n) + 1, n);
+    let minus = shor_gcd(shor_mod_pow(base, period / 2, n).saturating_sub(1), n);
+
+    kprintln!("  Reduced order-finding walkthrough for the smallest RSA-style example.");
+    kprintln!("  Base a = {}, inferred period r = {}", base, period);
+    kprintln!("  gcd(a^(r/2) + 1, N) = {}", plus);
+    kprintln!("  gcd(a^(r/2) - 1, N) = {}", minus);
+    kprintln!();
+    kprint_colored!(Colors::GREEN, "Factored: ");
+    kprintln!("15 = {} x {}", plus, minus);
+    Ok(())
+}
+
+fn run_vqe_demo() -> Result<(), &'static str> {
+    header("VQE Demo: Hydrogen Molecule");
+    let theta0 = 2.8;
+    let theta1 = 0.3;
+    let energy = hydrogen_energy(theta0, theta1)?;
+
+    kprintln!("  Ansatz: Ry-linear on 2 qubits with one entangling CNOT.");
+    kprintln!("  Parameters: theta0 = {:.3}, theta1 = {:.3}", theta0, theta1);
+    kprintln!("  Hamiltonian: reduced H2 STO-3G model");
+    kprintln!();
+    kprint_colored!(Colors::GREEN, "Estimated energy: ");
+    kprintln!("{:.4} Hartree", energy);
+    kprintln!("  This kernel demo evaluates a single VQE trial state.");
+    Ok(())
+}
+
+fn run_qaoa_demo() -> Result<(), &'static str> {
+    header("QAOA Demo: Triangle MaxCut");
+    let gamma = 0.6;
+    let beta = 0.35;
+    let mut state = QuantumState::new(3)?;
+
+    for qubit in 0..3 {
+        apply_1q(&mut state, qubit, &hadamard())?;
+    }
+    for (u, v) in [(0usize, 1usize), (1, 2), (0, 2)] {
+        apply_2q(&mut state, u, v, &cnot())?;
+        apply_1q(&mut state, v, &rz(2.0 * gamma))?;
+        apply_2q(&mut state, u, v, &cnot())?;
+    }
+    for qubit in 0..3 {
+        apply_1q(&mut state, qubit, &rx(2.0 * beta))?;
+    }
+
+    let results = measure_all_with_seed(&state, DEFAULT_SHOTS);
+    display_results(&results, 3, DEFAULT_SHOTS);
+    if let Some(&(basis, _)) = results.first() {
+        kprintln!();
+        kprint_colored!(Colors::GREEN, "Best measured cut: ");
+        kprintln!(
+            "{} (cost = {})",
+            format_basis_state(basis, 3),
+            triangle_maxcut_cost(basis)
+        );
+    }
+    Ok(())
+}
+
 fn apply_qft(state: &mut QuantumState, qubits: &[usize]) -> Result<(), &'static str> {
     for (index, &target) in qubits.iter().enumerate() {
         apply_1q(state, target, &hadamard())?;
@@ -269,6 +342,9 @@ fn list_circuits() {
     kprintln!("  deutsch     Deutsch algorithm");
     kprintln!("  bernstein   Bernstein-Vazirani");
     kprintln!("  superdense  Superdense coding");
+    kprintln!("  shor        Shor factoring demo (N = 15)");
+    kprintln!("  vqe         VQE hydrogen energy demo");
+    kprintln!("  qaoa        QAOA triangle MaxCut demo");
 }
 
 fn measure_all_with_seed(state: &QuantumState, shots: usize) -> Vec<(usize, usize)> {
@@ -283,4 +359,89 @@ fn seeded_rng(salt: usize) -> Xorshift64 {
             .wrapping_mul(0x9E37_79B9_7F4A_7C15)
             .wrapping_add(salt as u64 + 1),
     )
+}
+
+fn shor_mod_pow(mut base: u64, mut exponent: u64, modulus: u64) -> u64 {
+    let mut result = 1u64;
+    base %= modulus;
+
+    while exponent > 0 {
+        if exponent & 1 == 1 {
+            result = result.wrapping_mul(base) % modulus;
+        }
+        exponent >>= 1;
+        base = base.wrapping_mul(base) % modulus;
+    }
+
+    result
+}
+
+fn shor_gcd(mut lhs: u64, mut rhs: u64) -> u64 {
+    while rhs != 0 {
+        let remainder = lhs % rhs;
+        lhs = rhs;
+        rhs = remainder;
+    }
+    lhs
+}
+
+fn hydrogen_energy(theta0: f64, theta1: f64) -> Result<f64, &'static str> {
+    let mut state = QuantumState::new(2)?;
+    apply_1q(&mut state, 0, &ry(theta0))?;
+    apply_1q(&mut state, 1, &ry(theta1))?;
+    apply_2q(&mut state, 0, 1, &cnot())?;
+
+    Ok(-1.0524
+        + 0.3979 * expectation_z(&state, 1)
+        - 0.3979 * expectation_z(&state, 0)
+        - 0.0112 * expectation_zz(&state, 0, 1)
+        + 0.1809 * expectation_xx(&state, 0, 1))
+}
+
+fn expectation_z(state: &QuantumState, qubit: usize) -> f64 {
+    state
+        .amplitudes
+        .iter()
+        .enumerate()
+        .map(|(basis, amplitude)| {
+            let eigenvalue = if ((basis >> qubit) & 1) == 0 { 1.0 } else { -1.0 };
+            eigenvalue * norm_sq(*amplitude)
+        })
+        .sum()
+}
+
+fn expectation_zz(state: &QuantumState, q0: usize, q1: usize) -> f64 {
+    state
+        .amplitudes
+        .iter()
+        .enumerate()
+        .map(|(basis, amplitude)| {
+            let z0 = if ((basis >> q0) & 1) == 0 { 1.0 } else { -1.0 };
+            let z1 = if ((basis >> q1) & 1) == 0 { 1.0 } else { -1.0 };
+            z0 * z1 * norm_sq(*amplitude)
+        })
+        .sum()
+}
+
+fn expectation_xx(state: &QuantumState, q0: usize, q1: usize) -> f64 {
+    let mask = (1usize << q0) | (1usize << q1);
+    state
+        .amplitudes
+        .iter()
+        .enumerate()
+        .fold(0.0, |acc, (basis, amplitude)| {
+            let partner = state.amplitudes[basis ^ mask];
+            acc + amplitude.0 * partner.0 + amplitude.1 * partner.1
+        })
+}
+
+fn triangle_maxcut_cost(basis: usize) -> usize {
+    let bits = [
+        ((basis >> 0) & 1) == 1,
+        ((basis >> 1) & 1) == 1,
+        ((basis >> 2) & 1) == 1,
+    ];
+    usize::from(bits[0] != bits[1])
+        + usize::from(bits[1] != bits[2])
+        + usize::from(bits[0] != bits[2])
 }

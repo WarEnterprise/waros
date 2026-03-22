@@ -116,6 +116,9 @@ pub fn show_help() {
     kprintln!("  deutsch             Deutsch algorithm");
     kprintln!("  bernstein           Bernstein-Vazirani (3-bit secret)");
     kprintln!("  superdense          Superdense coding");
+    kprintln!("  shor                Shor factoring demo (N = 15)");
+    kprintln!("  vqe                 VQE hydrogen energy demo");
+    kprintln!("  qaoa                QAOA triangle MaxCut demo");
 }
 
 /// Snapshot the current in-kernel register allocation.
@@ -291,7 +294,7 @@ fn show_status() {
     kprintln!("  Max qubits:  15 (kernel heap limited)");
     kprintln!("  Gates:       H, X, Y, Z, S, T, Rx, Ry, Rz, CNOT, CZ, SWAP, CCX");
     kprintln!("  PRNG:        Xorshift64 (PIT-seeded)");
-    kprintln!("  Demos:       bell, ghz3, grover, teleport, qft4, deutsch, bernstein, superdense");
+    kprintln!("  Demos:       bell, ghz3, grover, teleport, qft4, deutsch, bernstein, superdense, shor, vqe, qaoa");
 
     let guard = QUANTUM_STATE.lock();
     if let Some(state) = guard.as_ref() {

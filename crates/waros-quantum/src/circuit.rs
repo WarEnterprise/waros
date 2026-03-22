@@ -159,6 +159,40 @@ impl Circuit {
         Ok(self)
     }
 
+    /// Apply a custom 1- or 2-qubit gate.
+    ///
+    /// This expert-oriented entry point is used by higher-level algorithms that
+    /// need to synthesize controlled or derived unitaries from the validated gate
+    /// library.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the gate width does not match `targets`, if the gate
+    /// width is unsupported by the simulator, or if any target is invalid.
+    pub fn custom_gate(&mut self, gate: Gate, targets: &[usize]) -> WarosResult<&mut Self> {
+        if gate.num_qubits != targets.len() {
+            return Err(WarosError::SimulationError(format!(
+                "gate '{}' expects {} targets, got {}",
+                gate.name,
+                gate.num_qubits,
+                targets.len()
+            )));
+        }
+        if !(1..=2).contains(&gate.num_qubits) {
+            return Err(WarosError::SimulationError(format!(
+                "gate '{}' uses unsupported width {}",
+                gate.name, gate.num_qubits
+            )));
+        }
+
+        self.validate_distinct_qubits(targets)?;
+        self.instructions.push(Instruction::GateOp {
+            gate,
+            targets: targets.to_vec(),
+        });
+        Ok(self)
+    }
+
     /// Apply a Hadamard gate.
     ///
     /// # Errors

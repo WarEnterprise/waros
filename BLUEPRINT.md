@@ -2454,6 +2454,8 @@ Phase 4: Pure WarOS environment
 [x] ASCII circuit rendering for gates, measurements, and barriers
 [x] Monte Carlo noise model with IBM-like / IonQ-like hardware profiles
 [x] OpenQASM 2.0 parser / serializer and executable QASM fixture set
+[x] Advanced algorithm module with QPE, Shor, VQE, QAOA, Simon, and random-walk demos
+[x] 26 algorithm regression tests for factoring, chemistry, optimization, and hidden-period workflows
 ```
 
 ### `waros-cli` Tooling Status (March 2026)
@@ -2485,6 +2487,7 @@ Phase 4: Pure WarOS environment
 [x] PS/2 keyboard input buffering and minimal interactive WarShell
 [x] Kernel-local `no_std` quantum simulator with shell commands (`qalloc`, `qrun`, `qstate`, `qmeasure`, `qcircuit`, `qinfo`)
 [x] Built-in Bell, GHZ, Grover, teleportation, QFT, Deutsch, Bernstein-Vazirani, and superdense coding demos
+[x] Additional kernel demos for Shor factoring, VQE hydrogen energy, and QAOA MaxCut
 [x] BIOS/QEMU smoke-test on a host with `qemu-system-x86_64` installed
 [ ] UEFI/OVMF smoke-test on a host with firmware available
 ```
@@ -2498,6 +2501,7 @@ Phase 4: Pure WarOS environment
 [ ] QEC: Repetition code and Steane code
 [ ] WarQIR: Circuit representation and compilation pipeline
 [x] Basic Python SDK
+[x] Python algorithm bindings for QPE, Shor, VQE, QAOA, Simon, and random walks
 [ ] Qiskit/Cirq compatibility layer
 ```
 

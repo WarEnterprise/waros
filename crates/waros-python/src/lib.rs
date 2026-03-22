@@ -4,6 +4,7 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
+mod algorithms;
 mod circuit;
 mod crypto;
 mod noise;
@@ -32,6 +33,10 @@ fn waros(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let crypto_module = PyModule::new_bound(m.py(), "crypto")?;
     crypto::register(&crypto_module)?;
     m.add_submodule(&crypto_module)?;
+
+    let algorithms_module = PyModule::new_bound(m.py(), "algorithms")?;
+    algorithms::register(&algorithms_module)?;
+    m.add_submodule(&algorithms_module)?;
 
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
