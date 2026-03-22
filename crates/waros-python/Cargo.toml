@@ -1,0 +1,20 @@
+[package]
+name = "waros-python"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Python bindings for WarOS Quantum Simulator & Crypto"
+
+[lib]
+name = "waros"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["abi3-py39", "extension-module"] }
+waros-crypto = { path = "../waros-crypto" }
+waros-quantum = { path = "../waros-quantum" }
+
+[build-dependencies]
+pyo3-build-config = "0.22"

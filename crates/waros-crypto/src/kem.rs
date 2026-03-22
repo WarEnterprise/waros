@@ -59,6 +59,27 @@ pub struct Ciphertext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SharedSecret([u8; 32]);
 
+impl SecurityLevel {
+    fn marker(self) -> u8 {
+        match self {
+            Self::Level1 => 1,
+            Self::Level3 => 3,
+            Self::Level5 => 5,
+        }
+    }
+
+    fn from_marker(marker: u8) -> CryptoResult<Self> {
+        match marker {
+            1 => Ok(Self::Level1),
+            3 => Ok(Self::Level3),
+            5 => Ok(Self::Level5),
+            _ => Err(CryptoError::InvalidKeyMaterial(
+                "unknown ML-KEM security level marker".into(),
+            )),
+        }
+    }
+}
+
 impl PublicKey {
     /// Return the parameter set used by this key.
     #[must_use]
@@ -99,6 +120,27 @@ impl PublicKey {
                 ),
             },
         })
+    }
+
+    /// Serialize this public key with an embedded security-level marker.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(1 + self.as_bytes().len());
+        bytes.push(self.security_level().marker());
+        bytes.extend_from_slice(self.as_bytes());
+        bytes
+    }
+
+    /// Deserialize a public key from self-describing bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError`] if the byte slice is malformed.
+    pub fn from_serialized(bytes: &[u8]) -> CryptoResult<Self> {
+        let (&marker, payload) = bytes.split_first().ok_or_else(|| {
+            CryptoError::InvalidKeyMaterial("serialized public key is empty".into())
+        })?;
+        Self::from_bytes(SecurityLevel::from_marker(marker)?, payload)
     }
 }
 
@@ -142,6 +184,27 @@ impl SecretKey {
                 ),
             },
         })
+    }
+
+    /// Serialize this secret key with an embedded security-level marker.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(1 + self.as_bytes().len());
+        bytes.push(self.security_level().marker());
+        bytes.extend_from_slice(self.as_bytes());
+        bytes
+    }
+
+    /// Deserialize a secret key from self-describing bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError`] if the byte slice is malformed.
+    pub fn from_serialized(bytes: &[u8]) -> CryptoResult<Self> {
+        let (&marker, payload) = bytes.split_first().ok_or_else(|| {
+            CryptoError::InvalidKeyMaterial("serialized secret key is empty".into())
+        })?;
+        Self::from_bytes(SecurityLevel::from_marker(marker)?, payload)
     }
 }
 
@@ -192,6 +255,35 @@ impl Ciphertext {
             },
             tag,
         })
+    }
+
+    /// Serialize this ciphertext with an embedded security-level marker and tag.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(1 + self.tag.len() + self.as_bytes().len());
+        bytes.push(self.security_level().marker());
+        bytes.extend_from_slice(&self.tag);
+        bytes.extend_from_slice(self.as_bytes());
+        bytes
+    }
+
+    /// Deserialize a ciphertext from self-describing bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError`] if the byte slice is malformed.
+    pub fn from_serialized(bytes: &[u8]) -> CryptoResult<Self> {
+        let (&marker, rest) = bytes.split_first().ok_or_else(|| {
+            CryptoError::InvalidKeyMaterial("serialized ciphertext is empty".into())
+        })?;
+        if rest.len() < 32 {
+            return Err(CryptoError::InvalidKeyMaterial(
+                "serialized ciphertext is missing integrity tag bytes".into(),
+            ));
+        }
+        let mut tag = [0u8; 32];
+        tag.copy_from_slice(&rest[..32]);
+        Self::from_bytes(SecurityLevel::from_marker(marker)?, &rest[32..], tag)
     }
 }
 
@@ -342,11 +434,7 @@ fn integrity_tag(
     ciphertext: &[u8],
 ) -> [u8; 32] {
     let mut buffer = Vec::with_capacity(1 + shared_secret.0.len() + ciphertext.len());
-    buffer.push(match level {
-        SecurityLevel::Level1 => 1,
-        SecurityLevel::Level3 => 3,
-        SecurityLevel::Level5 => 5,
-    });
+    buffer.push(level.marker());
     buffer.extend_from_slice(shared_secret.as_bytes());
     buffer.extend_from_slice(ciphertext);
     hash::sha3_256(&buffer)

@@ -1771,6 +1771,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 ### 14.2 Python Bindings
 
+Status: Implemented in `crates/waros-python` via PyO3 + maturin. The current Python SDK exposes `Circuit`, `Simulator`, `NoiseModel`, `QuantumResult`, `parse_qasm`, `to_qasm`, and the `waros.crypto` post-quantum helper module from the Rust workspace.
+
 ```python
 # WarOS Quantum SDK — Python bindings
 import waros
@@ -2480,7 +2482,7 @@ Phase 4: Pure WarOS environment
 [ ] QHAL: Simulator driver fully functional
 [ ] QEC: Repetition code and Steane code
 [ ] WarQIR: Circuit representation and compilation pipeline
-[ ] Basic Python SDK
+[x] Basic Python SDK
 [ ] Qiskit/Cirq compatibility layer
 ```
 

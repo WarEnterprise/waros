@@ -44,6 +44,25 @@ pub struct Signature {
     bytes: Vec<u8>,
 }
 
+impl SignatureScheme {
+    fn marker(self) -> u8 {
+        match self {
+            Self::MlDsa => 1,
+            Self::SlhDsa => 2,
+        }
+    }
+
+    fn from_marker(marker: u8) -> CryptoResult<Self> {
+        match marker {
+            1 => Ok(Self::MlDsa),
+            2 => Ok(Self::SlhDsa),
+            _ => Err(CryptoError::InvalidKeyMaterial(
+                "unknown signature scheme marker".into(),
+            )),
+        }
+    }
+}
+
 impl SignPublicKey {
     /// Return the signature scheme associated with this key.
     #[must_use]
@@ -61,6 +80,46 @@ impl SignPublicKey {
             SignPublicKeyKind::MlDsa(key) => key.as_bytes(),
             SignPublicKeyKind::SlhDsa(key) => key.as_bytes(),
         }
+    }
+
+    /// Deserialize a public key from raw scheme-specific bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError`] if the byte slice is invalid.
+    pub fn from_bytes(scheme: SignatureScheme, bytes: &[u8]) -> CryptoResult<Self> {
+        Ok(Self {
+            kind: match scheme {
+                SignatureScheme::MlDsa => SignPublicKeyKind::MlDsa(
+                    dilithium3::PublicKey::from_bytes(bytes).map_err(signature_error)?,
+                ),
+                SignatureScheme::SlhDsa => SignPublicKeyKind::SlhDsa(
+                    sphincsshake128fsimple::PublicKey::from_bytes(bytes)
+                        .map_err(signature_error)?,
+                ),
+            },
+        })
+    }
+
+    /// Serialize this public key with an embedded scheme marker.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(1 + self.as_bytes().len());
+        bytes.push(self.scheme().marker());
+        bytes.extend_from_slice(self.as_bytes());
+        bytes
+    }
+
+    /// Deserialize a public key from self-describing bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError`] if the byte slice is malformed.
+    pub fn from_serialized(bytes: &[u8]) -> CryptoResult<Self> {
+        let (&marker, payload) = bytes.split_first().ok_or_else(|| {
+            CryptoError::InvalidKeyMaterial("serialized public key is empty".into())
+        })?;
+        Self::from_bytes(SignatureScheme::from_marker(marker)?, payload)
     }
 }
 
@@ -81,6 +140,46 @@ impl SignSecretKey {
             SignSecretKeyKind::MlDsa(key) => key.as_bytes(),
             SignSecretKeyKind::SlhDsa(key) => key.as_bytes(),
         }
+    }
+
+    /// Deserialize a secret key from raw scheme-specific bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError`] if the byte slice is invalid.
+    pub fn from_bytes(scheme: SignatureScheme, bytes: &[u8]) -> CryptoResult<Self> {
+        Ok(Self {
+            kind: match scheme {
+                SignatureScheme::MlDsa => SignSecretKeyKind::MlDsa(
+                    dilithium3::SecretKey::from_bytes(bytes).map_err(signature_error)?,
+                ),
+                SignatureScheme::SlhDsa => SignSecretKeyKind::SlhDsa(
+                    sphincsshake128fsimple::SecretKey::from_bytes(bytes)
+                        .map_err(signature_error)?,
+                ),
+            },
+        })
+    }
+
+    /// Serialize this secret key with an embedded scheme marker.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(1 + self.as_bytes().len());
+        bytes.push(self.scheme().marker());
+        bytes.extend_from_slice(self.as_bytes());
+        bytes
+    }
+
+    /// Deserialize a secret key from self-describing bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError`] if the byte slice is malformed.
+    pub fn from_serialized(bytes: &[u8]) -> CryptoResult<Self> {
+        let (&marker, payload) = bytes.split_first().ok_or_else(|| {
+            CryptoError::InvalidKeyMaterial("serialized secret key is empty".into())
+        })?;
+        Self::from_bytes(SignatureScheme::from_marker(marker)?, payload)
     }
 }
 
@@ -117,6 +216,27 @@ impl Signature {
             scheme,
             bytes: bytes.to_vec(),
         })
+    }
+
+    /// Serialize this signature with an embedded scheme marker.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(1 + self.bytes.len());
+        bytes.push(self.scheme.marker());
+        bytes.extend_from_slice(&self.bytes);
+        bytes
+    }
+
+    /// Deserialize a signature from self-describing bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CryptoError`] if the byte slice is malformed.
+    pub fn from_serialized(bytes: &[u8]) -> CryptoResult<Self> {
+        let (&marker, payload) = bytes.split_first().ok_or_else(|| {
+            CryptoError::InvalidKeyMaterial("serialized signature is empty".into())
+        })?;
+        Self::from_bytes(SignatureScheme::from_marker(marker)?, payload)
     }
 }
 
@@ -200,4 +320,8 @@ pub fn verify(pk: &SignPublicKey, message: &[u8], signature: &Signature) -> bool
         }
         _ => false,
     }
+}
+
+fn signature_error(error: impl std::fmt::Display) -> CryptoError {
+    CryptoError::InvalidKeyMaterial(error.to_string())
 }

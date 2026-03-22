@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/waros-cli", "crates/waros-crypto", "crates/waros-quantum"]
+members = [
+    "crates/waros-cli",
+    "crates/waros-crypto",
+    "crates/waros-python",
+    "crates/waros-quantum",
+]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "waros"
+version = "0.1.0"
+description = "WarOS Quantum Simulator & Post-Quantum Cryptography — Python SDK"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "War Enterprise", email = "contact@warenterprise.com" }]
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Topic :: Security :: Cryptography",
+]
+keywords = ["quantum", "computing", "simulator", "post-quantum", "cryptography"]
+
+[project.urls]
+Homepage = "https://github.com/WarEnterprise/waros"
+Repository = "https://github.com/WarEnterprise/waros"
+Documentation = "https://github.com/WarEnterprise/waros/blob/main/BLUEPRINT.md"
+
+[tool.maturin]
+features = ["pyo3/abi3-py39", "pyo3/extension-module"]
+module-name = "waros"
