@@ -52,6 +52,56 @@ simon_hidden_xor = _native.simon_hidden_xor
 to_qasm = _native.to_qasm
 vqe_hydrogen = _native.vqe_hydrogen
 
+
+def run_bell_state(*, shots: int = 1000, seed: int | None = None):
+    circuit = Circuit(2)
+    circuit.h(0)
+    circuit.cnot(0, 1)
+    circuit.measure_all()
+    return Simulator(seed=seed).run(circuit, shots=shots)
+
+
+def run_grover(*, target: str = "11", shots: int = 1000, seed: int | None = None):
+    if target != "11":
+        raise ValueError("run_grover currently supports target='11' only")
+
+    circuit = Circuit(2)
+    circuit.h(0)
+    circuit.h(1)
+    circuit.cz(0, 1)
+    circuit.h(0)
+    circuit.h(1)
+    circuit.x(0)
+    circuit.x(1)
+    circuit.cz(0, 1)
+    circuit.x(0)
+    circuit.x(1)
+    circuit.h(0)
+    circuit.h(1)
+    circuit.measure_all()
+    return Simulator(seed=seed).run(circuit, shots=shots)
+
+
+def run_teleport(
+    *,
+    state_theta: float = 1.047,
+    shots: int = 1000,
+    seed: int | None = None,
+):
+    simulator = Simulator(seed=seed)
+    circuit = Circuit(3)
+    circuit.ry(0, state_theta)
+    circuit.h(1)
+    circuit.cnot(1, 2)
+    circuit.cnot(0, 1)
+    circuit.h(0)
+    circuit.measure_into(0, 0)
+    circuit.measure_into(1, 1)
+    circuit.cnot(1, 2)
+    circuit.cz(0, 2)
+    circuit.measure_into(2, 2)
+    return simulator.run(circuit, shots=shots)
+
 algorithms = SimpleNamespace(
     phase_estimation=phase_estimation,
     shor_factor=shor_factor,
@@ -59,6 +109,9 @@ algorithms = SimpleNamespace(
     qaoa_maxcut=qaoa_maxcut,
     simon_hidden_xor=simon_hidden_xor,
     random_walk=random_walk,
+    run_bell_state=run_bell_state,
+    run_grover=run_grover,
+    run_teleport=run_teleport,
 )
 
 __all__ = [

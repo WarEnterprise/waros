@@ -9,7 +9,7 @@ WarOS is a hybrid quantum-classical operating system project from War Enterprise
 ## Workspace
 
 - `kernel/`
-  Bare-metal `no_std` microkernel bootstrap for x86_64 using the `bootloader` crate, with a framebuffer console, serial debug output, GDT/IDT/PIC setup, a bitmap frame allocator, heap initialization, PS/2 keyboard input, a minimal `WarShell`, and a kernel-resident quantum simulator for interactive Bell/GHZ/Grover/teleportation demos.
+  Bare-metal `no_std` kernel bootstrap for x86_64 using the `bootloader` crate, with a framebuffer console, serial debug output, GDT/IDT/PIC setup, a bitmap frame allocator, a 4 MiB kernel heap, WarFS in-memory files, cooperative background tasks, COM2 serial networking primitives, WarShell commands, and a kernel-resident quantum simulator.
 - `crates/waros-quantum`
   State-vector and MPS simulators, circuit builder, QFT, Monte Carlo noise, QEC helpers, Qiskit-compatible `OpenQASM` import support, advanced algorithms (QPE, Shor, VQE, QAOA, Simon, random walk), examples, and benchmarks.
 - `crates/waros-cli`
@@ -62,8 +62,10 @@ Notes:
 
 - `kernel/tools/create_image.*` produces `kernel/target/waros.img` (UEFI) and `kernel/target/waros-bios.img`.
 - `kernel/tools/run_qemu.*` expects `qemu-system-x86_64` in `PATH`.
+- `kernel/tools/run_qemu_pair.*` prints a two-node COM2 serial-link setup for `net send`, `net qsend`, and `ping` testing.
 - Set `WAROS_OVMF_PATH` on Windows or `OVMF_PATH` on Unix if the default OVMF firmware path does not exist.
-- In the shell, `help quantum` lists the kernel quantum commands: `qalloc`, `qrun`, `qstate`, `qmeasure`, `qcircuit`, and `qinfo`.
+- In the shell, `help quantum` lists the kernel quantum commands: `qalloc`, `qrun`, `qstate`, `qmeasure`, `qcircuit`, `qsave`, `qexport`, `qresult`, and `qinfo`.
+- WarFS system files are created automatically at boot: `/readme.txt` and `/sysinfo.txt`.
 
 ## Example
 
@@ -100,8 +102,10 @@ fn main() -> Result<(), WarosError> {
 - Quantum error-correction helpers with repetition-code and Steane-code circuit builders.
 - Post-quantum cryptography using maintained `pqcrypto` crates and SHA-3 / SHAKE.
 - Python bindings via PyO3 and maturin with `Circuit`, `Simulator`, `NoiseModel`, `QuantumResult`, QASM helpers, a `waros.crypto` submodule, and a `waros.algorithms` submodule.
+- Python convenience helpers for circuit stats, notebook HTML rendering, and one-line Bell/Grover/teleport demos via `waros.algorithms`.
 - Bootable x86_64 kernel bootstrap with framebuffer output, interrupt handling, memory initialization, PS/2 keyboard input, and a minimal interactive shell.
-- Kernel-resident `no_std` quantum simulator with 15-qubit registers, shell-driven gate execution, state/probability inspection, histogram measurement, and built-in Bell/GHZ/Grover/teleport/QFT/Deutsch/Bernstein-Vazirani/superdense/Shor/VQE/QAOA demos.
+- Kernel-resident `no_std` quantum simulator with 18-qubit registers, shell-driven gate execution, state/probability inspection, histogram measurement, and built-in Bell/GHZ/Grover/teleport/QFT/Deutsch/Bernstein-Vazirani/superdense/Shor/VQE/QAOA demos.
+- Kernel WarFS commands (`ls`, `cat`, `write`, `rm`, `touch`, `stat`, `df`), task commands (`tasks`, `spawn`, `kill`), and serial networking commands (`net status`, `net send`, `net qsend`, `net listen`, `ping`).
 
 ## Python SDK
 
@@ -113,6 +117,8 @@ circuit = waros.Circuit(2)
 circuit.h(0)
 circuit.cnot(0, 1)
 circuit.measure_all()
+print(circuit.stats())
+print(circuit.draw())
 
 result = waros.Simulator(seed=42).run(circuit, shots=10_000)
 print(result.counts)
@@ -125,6 +131,7 @@ assert shared_secret_a == shared_secret_b
 shor = waros.algorithms.shor_factor(15, seed=42)
 vqe = waros.algorithms.vqe_hydrogen(seed=42)
 qaoa = waros.algorithms.qaoa_maxcut("square", seed=42)
+bell = waros.algorithms.run_bell_state(shots=1_000, seed=42)
 ```
 
 ## Validation

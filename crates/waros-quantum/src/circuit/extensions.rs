@@ -182,16 +182,13 @@ impl Circuit {
         for instruction in &self.instructions {
             let width = match instruction {
                 Instruction::GateOp { gate, .. } | Instruction::ConditionalGate { gate, .. } => {
-                    if gate.num_qubits == 1 {
-                        gate.name.len() + 2
-                    } else {
-                        gate.name.len().max(3) + 2
-                    }
+                    (gate.name.len() + 2).max(5)
                 }
-                Instruction::Measure { .. } | Instruction::Barrier { .. } => 3,
+                Instruction::Measure { .. } | Instruction::Barrier { .. } => 5,
             };
             let width = if width % 2 == 0 { width + 1 } else { width };
-            let mut column = vec![format!("{:-^width$}", ""); self.num_qubits];
+            let wire = "─".repeat(width);
+            let mut column = vec![wire.clone(); self.num_qubits];
 
             match instruction {
                 Instruction::GateOp { gate, targets } if gate.num_qubits == 1 => {
@@ -205,26 +202,26 @@ impl Circuit {
                     let start = control.min(target);
                     let end = control.max(target);
                     for cell in column.iter_mut().take(end).skip(start + 1) {
-                        *cell = format!("{:^width$}", "|");
+                        *cell = format!("{:^width$}", "│");
                     }
-                    column[control] = format!("{:^width$}", "@");
-                    column[target] = format!("{:^width$}", "X");
+                    column[control] = format!("{:^width$}", "●");
+                    column[target] = format!("{:^width$}", "⊕");
                 }
                 Instruction::ConditionalGate { gate, targets, .. } if gate.name == "CNOT" => {
                     let (control, target) = (targets[0], targets[1]);
                     let start = control.min(target);
                     let end = control.max(target);
                     for cell in column.iter_mut().take(end).skip(start + 1) {
-                        *cell = format!("{:^width$}", "|");
+                        *cell = format!("{:^width$}", "│");
                     }
-                    column[control] = format!("{:^width$}", "@?");
-                    column[target] = format!("{:^width$}", "X?");
+                    column[control] = format!("{:^width$}", "●?");
+                    column[target] = format!("{:^width$}", "⊕?");
                 }
                 Instruction::GateOp { gate, targets } => {
                     let start = targets[0].min(targets[1]);
                     let end = targets[0].max(targets[1]);
                     for cell in column.iter_mut().take(end).skip(start + 1) {
-                        *cell = format!("{:^width$}", "|");
+                        *cell = format!("{:^width$}", "│");
                     }
                     let label = format!("[{}]", gate.name);
                     column[targets[0]] = format!("{label:^width$}");
@@ -234,7 +231,7 @@ impl Circuit {
                     let start = targets[0].min(targets[1]);
                     let end = targets[0].max(targets[1]);
                     for cell in column.iter_mut().take(end).skip(start + 1) {
-                        *cell = format!("{:^width$}", "|");
+                        *cell = format!("{:^width$}", "│");
                     }
                     let label = format!("[{}?]", gate.name);
                     column[targets[0]] = format!("{label:^width$}");
@@ -245,7 +242,7 @@ impl Circuit {
                 }
                 Instruction::Barrier { qubits } => {
                     for &qubit in qubits {
-                        column[qubit] = format!("{:^width$}", "|");
+                        column[qubit] = format!("{:^width$}", "┆");
                     }
                 }
             }

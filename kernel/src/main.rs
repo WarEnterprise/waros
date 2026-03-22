@@ -10,10 +10,13 @@ mod arch;
 mod boot;
 mod display;
 mod drivers;
+mod fs;
 mod memory;
+mod net;
 mod panic;
 mod quantum;
 mod shell;
+mod task;
 
 use core::alloc::Layout;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -50,6 +53,7 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     arch::x86_64::fpu::init();
 
     let boot_context = boot::bootstrap(boot_data)?;
+    memory::register_physical_memory_mapping(boot_context.physical_memory_offset);
     let framebuffer_info = boot::uefi::framebuffer_info(boot_context.framebuffer);
 
     display::console::init(boot_context.framebuffer);
@@ -121,14 +125,24 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
         memory::heap::init_heap(&mut mapper, frame_allocator)
             .map_err(|_| "kernel heap initialization failed")?;
     }
-    boot_ok("Kernel heap: 1 MiB allocated");
+    boot_ok("Kernel heap: 4 MiB allocated");
+
+    fs::init();
+    boot_ok("WarFS: in-memory filesystem ready");
+
+    task::init();
+    boot_ok("Task scheduler: cooperative background tasks ready");
+
+    net::init();
+    boot_ok("Serial link: COM2 networking ready");
 
     drivers::keyboard::init();
     boot_ok("Keyboard driver active");
-    boot_ok("Quantum subsystem ready (15 qubits max)");
+    boot_ok("Quantum subsystem ready (18 qubits max)");
 
     let boot_complete_ms = boot_elapsed_ms();
     BOOT_COMPLETE_MS.store(boot_complete_ms, Ordering::Relaxed);
+    fs::seed_system_files().map_err(|_| "failed to seed filesystem system files")?;
 
     display::branding::show_separator();
     kprint_colored!(Colors::DIM, "Boot complete in {} ms.\n", boot_complete_ms);

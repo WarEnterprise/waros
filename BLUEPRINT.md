@@ -41,6 +41,18 @@
 
 ---
 
+## Current Implementation Status (March 2026)
+
+The repository currently implements a subset of this blueprint:
+
+- `waros-quantum`: statevector + MPS simulation, QASM, QEC helpers, Shor/VQE/QAOA/QPE/Simon demos, and Python bindings.
+- `waros-crypto`: ML-KEM, ML-DSA, SLH-DSA, SHA-3 / SHAKE, and simulated QRNG helpers.
+- `waros-kernel`: bootable x86_64 kernel with framebuffer console, PS/2 keyboard shell, in-kernel quantum simulator, WarFS RAM filesystem, cooperative task scheduler scaffolding, and COM2 serial networking primitives.
+
+Everything below remains the architectural target. Unless a subsystem is clearly reflected by code in the repository, treat the section as roadmap rather than shipped functionality.
+
+---
+
 ## 1. Vision & Philosophy
 
 ### 1.1 The Problem

@@ -1,26 +1,30 @@
-use alloc::string::String;
+use alloc::format;
+use alloc::string::{String, ToString};
 
 use core::f64::consts::PI;
 
 use spin::Mutex;
 
 use crate::display::console::Colors;
+use crate::fs;
 use crate::quantum::circuits::run_builtin;
 use crate::quantum::display::{display_probabilities, display_results, display_state};
 use crate::quantum::gates::{
     cnot, cz, hadamard, pauli_x, pauli_y, pauli_z, rx, ry, rz, s_gate, swap, t_gate,
 };
+use crate::quantum::session::QuantumSession;
 use crate::quantum::simulator::{apply_1q, apply_2q, apply_toffoli, measure_all, Xorshift64};
-use crate::quantum::state::QuantumState;
+use crate::quantum::state::{QuantumState, MAX_KERNEL_QUBITS};
 use crate::{kprint_colored, kprintln};
 
 pub mod circuits;
 pub mod display;
 pub mod gates;
+pub mod session;
 pub mod simulator;
 pub mod state;
 
-static QUANTUM_STATE: Mutex<Option<QuantumState>> = Mutex::new(None);
+static QUANTUM_STATE: Mutex<Option<QuantumSession>> = Mutex::new(None);
 
 /// Dispatch a shell quantum command.
 pub fn handle_quantum_command(command: &str, args: &[&str]) -> Result<(), &'static str> {
@@ -44,20 +48,20 @@ pub fn handle_quantum_command(command: &str, args: &[&str]) -> Result<(), &'stat
         "qrun" => cmd_qrun(args),
         "qstate" => {
             let guard = QUANTUM_STATE.lock();
-            let Some(state) = guard.as_ref() else {
+            let Some(session) = guard.as_ref() else {
                 kprintln!("No quantum register allocated. Use 'qalloc <n>' first.");
                 return Ok(());
             };
-            display_state(state);
+            display_state(&session.state);
             Ok(())
         }
         "qprobs" => {
             let guard = QUANTUM_STATE.lock();
-            let Some(state) = guard.as_ref() else {
+            let Some(session) = guard.as_ref() else {
                 kprintln!("No quantum register allocated. Use 'qalloc <n>' first.");
                 return Ok(());
             };
-            display_probabilities(state);
+            display_probabilities(&session.state);
             Ok(())
         }
         "qmeasure" => cmd_qmeasure(args),
@@ -65,6 +69,8 @@ pub fn handle_quantum_command(command: &str, args: &[&str]) -> Result<(), &'stat
             let name = args.first().copied().unwrap_or("");
             run_builtin(name)
         }
+        "qsave" | "qexport" => cmd_qsave(args),
+        "qresult" => cmd_qresult(args),
         "qinfo" => {
             show_status();
             Ok(())
@@ -82,7 +88,7 @@ pub fn handle_quantum_command(command: &str, args: &[&str]) -> Result<(), &'stat
 /// Print detailed help for the in-kernel simulator.
 pub fn show_help() {
     kprint_colored!(Colors::CYAN, "Quantum Computing Commands\n");
-    kprintln!("  qalloc <n>          Allocate n-qubit register (max 15)");
+    kprintln!("  qalloc <n>          Allocate n-qubit register (max 18)");
     kprintln!("  qfree               Free the current quantum register");
     kprintln!("  qreset              Reset all qubits to |0>");
     kprintln!("  qrun <gate> <args>  Apply a quantum gate");
@@ -90,6 +96,9 @@ pub fn show_help() {
     kprintln!("  qprobs              Show probability distribution");
     kprintln!("  qmeasure [shots]    Measure current register (default: 100)");
     kprintln!("  qcircuit <name>     Run a built-in circuit demo");
+    kprintln!("  qsave <name>        Save current circuit as QASM");
+    kprintln!("  qexport <name>      Export current circuit as QASM");
+    kprintln!("  qresult <name>      Save last measurement results");
     kprintln!("  qinfo               Quantum subsystem information");
     kprintln!();
     kprint_colored!(Colors::PURPLE, "Available gates for qrun\n");
@@ -127,7 +136,7 @@ pub fn active_register() -> Option<(usize, usize)> {
     let guard = QUANTUM_STATE.lock();
     guard
         .as_ref()
-        .map(|state| (state.num_qubits, state.bytes_used()))
+        .map(|session| (session.state.num_qubits, session.state.bytes_used()))
 }
 
 fn cmd_qalloc(args: &[&str]) -> Result<(), &'static str> {
@@ -136,16 +145,16 @@ fn cmd_qalloc(args: &[&str]) -> Result<(), &'static str> {
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0);
 
-    if !(1..=15).contains(&qubits) {
-        kprintln!("Usage: qalloc <1-15>");
-        kprintln!("  Max 15 qubits in kernel mode (512 KiB state vector).");
+    if !(1..=MAX_KERNEL_QUBITS).contains(&qubits) {
+        kprintln!("Usage: qalloc <1-18>");
+        kprintln!("  Max 18 qubits in kernel mode (~4 MiB state vector).");
         return Ok(());
     }
 
     let state = QuantumState::new(qubits)?;
     let amplitudes = state.dimension();
     let bytes = state.bytes_used();
-    *QUANTUM_STATE.lock() = Some(state);
+    *QUANTUM_STATE.lock() = Some(QuantumSession::new(state));
     kprint_colored!(Colors::GREEN, "Allocated ");
     kprintln!(
         "{}-qubit register QR-0 ({} amplitudes, {} bytes)",
@@ -166,47 +175,55 @@ fn cmd_qrun(args: &[&str]) -> Result<(), &'static str> {
     }
 
     let mut guard = QUANTUM_STATE.lock();
-    let Some(state) = guard.as_mut() else {
+    let Some(session) = guard.as_mut() else {
         kprintln!("No quantum register allocated. Use 'qalloc <n>' first.");
         return Ok(());
     };
+    let state = &mut session.state;
 
     let gate = args[0];
     match gate {
         "h" => {
             let qubit = parse_qubit(args, 1)?;
             apply_1q(state, qubit, &hadamard())?;
+            session.record_operation(format!("h q[{qubit}];"));
             announce("Applied H to qubit", qubit);
         }
         "x" => {
             let qubit = parse_qubit(args, 1)?;
             apply_1q(state, qubit, &pauli_x())?;
+            session.record_operation(format!("x q[{qubit}];"));
             announce("Applied X to qubit", qubit);
         }
         "y" => {
             let qubit = parse_qubit(args, 1)?;
             apply_1q(state, qubit, &pauli_y())?;
+            session.record_operation(format!("y q[{qubit}];"));
             announce("Applied Y to qubit", qubit);
         }
         "z" => {
             let qubit = parse_qubit(args, 1)?;
             apply_1q(state, qubit, &pauli_z())?;
+            session.record_operation(format!("z q[{qubit}];"));
             announce("Applied Z to qubit", qubit);
         }
         "s" => {
             let qubit = parse_qubit(args, 1)?;
             apply_1q(state, qubit, &s_gate())?;
+            session.record_operation(format!("s q[{qubit}];"));
             announce("Applied S to qubit", qubit);
         }
         "t" => {
             let qubit = parse_qubit(args, 1)?;
             apply_1q(state, qubit, &t_gate())?;
+            session.record_operation(format!("t q[{qubit}];"));
             announce("Applied T to qubit", qubit);
         }
         "rx" => {
             let qubit = parse_qubit(args, 1)?;
             let angle = parse_angle(args, 2)?;
             apply_1q(state, qubit, &rx(angle))?;
+            session.record_operation(format!("rx({angle:.6}) q[{qubit}];"));
             kprint_colored!(Colors::GREEN, "Applied Rx to qubit ");
             kprintln!("{} (theta = {:.4})", qubit, angle);
         }
@@ -214,6 +231,7 @@ fn cmd_qrun(args: &[&str]) -> Result<(), &'static str> {
             let qubit = parse_qubit(args, 1)?;
             let angle = parse_angle(args, 2)?;
             apply_1q(state, qubit, &ry(angle))?;
+            session.record_operation(format!("ry({angle:.6}) q[{qubit}];"));
             kprint_colored!(Colors::GREEN, "Applied Ry to qubit ");
             kprintln!("{} (theta = {:.4})", qubit, angle);
         }
@@ -221,6 +239,7 @@ fn cmd_qrun(args: &[&str]) -> Result<(), &'static str> {
             let qubit = parse_qubit(args, 1)?;
             let angle = parse_angle(args, 2)?;
             apply_1q(state, qubit, &rz(angle))?;
+            session.record_operation(format!("rz({angle:.6}) q[{qubit}];"));
             kprint_colored!(Colors::GREEN, "Applied Rz to qubit ");
             kprintln!("{} (theta = {:.4})", qubit, angle);
         }
@@ -228,6 +247,7 @@ fn cmd_qrun(args: &[&str]) -> Result<(), &'static str> {
             let control = parse_qubit(args, 1)?;
             let target = parse_qubit(args, 2)?;
             apply_2q(state, control, target, &cnot())?;
+            session.record_operation(format!("cx q[{control}], q[{target}];"));
             kprint_colored!(Colors::GREEN, "Applied CNOT: ");
             kprintln!("control = {}, target = {}", control, target);
         }
@@ -235,6 +255,7 @@ fn cmd_qrun(args: &[&str]) -> Result<(), &'static str> {
             let q0 = parse_qubit(args, 1)?;
             let q1 = parse_qubit(args, 2)?;
             apply_2q(state, q0, q1, &cz())?;
+            session.record_operation(format!("cz q[{q0}], q[{q1}];"));
             kprint_colored!(Colors::GREEN, "Applied CZ: ");
             kprintln!("qubits = {}, {}", q0, q1);
         }
@@ -242,6 +263,7 @@ fn cmd_qrun(args: &[&str]) -> Result<(), &'static str> {
             let q0 = parse_qubit(args, 1)?;
             let q1 = parse_qubit(args, 2)?;
             apply_2q(state, q0, q1, &swap())?;
+            session.record_operation(format!("swap q[{q0}], q[{q1}];"));
             kprint_colored!(Colors::GREEN, "Applied SWAP: ");
             kprintln!("qubits = {}, {}", q0, q1);
         }
@@ -250,6 +272,9 @@ fn cmd_qrun(args: &[&str]) -> Result<(), &'static str> {
             let control1 = parse_qubit(args, 2)?;
             let target = parse_qubit(args, 3)?;
             apply_toffoli(state, control0, control1, target)?;
+            session.record_operation(format!(
+                "ccx q[{control0}], q[{control1}], q[{target}];"
+            ));
             kprint_colored!(Colors::GREEN, "Applied Toffoli: ");
             kprintln!("controls = {}, {}, target = {}", control0, control1, target);
         }
@@ -272,10 +297,11 @@ fn cmd_qmeasure(args: &[&str]) -> Result<(), &'static str> {
         .clamp(1, 10_000);
 
     let guard = QUANTUM_STATE.lock();
-    let Some(state) = guard.as_ref() else {
+    let Some(session) = guard.as_ref() else {
         kprintln!("No quantum register allocated. Use 'qalloc <n>' first.");
         return Ok(());
     };
+    let state = &session.state;
 
     let mut rng = Xorshift64::new(
         crate::arch::x86_64::interrupts::tick_count()
@@ -284,6 +310,10 @@ fn cmd_qmeasure(args: &[&str]) -> Result<(), &'static str> {
     );
     let results = measure_all(state, shots, &mut rng);
     display_results(&results, state.num_qubits, shots);
+    drop(guard);
+    if let Some(session) = QUANTUM_STATE.lock().as_mut() {
+        session.record_measurement(&results, shots);
+    }
     Ok(())
 }
 
@@ -291,23 +321,73 @@ fn show_status() {
     kprint_colored!(Colors::PURPLE, "WarOS Quantum Subsystem\n");
     kprintln!("----------------------------------------");
     kprintln!("  Backend:     Kernel StateVector Simulator");
-    kprintln!("  Max qubits:  15 (kernel heap limited)");
+    kprintln!("  Max qubits:  18 (kernel heap limited)");
     kprintln!("  Gates:       H, X, Y, Z, S, T, Rx, Ry, Rz, CNOT, CZ, SWAP, CCX");
     kprintln!("  PRNG:        Xorshift64 (PIT-seeded)");
     kprintln!("  Demos:       bell, ghz3, grover, teleport, qft4, deutsch, bernstein, superdense, shor, vqe, qaoa");
+    kprintln!("  Persistence: qsave, qexport, qresult");
 
     let guard = QUANTUM_STATE.lock();
-    if let Some(state) = guard.as_ref() {
+    if let Some(session) = guard.as_ref() {
         kprintln!(
             "  Active reg:  {} qubits ({} amplitudes, {} bytes)",
-            state.num_qubits,
-            state.dimension(),
-            state.bytes_used()
+            session.state.num_qubits,
+            session.state.dimension(),
+            session.state.bytes_used()
         );
-        kprintln!("  Norm:        {:.6}", state.total_probability());
+        kprintln!("  Norm:        {:.6}", session.state.total_probability());
     } else {
         kprintln!("  Active reg:  none");
     }
+}
+
+fn cmd_qsave(args: &[&str]) -> Result<(), &'static str> {
+    let Some(raw_name) = args.first().copied() else {
+        kprintln!("Usage: qsave <name>");
+        return Ok(());
+    };
+
+    let guard = QUANTUM_STATE.lock();
+    let Some(session) = guard.as_ref() else {
+        kprintln!("No quantum register allocated. Use 'qalloc <n>' first.");
+        return Ok(());
+    };
+
+    let filename = with_extension(raw_name, ".qasm");
+    let qasm = session.qasm_source();
+    fs::FILESYSTEM
+        .lock()
+        .write(&filename, qasm.as_bytes())
+        .map_err(map_fs_error)?;
+    kprint_colored!(Colors::GREEN, "Saved circuit to ");
+    kprintln!("'{}' ({} bytes)", filename, qasm.len());
+    Ok(())
+}
+
+fn cmd_qresult(args: &[&str]) -> Result<(), &'static str> {
+    let Some(raw_name) = args.first().copied() else {
+        kprintln!("Usage: qresult <name>");
+        return Ok(());
+    };
+
+    let guard = QUANTUM_STATE.lock();
+    let Some(session) = guard.as_ref() else {
+        kprintln!("No quantum register allocated. Use 'qalloc <n>' first.");
+        return Ok(());
+    };
+    let Some(result_text) = session.last_result_text() else {
+        kprintln!("No measurement results available. Run 'qmeasure' first.");
+        return Ok(());
+    };
+
+    let filename = with_extension(raw_name, ".txt");
+    fs::FILESYSTEM
+        .lock()
+        .write(&filename, result_text.as_bytes())
+        .map_err(map_fs_error)?;
+    kprint_colored!(Colors::GREEN, "Saved measurement results to ");
+    kprintln!("'{}' ({} bytes)", filename, result_text.len());
+    Ok(())
 }
 
 fn parse_qubit(args: &[&str], index: usize) -> Result<usize, &'static str> {
@@ -375,4 +455,24 @@ fn parse_angle_expression(token: &str) -> Option<f64> {
 fn announce(prefix: &str, qubit: usize) {
     kprint_colored!(Colors::GREEN, "{} ", prefix);
     kprintln!("{}", qubit);
+}
+
+fn with_extension(name: &str, extension: &str) -> String {
+    let trimmed = name.trim().trim_start_matches('/');
+    if trimmed.ends_with(extension) {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}{extension}")
+    }
+}
+
+fn map_fs_error(error: fs::FsError) -> &'static str {
+    match error {
+        fs::FsError::FileNotFound => "file not found",
+        fs::FsError::FilesystemFull => "filesystem full",
+        fs::FsError::FilenameTooLong => "filename too long",
+        fs::FsError::FileTooLarge => "file too large",
+        fs::FsError::ReadOnly => "file is read-only",
+        fs::FsError::InvalidFilename => "invalid filename",
+    }
 }

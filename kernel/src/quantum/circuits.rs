@@ -278,7 +278,7 @@ fn run_vqe_demo() -> Result<(), &'static str> {
 fn run_qaoa_demo() -> Result<(), &'static str> {
     header("QAOA Demo: Triangle MaxCut");
     let gamma = 0.6;
-    let beta = 0.35;
+    let beta = 0.3;
     let mut state = QuantumState::new(3)?;
 
     for qubit in 0..3 {
@@ -295,13 +295,19 @@ fn run_qaoa_demo() -> Result<(), &'static str> {
 
     let results = measure_all_with_seed(&state, DEFAULT_SHOTS);
     display_results(&results, 3, DEFAULT_SHOTS);
-    if let Some(&(basis, _)) = results.first() {
+    if let Some(&(basis, count)) = results.iter().max_by(|left, right| {
+        triangle_maxcut_cost(left.0)
+            .cmp(&triangle_maxcut_cost(right.0))
+            .then_with(|| left.1.cmp(&right.1))
+    }) {
+        let cost = triangle_maxcut_cost(basis);
+        let probability = (count as f64 / DEFAULT_SHOTS as f64) * 100.0;
         kprintln!();
-        kprint_colored!(Colors::GREEN, "Best measured cut: ");
+        kprint_colored!(Colors::GREEN, "Best cut: ");
         kprintln!(
-            "{} (cost = {})",
+            "{} edges via {} ({probability:.1}% of samples)",
+            cost,
             format_basis_state(basis, 3),
-            triangle_maxcut_cost(basis)
         );
     }
     Ok(())

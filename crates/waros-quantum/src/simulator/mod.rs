@@ -6,10 +6,12 @@ use crate::error::{WarosError, WarosResult};
 use crate::noise::NoiseModel;
 use crate::result::QuantumResult;
 
+mod density;
 mod mps;
 mod statevector;
 mod trajectory;
 
+pub use self::density::{quantum_state_tomography, DensityMatrixSimulator};
 pub use self::mps::MPSSimulator;
 
 /// Simulation backend selection.
@@ -232,6 +234,16 @@ impl Simulator {
             }
             Backend::Auto => unreachable!("effective_backend must resolve Auto"),
         }
+    }
+
+    /// Return the final density matrix for a small circuit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the circuit is too wide for the exact density-matrix
+    /// backend or if the simulator cannot provide an exact statevector.
+    pub fn density_matrix(&self, circuit: &Circuit) -> WarosResult<DensityMatrixSimulator> {
+        density::DensityMatrixSimulator::from_circuit(circuit, self)
     }
 
     fn run_sample_mode(&self, circuit: &Circuit, shots: u32) -> WarosResult<QuantumResult> {

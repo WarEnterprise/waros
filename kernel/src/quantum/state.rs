@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 
 /// Numerical tolerance used for probability and normalization checks.
 pub const EPSILON: f64 = 1e-12;
+pub const MAX_KERNEL_QUBITS: usize = 18;
 
 /// Minimal complex number representation for the kernel simulator.
 pub type Complex = (f64, f64);
@@ -44,8 +45,8 @@ pub struct QuantumState {
 impl QuantumState {
     /// Allocate a new quantum register initialized to `|00...0>`.
     pub fn new(num_qubits: usize) -> Result<Self, &'static str> {
-        if !(1..=15).contains(&num_qubits) {
-            return Err("Qubit count must be between 1 and 15");
+        if !(1..=MAX_KERNEL_QUBITS).contains(&num_qubits) {
+            return Err("Qubit count must be between 1 and 18");
         }
 
         let dimension = 1usize << num_qubits;

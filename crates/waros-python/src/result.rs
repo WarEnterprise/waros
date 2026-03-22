@@ -1,6 +1,5 @@
-use std::fmt::Write as _;
-
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 use pyo3::prelude::*;
 
@@ -88,5 +87,25 @@ impl PyQuantumResult {
 
     fn __len__(&self) -> usize {
         self.inner.counts().len()
+    }
+
+    fn _repr_html_(&self) -> String {
+        let mut rows = String::new();
+        for (state, count, probability) in self.inner.histogram() {
+            let width = (probability * 100.0).clamp(0.0, 100.0);
+            let _ = write!(
+                rows,
+                "<tr><td>|{}&gt;</td><td>{}</td><td>{:.1}%</td><td><div style=\"background:#56D4DD;height:0.8rem;width:{:.1}%;min-width:0.5rem\"></div></td></tr>",
+                state,
+                count,
+                probability * 100.0,
+                width
+            );
+        }
+
+        format!(
+            "<div><strong>QuantumResult</strong><p>{} shots</p><table><thead><tr><th>State</th><th>Count</th><th>Probability</th><th>Histogram</th></tr></thead><tbody>{rows}</tbody></table></div>",
+            self.inner.total_shots()
+        )
     }
 }

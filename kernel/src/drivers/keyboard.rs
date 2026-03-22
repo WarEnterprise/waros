@@ -8,7 +8,7 @@ pub static KEYBOARD: Lazy<Mutex<Keyboard>> = Lazy::new(|| Mutex::new(Keyboard::n
 /// PS/2 keyboard state and ring buffer for shell input.
 pub struct Keyboard {
     inner: PcKeyboard<layouts::Us104Key, ScancodeSet1>,
-    buffer: [u8; 256],
+    buffer: [u8; 1024],
     read_pos: usize,
     write_pos: usize,
 }
@@ -21,7 +21,7 @@ impl Keyboard {
                 layouts::Us104Key,
                 HandleControl::Ignore,
             ),
-            buffer: [0; 256],
+            buffer: [0; 1024],
             read_pos: 0,
             write_pos: 0,
         }
