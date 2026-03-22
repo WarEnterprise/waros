@@ -37,9 +37,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Create virtualenv
+        run: python -m venv .venv
       - name: Install maturin and pytest
-        run: pip install maturin pytest
+        run: source .venv/bin/activate && pip install maturin pytest
       - name: Build Python bindings
-        run: cd crates/waros-python && maturin develop
+        run: source .venv/bin/activate && cd crates/waros-python && maturin develop
       - name: Test Python bindings
-        run: cd crates/waros-python && pytest tests/test_waros.py -v
+        run: source .venv/bin/activate && cd crates/waros-python && pytest tests/test_waros.py -v
