@@ -1,0 +1,18 @@
+[package]
+name = "waros-crypto"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WarOS Post-Quantum Cryptography Suite"
+
+[dependencies]
+pqcrypto-dilithium = "0.5"
+pqcrypto-mlkem = "0.1"
+pqcrypto-sphincsplus = "0.7"
+pqcrypto-traits = "0.3"
+rand = "0.8"
+sha3 = "0.10"
+thiserror = "1"
+waros-quantum = { path = "../waros-quantum" }

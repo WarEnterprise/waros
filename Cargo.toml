@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["crates/waros-cli", "crates/waros-crypto", "crates/waros-quantum"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["War Enterprise <contact@warenterprise.com>"]
+license = "Apache-2.0"
+repository = "https://github.com/warenterprise/waros"

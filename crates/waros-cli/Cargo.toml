@@ -1,0 +1,13 @@
+[package]
+name = "waros-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WarOS Quantum Computing Toolkit"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+sysinfo = "0.30"
+waros-quantum = { path = "../waros-quantum" }
