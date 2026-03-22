@@ -9,6 +9,7 @@ use crate::arch::x86_64::port;
 use crate::display::branding;
 use crate::display::console::{self, Colors};
 use crate::memory;
+use crate::quantum;
 use crate::shell::history;
 use crate::{kprint, kprint_colored, kprintln, serial_println, KERNEL_VERSION};
 
@@ -21,7 +22,7 @@ pub fn execute_command(command_line: &str) {
     };
 
     match command {
-        "help" => cmd_help(),
+        "help" => cmd_help(parts.get(1).copied()),
         "clear" => {
             console::clear_screen();
         }
@@ -38,6 +39,13 @@ pub fn execute_command(command_line: &str) {
         "banner" => cmd_banner(),
         "quantum" => cmd_quantum(),
         "crypto" => cmd_crypto(),
+        "qalloc" | "qfree" | "qreset" | "qrun" | "qstate" | "qprobs" | "qmeasure" | "qcircuit"
+        | "qinfo" => {
+            if let Err(error) = quantum::handle_quantum_command(command, &parts[1..]) {
+                kprint_colored!(Colors::RED, "Quantum error: ");
+                kprintln!("{}", error);
+            }
+        }
         "panic" => cmd_panic(),
         "reboot" => cmd_reboot(),
         "halt" => cmd_halt(),
@@ -46,7 +54,12 @@ pub fn execute_command(command_line: &str) {
     }
 }
 
-fn cmd_help() {
+fn cmd_help(topic: Option<&str>) {
+    if matches!(topic, Some("quantum")) {
+        quantum::show_help();
+        return;
+    }
+
     kprint_colored!(Colors::CYAN, "WarOS Shell");
     kprintln!(" v{} - Available commands:\n", KERNEL_VERSION);
 
@@ -62,6 +75,15 @@ fn cmd_help() {
     kprint_colored!(Colors::PURPLE, "  Quantum & Crypto\n");
     kprintln!("    quantum     Quantum subsystem status");
     kprintln!("    crypto      Post-quantum crypto status");
+    kprintln!("    qalloc      Allocate qubit register: qalloc <1-15>");
+    kprintln!("    qrun        Apply gate: qrun <gate> <qubit(s)>");
+    kprintln!("    qstate      Show current state vector");
+    kprintln!("    qprobs      Show probability distribution");
+    kprintln!("    qmeasure    Measure current register");
+    kprintln!("    qcircuit    Run built-in quantum demo");
+    kprintln!("    qinfo       Kernel quantum simulator info");
+    kprintln!("    qreset      Reset register to |0...0>");
+    kprintln!("    qfree       Free current quantum register");
 
     kprintln!();
     kprint_colored!(Colors::PURPLE, "  Tools\n");
@@ -101,7 +123,7 @@ fn cmd_version() {
     kprintln!("  Platform:  x86_64");
     kprintln!("  Toolchain: Rust nightly");
     kprintln!("  Boot:      bootloader BIOS/UEFI images");
-    kprintln!("  Quantum:   SDK + simulator integrated in repository");
+    kprintln!("  Quantum:   Kernel simulator + Rust/Python SDK");
     kprintln!("  Crypto:    PQC suite available in workspace");
 }
 
@@ -283,16 +305,22 @@ fn cmd_banner() {
 fn cmd_quantum() {
     kprint_colored!(Colors::PURPLE, "Quantum Subsystem Status\n");
     branding::show_separator();
-    kprintln!("  Backend:        Classical Simulation (StateVector)");
-    kprintln!("  Max qubits:     25 (limited by available RAM)");
+    kprintln!("  Backend:        Kernel StateVector Simulator");
+    kprintln!("  Max qubits:     15 (kernel heap limited)");
     kprintln!("  QPU hardware:   Not detected");
     kprintln!("  QHAL drivers:   None loaded");
     kprintln!("  QEC engine:     Not initialized");
     kprintln!("  Quantum net:    Not available");
+    kprintln!("  Shell commands: qalloc, qrun, qstate, qmeasure, qcircuit, qinfo");
+    if let Some((qubits, bytes)) = quantum::active_register() {
+        kprintln!("  Active reg:     {} qubits ({} bytes)", qubits, bytes);
+    } else {
+        kprintln!("  Active reg:     None");
+    }
     kprintln!();
     kprint_colored!(Colors::YELLOW, "  Note: ");
-    kprintln!("Running in classical simulation mode.");
-    kprintln!("  Connect quantum hardware via QHAL for native QPU access.");
+    kprintln!("Running in kernel simulation mode.");
+    kprintln!("  Type 'help quantum' for the quantum command reference.");
     kprintln!("  See: github.com/WarEnterprise/waros/blob/main/BLUEPRINT.md");
 }
 
@@ -357,7 +385,10 @@ fn emit_feature(enabled: bool, name: &str, any: &mut bool) {
 }
 
 fn parse_u64(value: &str) -> Option<u64> {
-    if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
         u64::from_str_radix(hex, 16).ok()
     } else {
         value
@@ -368,7 +399,10 @@ fn parse_u64(value: &str) -> Option<u64> {
 }
 
 fn parse_usize(value: &str) -> Option<usize> {
-    if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
         usize::from_str_radix(hex, 16).ok()
     } else {
         value

@@ -12,10 +12,7 @@ impl Framebuffer {
     pub fn new(framebuffer: &'static mut FrameBuffer) -> Self {
         let info = framebuffer.info();
         let buffer = framebuffer.buffer_mut();
-        Self {
-            buffer,
-            info,
-        }
+        Self { buffer, info }
     }
 
     /// Return the framebuffer metadata.

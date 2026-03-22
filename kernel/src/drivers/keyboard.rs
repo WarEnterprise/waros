@@ -1,4 +1,6 @@
-use pc_keyboard::{DecodedKey, HandleControl, Keyboard as PcKeyboard, KeyCode, ScancodeSet1, layouts};
+use pc_keyboard::{
+    layouts, DecodedKey, HandleControl, KeyCode, Keyboard as PcKeyboard, ScancodeSet1,
+};
 use spin::{Lazy, Mutex};
 
 pub static KEYBOARD: Lazy<Mutex<Keyboard>> = Lazy::new(|| Mutex::new(Keyboard::new()));

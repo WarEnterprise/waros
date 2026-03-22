@@ -1,5 +1,5 @@
-use core::panic::PanicInfo;
 use core::fmt::Write;
+use core::panic::PanicInfo;
 
 use ::x86_64::instructions::interrupts;
 

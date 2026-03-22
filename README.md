@@ -5,7 +5,7 @@ WarOS is a hybrid quantum-classical operating system project from War Enterprise
 ## Workspace
 
 - `kernel/`
-  Bare-metal `no_std` microkernel bootstrap for x86_64 using the `bootloader` crate, with a framebuffer console, serial debug output, GDT/IDT/PIC setup, a bitmap frame allocator, heap initialization, PS/2 keyboard input, and a minimal `WarShell`.
+  Bare-metal `no_std` microkernel bootstrap for x86_64 using the `bootloader` crate, with a framebuffer console, serial debug output, GDT/IDT/PIC setup, a bitmap frame allocator, heap initialization, PS/2 keyboard input, a minimal `WarShell`, and a kernel-resident quantum simulator for interactive Bell/GHZ/Grover/teleportation demos.
 - `crates/waros-quantum`
   State-vector simulator, circuit builder, QFT, Monte Carlo noise, `OpenQASM` 2.0 parser/serializer, examples, and benchmarks.
 - `crates/waros-cli`
@@ -56,6 +56,7 @@ Notes:
 - `kernel/tools/create_image.*` produces `kernel/target/waros.img` (UEFI) and `kernel/target/waros-bios.img`.
 - `kernel/tools/run_qemu.*` expects `qemu-system-x86_64` in `PATH`.
 - Set `WAROS_OVMF_PATH` on Windows or `OVMF_PATH` on Unix if the default OVMF firmware path does not exist.
+- In the shell, `help quantum` lists the kernel quantum commands: `qalloc`, `qrun`, `qstate`, `qmeasure`, `qcircuit`, and `qinfo`.
 
 ## Example
 
@@ -89,6 +90,7 @@ fn main() -> Result<(), WarosError> {
 - Post-quantum cryptography using maintained `pqcrypto` crates and SHA-3 / SHAKE.
 - Python bindings via PyO3 and maturin with `Circuit`, `Simulator`, `NoiseModel`, `QuantumResult`, QASM helpers, and a `waros.crypto` submodule.
 - Bootable x86_64 kernel bootstrap with framebuffer output, interrupt handling, memory initialization, PS/2 keyboard input, and a minimal interactive shell.
+- Kernel-resident `no_std` quantum simulator with 15-qubit registers, shell-driven gate execution, state/probability inspection, histogram measurement, and built-in Bell/GHZ/Grover/teleport/QFT/Deutsch/Bernstein-Vazirani/superdense demos.
 
 ## Python SDK
 

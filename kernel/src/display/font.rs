@@ -32,7 +32,12 @@ impl Glyph {
     fn from_rasterized(rasterized: noto_sans_mono_bitmap::RasterizedChar) -> Self {
         let mut raster = [[0u8; FONT_WIDTH]; FONT_HEIGHT_PIXELS];
 
-        for (row_index, row) in rasterized.raster().iter().enumerate().take(FONT_HEIGHT_PIXELS) {
+        for (row_index, row) in rasterized
+            .raster()
+            .iter()
+            .enumerate()
+            .take(FONT_HEIGHT_PIXELS)
+        {
             for (column_index, value) in row.iter().copied().enumerate().take(FONT_WIDTH) {
                 raster[row_index][column_index] = value;
             }

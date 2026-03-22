@@ -56,8 +56,10 @@ impl BitmapAllocator {
             }
             let end = region.end.min(MAX_TRACKED_PHYSICAL_MEMORY);
 
-            let start_frame = usize::try_from(start / FRAME_SIZE).map_err(|_| "frame index overflow")?;
-            let end_frame = usize::try_from(end / FRAME_SIZE).map_err(|_| "frame index overflow")?;
+            let start_frame =
+                usize::try_from(start / FRAME_SIZE).map_err(|_| "frame index overflow")?;
+            let end_frame =
+                usize::try_from(end / FRAME_SIZE).map_err(|_| "frame index overflow")?;
 
             for frame_index in start_frame..end_frame {
                 if allocator.is_allocated(frame_index) {
@@ -141,7 +143,6 @@ impl BitmapAllocator {
 
 unsafe impl FrameAllocator<Size4KiB> for BitmapAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame<Size4KiB>> {
-        BitmapAllocator::allocate_frame(self)
-            .map(PhysFrame::<Size4KiB>::containing_address)
+        BitmapAllocator::allocate_frame(self).map(PhysFrame::<Size4KiB>::containing_address)
     }
 }

@@ -8,8 +8,7 @@ pub const PIT_FREQUENCY_HZ: u32 = 100;
 
 /// Program the legacy PIT channel 0 to generate the scheduler tick rate.
 pub fn init() {
-    let divisor = (PIT_BASE_FREQUENCY_HZ / PIT_FREQUENCY_HZ)
-        .clamp(1, u32::from(u16::MAX)) as u16;
+    let divisor = (PIT_BASE_FREQUENCY_HZ / PIT_FREQUENCY_HZ).clamp(1, u32::from(u16::MAX)) as u16;
 
     port::outb(PIT_COMMAND_PORT, 0x36);
     port::outb(PIT_CHANNEL0_PORT, (divisor & 0x00FF) as u8);

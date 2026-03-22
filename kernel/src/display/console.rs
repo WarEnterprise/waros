@@ -103,7 +103,8 @@ impl FramebufferConsole {
     fn newline(&mut self) {
         self.cursor_col = 0;
         if self.cursor_row + 1 >= self.rows {
-            self.framebuffer.scroll_up(font::FONT_HEIGHT_PIXELS, self.bg_color);
+            self.framebuffer
+                .scroll_up(font::FONT_HEIGHT_PIXELS, self.bg_color);
         } else {
             self.cursor_row += 1;
         }
@@ -204,15 +205,15 @@ fn blend(background: u32, foreground: u32, alpha: u8) -> u32 {
     let alpha = u16::from(alpha);
     let inverse_alpha = u16::from(u8::MAX) - alpha;
 
-    let red =
-        ((u16::from(background_bytes[1]) * inverse_alpha) + (u16::from(foreground_bytes[1]) * alpha))
-            / u16::from(u8::MAX);
-    let green =
-        ((u16::from(background_bytes[2]) * inverse_alpha) + (u16::from(foreground_bytes[2]) * alpha))
-            / u16::from(u8::MAX);
-    let blue =
-        ((u16::from(background_bytes[3]) * inverse_alpha) + (u16::from(foreground_bytes[3]) * alpha))
-            / u16::from(u8::MAX);
+    let red = ((u16::from(background_bytes[1]) * inverse_alpha)
+        + (u16::from(foreground_bytes[1]) * alpha))
+        / u16::from(u8::MAX);
+    let green = ((u16::from(background_bytes[2]) * inverse_alpha)
+        + (u16::from(foreground_bytes[2]) * alpha))
+        / u16::from(u8::MAX);
+    let blue = ((u16::from(background_bytes[3]) * inverse_alpha)
+        + (u16::from(foreground_bytes[3]) * alpha))
+        / u16::from(u8::MAX);
 
     u32::from_be_bytes([0, red as u8, green as u8, blue as u8])
 }

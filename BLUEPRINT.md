@@ -2427,9 +2427,9 @@ Phase 4: Pure WarOS environment
 
 ### Phase 0: Foundation (Months 1-6)
 ```
-[ ] Boot on x86_64 (UEFI boot, basic VGA console)
+[x] Boot on x86_64 (bootloader-based BIOS/QEMU bring-up with framebuffer console)
 [ ] Minimal microkernel: process creation, IPC, memory management
-[ ] Basic WarShell (command line)
+[x] Basic WarShell (interactive command line with system, debug, and status commands)
 [x] Quantum simulation backend (state vector, validated gate set, mid-circuit measurement support)
 [ ] QISA assembler and basic circuit execution in simulation
 [ ] Basic WarFS (ext4-compatible + quantum object types)
@@ -2483,7 +2483,10 @@ Phase 4: Pure WarOS environment
 [x] GDT, IDT, PIC remap, timer IRQ, and keyboard IRQ handlers
 [x] Bitmap-based physical frame allocator and kernel heap initialization
 [x] PS/2 keyboard input buffering and minimal interactive WarShell
-[ ] QEMU smoke-test on a host with `qemu-system-x86_64` and OVMF firmware installed
+[x] Kernel-local `no_std` quantum simulator with shell commands (`qalloc`, `qrun`, `qstate`, `qmeasure`, `qcircuit`, `qinfo`)
+[x] Built-in Bell, GHZ, Grover, teleportation, QFT, Deutsch, Bernstein-Vazirani, and superdense coding demos
+[x] BIOS/QEMU smoke-test on a host with `qemu-system-x86_64` installed
+[ ] UEFI/OVMF smoke-test on a host with firmware available
 ```
 
 ### Phase 1: Quantum Core (Months 7-12)

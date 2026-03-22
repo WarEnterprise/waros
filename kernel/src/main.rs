@@ -12,6 +12,7 @@ mod display;
 mod drivers;
 mod memory;
 mod panic;
+mod quantum;
 mod shell;
 
 use core::alloc::Layout;
@@ -43,6 +44,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str> {
     drivers::serial::init();
     serial_println!("WarOS: entering kernel bootstrap");
+    arch::x86_64::fpu::init();
 
     let boot_context = boot::bootstrap(boot_data)?;
     let framebuffer_info = boot::uefi::framebuffer_info(boot_context.framebuffer);
@@ -51,6 +53,7 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     display::branding::show_banner();
 
     boot_ok("Serial debug on COM1");
+    boot_ok("FPU/SSE initialized");
     boot_ok_fmt(
         format_args!(
             "Framebuffer: {}x{} @ {} bpp",

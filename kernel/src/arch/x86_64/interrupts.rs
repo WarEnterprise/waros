@@ -64,8 +64,7 @@ pub extern "x86-interrupt" fn page_fault_handler(
     serial_println!("{:#?}", stack_frame);
     panic!(
         "Page fault while accessing {:?} with error {:?}",
-        accessed_address,
-        error_code
+        accessed_address, error_code
     );
 }
 

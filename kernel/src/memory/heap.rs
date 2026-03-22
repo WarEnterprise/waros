@@ -26,9 +26,9 @@ pub fn init_heap(
     };
 
     for page in page_range {
-        let Some(frame) = x86_64::structures::paging::FrameAllocator::<Size4KiB>::allocate_frame(
-            frame_allocator,
-        ) else {
+        let Some(frame) =
+            x86_64::structures::paging::FrameAllocator::<Size4KiB>::allocate_frame(frame_allocator)
+        else {
             return Err(MapToError::FrameAllocationFailed);
         };
         paging::map_page(
@@ -43,7 +43,9 @@ pub fn init_heap(
     // SAFETY: The heap virtual range was just mapped as writable and remains exclusively owned
     // by the global allocator for the rest of the kernel lifetime.
     unsafe {
-        ALLOCATOR.lock().init(HEAP_START as *mut u8, HEAP_SIZE as usize);
+        ALLOCATOR
+            .lock()
+            .init(HEAP_START as *mut u8, HEAP_SIZE as usize);
     }
 
     Ok(())
