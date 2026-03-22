@@ -4,6 +4,8 @@ WarOS is a hybrid quantum-classical operating system project from War Enterprise
 
 ## Workspace
 
+- `kernel/`
+  Bare-metal `no_std` microkernel bootstrap for x86_64 using the `bootloader` crate, with a framebuffer console, serial debug output, GDT/IDT/PIC setup, a bitmap frame allocator, heap initialization, PS/2 keyboard input, and a minimal `WarShell`.
 - `crates/waros-quantum`
   State-vector simulator, circuit builder, QFT, Monte Carlo noise, `OpenQASM` 2.0 parser/serializer, examples, and benchmarks.
 - `crates/waros-cli`
@@ -27,6 +29,33 @@ cd crates/waros-python
 maturin develop --release
 python -c "import waros; print(waros.__version__)"
 ```
+
+## Kernel Quick Start
+
+The kernel is intentionally kept outside the Cargo workspace because it uses a custom `no_std`
+target and nightly-only build settings.
+
+```powershell
+cd kernel
+cargo +nightly build --release --target x86_64-unknown-none
+.\tools\create_image.ps1
+.\tools\run_qemu.ps1
+```
+
+On Linux/macOS:
+
+```bash
+cd kernel
+cargo +nightly build --release --target x86_64-unknown-none
+./tools/create_image.sh
+./tools/run_qemu.sh
+```
+
+Notes:
+
+- `kernel/tools/create_image.*` produces `kernel/target/waros.img` (UEFI) and `kernel/target/waros-bios.img`.
+- `kernel/tools/run_qemu.*` expects `qemu-system-x86_64` in `PATH`.
+- Set `WAROS_OVMF_PATH` on Windows or `OVMF_PATH` on Unix if the default OVMF firmware path does not exist.
 
 ## Example
 
@@ -59,6 +88,7 @@ fn main() -> Result<(), WarosError> {
 - `OpenQASM` 2.0 parsing/serialization plus runnable QASM fixtures in [`examples/qasm`](examples/qasm).
 - Post-quantum cryptography using maintained `pqcrypto` crates and SHA-3 / SHAKE.
 - Python bindings via PyO3 and maturin with `Circuit`, `Simulator`, `NoiseModel`, `QuantumResult`, QASM helpers, and a `waros.crypto` submodule.
+- Bootable x86_64 kernel bootstrap with framebuffer output, interrupt handling, memory initialization, PS/2 keyboard input, and a minimal interactive shell.
 
 ## Python SDK
 
@@ -86,6 +116,14 @@ assert shared_secret_a == shared_secret_b
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -W clippy::all -W clippy::pedantic -A clippy::module_name_repetitions -A clippy::cast_possible_truncation
 cargo build --release --workspace
+```
+
+Kernel validation:
+
+```powershell
+cd kernel
+cargo +nightly build --release --target x86_64-unknown-none
+.\tools\create_image.ps1
 ```
 
 ## Documentation

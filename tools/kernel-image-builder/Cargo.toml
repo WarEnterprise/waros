@@ -1,0 +1,11 @@
+[package]
+name = "waros-kernel-image-builder"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+anyhow = "1.0"
+bootloader = "0.11.15"

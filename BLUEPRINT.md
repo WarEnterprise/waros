@@ -2474,6 +2474,18 @@ Phase 4: Pure WarOS environment
 [x] 22 post-quantum cryptography and QRNG regression tests
 ```
 
+### `waros-kernel` Bootstrap Status (March 2026)
+```
+[x] Standalone `no_std` x86_64 kernel crate with nightly toolchain configuration
+[x] Bootloader-based entry path with generated UEFI and BIOS disk images
+[x] Framebuffer text console with bundled bitmap font and WarOS boot branding
+[x] Serial debug output on COM1
+[x] GDT, IDT, PIC remap, timer IRQ, and keyboard IRQ handlers
+[x] Bitmap-based physical frame allocator and kernel heap initialization
+[x] PS/2 keyboard input buffering and minimal interactive WarShell
+[ ] QEMU smoke-test on a host with `qemu-system-x86_64` and OVMF firmware installed
+```
+
 ### Phase 1: Quantum Core (Months 7-12)
 ```
 [ ] QRM: Qubit allocation, entanglement tracking
