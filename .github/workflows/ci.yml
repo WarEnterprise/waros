@@ -14,17 +14,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: dtolnay/rust-toolchain@nightly
         with:
-          components: rust-src
+          components: rust-src, clippy, rustfmt
       - name: Build workspace
-        run: cargo build --workspace
+        run: cargo +stable build --workspace
       - name: Test workspace
-        run: cargo test --workspace
+        run: cargo +stable test --workspace
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -W clippy::all -W clippy::pedantic -A clippy::module_name_repetitions -A clippy::cast_possible_truncation
+        run: cargo +stable clippy --workspace --all-targets -- -W clippy::all -W clippy::pedantic -A clippy::module_name_repetitions -A clippy::cast_possible_truncation
       - name: Format check
-        run: cargo fmt --all -- --check
+        run: cargo +stable fmt --all -- --check
       - name: Docs
-        run: cargo doc --no-deps --workspace
+        run: cargo +stable doc --no-deps --workspace
       - name: Build kernel
         run: cd kernel && cargo +nightly build --release --target x86_64-unknown-none
 
