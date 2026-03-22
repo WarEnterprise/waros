@@ -1,4 +1,4 @@
-//! Post-quantum cryptography primitives for WarOS.
+//! Post-quantum cryptography primitives for `WarOS`.
 
 pub mod error;
 pub mod hash;

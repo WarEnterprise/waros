@@ -23,6 +23,30 @@ impl Circuit {
                     targets: mapped_targets,
                 });
             }
+            Instruction::ConditionalGate {
+                classical_bits,
+                value,
+                gate,
+                targets,
+            } => {
+                let mapped_targets: Vec<usize> = targets
+                    .iter()
+                    .map(|target| qubit_mapping.map_or(*target, |mapping| mapping[*target]))
+                    .collect();
+                self.ensure_classical_bits(
+                    classical_bits
+                        .iter()
+                        .copied()
+                        .max()
+                        .map_or(0, |bit| bit + 1),
+                );
+                self.instructions.push(Instruction::ConditionalGate {
+                    classical_bits: classical_bits.clone(),
+                    value: *value,
+                    gate: gate.clone(),
+                    targets: mapped_targets,
+                });
+            }
             Instruction::Measure { qubit, .. } => {
                 self.measure(qubit_mapping.map_or(*qubit, |mapping| mapping[*qubit]))?;
             }
@@ -130,7 +154,9 @@ impl Circuit {
         let mut layers = vec![0usize; self.num_qubits];
         let mut max_depth = 0usize;
         for instruction in &self.instructions {
-            if let Instruction::GateOp { targets, .. } = instruction {
+            if let Instruction::GateOp { targets, .. }
+            | Instruction::ConditionalGate { targets, .. } = instruction
+            {
                 let layer = targets
                     .iter()
                     .map(|target| layers[*target])
@@ -155,10 +181,13 @@ impl Circuit {
 
         for instruction in &self.instructions {
             let width = match instruction {
-                Instruction::GateOp { gate, targets } if gate.num_qubits == 1 => {
-                    gate.name.len() + 2
+                Instruction::GateOp { gate, .. } | Instruction::ConditionalGate { gate, .. } => {
+                    if gate.num_qubits == 1 {
+                        gate.name.len() + 2
+                    } else {
+                        gate.name.len().max(3) + 2
+                    }
                 }
-                Instruction::GateOp { gate, .. } => gate.name.len().max(3) + 2,
                 Instruction::Measure { .. } | Instruction::Barrier { .. } => 3,
             };
             let width = if width % 2 == 0 { width + 1 } else { width };
@@ -167,6 +196,9 @@ impl Circuit {
             match instruction {
                 Instruction::GateOp { gate, targets } if gate.num_qubits == 1 => {
                     column[targets[0]] = format!("{:^width$}", format!("[{}]", gate.name));
+                }
+                Instruction::ConditionalGate { gate, targets, .. } if gate.num_qubits == 1 => {
+                    column[targets[0]] = format!("{:^width$}", format!("[{}?]", gate.name));
                 }
                 Instruction::GateOp { gate, targets } if gate.name == "CNOT" => {
                     let (control, target) = (targets[0], targets[1]);
@@ -178,6 +210,16 @@ impl Circuit {
                     column[control] = format!("{:^width$}", "@");
                     column[target] = format!("{:^width$}", "X");
                 }
+                Instruction::ConditionalGate { gate, targets, .. } if gate.name == "CNOT" => {
+                    let (control, target) = (targets[0], targets[1]);
+                    let start = control.min(target);
+                    let end = control.max(target);
+                    for cell in column.iter_mut().take(end).skip(start + 1) {
+                        *cell = format!("{:^width$}", "|");
+                    }
+                    column[control] = format!("{:^width$}", "@?");
+                    column[target] = format!("{:^width$}", "X?");
+                }
                 Instruction::GateOp { gate, targets } => {
                     let start = targets[0].min(targets[1]);
                     let end = targets[0].max(targets[1]);
@@ -185,6 +227,16 @@ impl Circuit {
                         *cell = format!("{:^width$}", "|");
                     }
                     let label = format!("[{}]", gate.name);
+                    column[targets[0]] = format!("{label:^width$}");
+                    column[targets[1]] = format!("{label:^width$}");
+                }
+                Instruction::ConditionalGate { gate, targets, .. } => {
+                    let start = targets[0].min(targets[1]);
+                    let end = targets[0].max(targets[1]);
+                    for cell in column.iter_mut().take(end).skip(start + 1) {
+                        *cell = format!("{:^width$}", "|");
+                    }
+                    let label = format!("[{}?]", gate.name);
                     column[targets[0]] = format!("{label:^width$}");
                     column[targets[1]] = format!("{label:^width$}");
                 }

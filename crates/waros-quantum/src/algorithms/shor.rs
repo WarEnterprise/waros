@@ -1,3 +1,5 @@
+#![allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
+
 use rand::Rng;
 
 use crate::error::{WarosError, WarosResult};
@@ -19,11 +21,16 @@ pub struct ShorResult {
 /// This implementation demonstrates the quantum period-finding workflow for
 /// `N <= 21` by sampling phases from the exact modular-order spectrum and using
 /// continued fractions to recover the order.
+///
+/// # Errors
+///
+/// Returns [`WarosError`] when the input is too small to factor or when the
+/// derived precision exceeds the supported simulator range.
 pub fn shor_factor(n: u64, simulator: &Simulator) -> WarosResult<ShorResult> {
     if n < 4 {
         return Err(WarosError::SimulationError("N must be at least 4".into()));
     }
-    if n % 2 == 0 {
+    if n.is_multiple_of(2) {
         return Ok(trivial_factor(n, 2, 1));
     }
     if let Some(factor) = prime_power_factor(n) {

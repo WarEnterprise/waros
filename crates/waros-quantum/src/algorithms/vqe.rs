@@ -1,3 +1,5 @@
+#![allow(clippy::cast_precision_loss, clippy::missing_errors_doc)]
+
 use crate::circuit::Circuit;
 use crate::complex::Complex;
 use crate::error::{WarosError, WarosResult};
@@ -70,7 +72,7 @@ pub fn vqe(
         energy_history.push(energy);
         if energy < best_energy {
             best_energy = energy;
-            best_params = params.clone();
+            best_params.clone_from(&params);
         }
 
         let gradient = numerical_gradient(

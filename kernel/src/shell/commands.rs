@@ -11,7 +11,10 @@ use crate::display::console::{self, Colors};
 use crate::memory;
 use crate::quantum;
 use crate::shell::history;
-use crate::{kprint, kprint_colored, kprintln, serial_println, KERNEL_VERSION};
+use crate::{
+    boot_complete_ms, kprint, kprint_colored, kprintln, serial_println, BUILD_DATE,
+    KERNEL_VERSION,
+};
 
 /// Execute a built-in shell command.
 pub fn execute_command(command_line: &str) {
@@ -27,7 +30,7 @@ pub fn execute_command(command_line: &str) {
             console::clear_screen();
         }
         "info" => cmd_info(),
-        "version" => cmd_version(),
+        "version" => cmd_version(&parts[1..]),
         "cpu" => cmd_cpu(),
         "mem" => cmd_mem(),
         "time" => cmd_time(),
@@ -66,6 +69,7 @@ fn cmd_help(topic: Option<&str>) {
     kprint_colored!(Colors::PURPLE, "  System\n");
     kprintln!("    info        System information");
     kprintln!("    version     Detailed version information");
+    kprintln!("    version --all  Full build, boot, and subsystem report");
     kprintln!("    cpu         CPU vendor and feature flags");
     kprintln!("    mem         Physical memory statistics");
     kprintln!("    time        Uptime as HH:MM:SS");
@@ -117,7 +121,43 @@ fn cmd_info() {
     kprintln!("War Enterprise (c) 2026");
 }
 
-fn cmd_version() {
+fn cmd_version(args: &[&str]) {
+    if matches!(args.first(), Some(&"--all")) {
+        let stats = memory::stats();
+        let vendor_leaf = __cpuid(0);
+        let feature_leaf = __cpuid(1);
+        let vendor_bytes = vendor_string_bytes(vendor_leaf.ebx, vendor_leaf.edx, vendor_leaf.ecx);
+        let vendor = str::from_utf8(&vendor_bytes).unwrap_or("Unknown");
+        let uptime = interrupts::tick_count() / u64::from(PIT_FREQUENCY_HZ);
+        let hours = uptime / 3600;
+        let minutes = (uptime % 3600) / 60;
+        let seconds = uptime % 60;
+
+        kprintln!("WarOS v{}", KERNEL_VERSION);
+        kprintln!("  Kernel:       waros-kernel {}", KERNEL_VERSION);
+        kprintln!("  Quantum:      in-kernel StateVector (15 qubits max)");
+        kprintln!("  Crypto:       ML-KEM, ML-DSA, SLH-DSA, SHA-3");
+        kprintln!("  Architecture: x86_64");
+        kprintln!(
+            "  CPU:          {} Family {} Model {}",
+            vendor,
+            cpu_family(feature_leaf.eax),
+            cpu_model(feature_leaf.eax)
+        );
+        kprintln!(
+            "  RAM:          {} MiB ({} frames)",
+            (stats.total_frames * 4) / 1024,
+            stats.total_frames
+        );
+        kprintln!("  Heap:         1 MiB");
+        kprintln!("  Uptime:       {:02}:{:02}:{:02}", hours, minutes, seconds);
+        kprintln!("  Boot time:    {} ms", boot_complete_ms());
+        kprintln!("  Built:        {} (rustc nightly)", BUILD_DATE);
+        kprintln!("  License:      Apache 2.0");
+        kprintln!("  Repository:   github.com/WarEnterprise/waros");
+        return;
+    }
+
     kprintln!("WarOS kernel version information:");
     kprintln!("  Kernel:    v{}", KERNEL_VERSION);
     kprintln!("  Platform:  x86_64");
@@ -375,6 +415,27 @@ fn vendor_string_bytes(ebx: u32, edx: u32, ecx: u32) -> [u8; 12] {
         ebx[0], ebx[1], ebx[2], ebx[3], edx[0], edx[1], edx[2], edx[3], ecx[0], ecx[1], ecx[2],
         ecx[3],
     ]
+}
+
+fn cpu_family(eax: u32) -> u32 {
+    let base_family = (eax >> 8) & 0x0F;
+    let ext_family = (eax >> 20) & 0xFF;
+    if base_family == 0x0F {
+        base_family + ext_family
+    } else {
+        base_family
+    }
+}
+
+fn cpu_model(eax: u32) -> u32 {
+    let base_family = (eax >> 8) & 0x0F;
+    let base_model = (eax >> 4) & 0x0F;
+    let ext_model = (eax >> 16) & 0x0F;
+    if base_family == 0x06 || base_family == 0x0F {
+        base_model | (ext_model << 4)
+    } else {
+        base_model
+    }
 }
 
 fn emit_feature(enabled: bool, name: &str, any: &mut bool) {

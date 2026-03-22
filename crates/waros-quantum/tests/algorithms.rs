@@ -220,19 +220,19 @@ fn vqe_pauli_expectation_for_z_on_zero_is_one() {
 
 #[test]
 fn qaoa_triangle_maxcut_optimal_value() {
-    assert_eq!(classical_maxcut(&Graph::triangle()), 2.0);
+    assert!((classical_maxcut(&Graph::triangle()) - 2.0).abs() < f64::EPSILON);
 }
 
 #[test]
 fn qaoa_square_maxcut_optimal_value() {
-    assert_eq!(classical_maxcut(&Graph::square()), 4.0);
+    assert!((classical_maxcut(&Graph::square()) - 4.0).abs() < f64::EPSILON);
 }
 
 #[test]
 fn qaoa_cost_function_scores_cut_edges() {
     let graph = Graph::triangle();
     let assignment = vec![false, true, false];
-    assert_eq!(maxcut_cost(&graph, &assignment), 2.0);
+    assert!((maxcut_cost(&graph, &assignment) - 2.0).abs() < f64::EPSILON);
 }
 
 #[test]

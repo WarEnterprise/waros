@@ -235,7 +235,7 @@ impl PyCircuit {
         self.inner.to_ascii()
     }
 
-    /// Export the circuit as OpenQASM 2.0 source.
+    /// Export the circuit as `OpenQASM` 2.0 source.
     fn to_qasm(&self) -> String {
         waros_quantum::to_qasm(&self.inner)
     }

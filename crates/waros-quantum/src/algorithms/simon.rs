@@ -10,6 +10,11 @@ pub struct SimonResult {
 }
 
 /// Run Simon's algorithm for an `n`-bit oracle.
+///
+/// # Errors
+///
+/// Returns [`WarosError`] when `n` is zero or when the supplied oracle fails to
+/// build a valid circuit.
 pub fn simon_algorithm<F>(oracle: F, n: usize, simulator: &Simulator) -> WarosResult<SimonResult>
 where
     F: Fn(&mut Circuit, usize, usize) -> WarosResult<()>,
@@ -73,6 +78,11 @@ where
 }
 
 /// Build a compact hidden-XOR oracle with the property `f(x) = f(x xor s)`.
+///
+/// # Errors
+///
+/// Returns [`WarosError`] when the secret is the all-zero bitstring or when the
+/// generated oracle contains invalid qubit references.
 pub fn apply_hidden_xor_oracle(
     circuit: &mut Circuit,
     input_start: usize,
@@ -109,7 +119,7 @@ pub fn solve_gf2(equations: &[Vec<bool>], width: usize) -> Vec<bool> {
 
         if equations
             .iter()
-            .all(|equation| parity_dot(equation, &bits) == false)
+            .all(|equation| !parity_dot(equation, &bits))
         {
             return bits;
         }
@@ -167,8 +177,11 @@ fn gf2_rank(equations: &[Vec<bool>], width: usize) -> usize {
 
         for row in 0..rows.len() {
             if row != rank && rows[row][column] {
-                for bit in column..width {
-                    rows[row][bit] ^= rows[rank][bit];
+                let pivot_values = rows[rank][column..width].to_vec();
+                for (destination, source) in
+                    rows[row][column..width].iter_mut().zip(pivot_values.iter())
+                {
+                    *destination ^= *source;
                 }
             }
         }

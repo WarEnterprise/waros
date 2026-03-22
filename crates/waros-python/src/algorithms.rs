@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::{PyAny, PyDict, PyModule};
 
 use waros_quantum::algorithms::{
     apply_hidden_xor_oracle, qaoa_maxcut, quantum_phase_estimation, quantum_random_walk,
@@ -10,6 +10,14 @@ use waros_quantum::{gate, Circuit, Simulator};
 use crate::value_error;
 
 pub fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_impl(module)
+}
+
+pub fn register_root(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_impl(module)
+}
+
+fn register_impl(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(phase_estimation, module)?)?;
     module.add_function(wrap_pyfunction!(shor_factor_py, module)?)?;
     module.add_function(wrap_pyfunction!(vqe_hydrogen, module)?)?;
@@ -60,6 +68,7 @@ fn shor_factor_py(py: Python<'_>, n: u64, seed: Option<u64>) -> PyResult<Py<PyDi
     dict.set_item("factors", vec![result.factors.0, result.factors.1])?;
     dict.set_item("base_a", result.base_a)?;
     dict.set_item("period_r", result.period_r)?;
+    dict.set_item("period", result.period_r)?;
     dict.set_item("attempts", result.attempts)?;
     dict.set_item("success", result.success)?;
     Ok(dict.unbind())
@@ -86,7 +95,8 @@ fn vqe_hydrogen(
 
     let dict = PyDict::new_bound(py);
     dict.set_item("energy", result.energy)?;
-    dict.set_item("optimal_params", result.optimal_params)?;
+    dict.set_item("optimal_params", result.optimal_params.clone())?;
+    dict.set_item("params", result.optimal_params)?;
     dict.set_item("energy_history", result.energy_history)?;
     dict.set_item("iterations", result.iterations)?;
     dict.set_item("converged", result.converged)?;
@@ -94,26 +104,19 @@ fn vqe_hydrogen(
 }
 
 #[pyfunction(name = "qaoa_maxcut")]
-#[pyo3(signature = (graph="square", p=2, max_iterations=20, shots=1000, seed=None))]
+#[pyo3(signature = (edges=None, num_vertices=None, graph=None, p=2, max_iterations=20, shots=1000, seed=None))]
 fn qaoa_maxcut_py(
     py: Python<'_>,
-    graph: &str,
+    edges: Option<&Bound<'_, PyAny>>,
+    num_vertices: Option<usize>,
+    graph: Option<&str>,
     p: usize,
     max_iterations: usize,
     shots: u32,
     seed: Option<u64>,
 ) -> PyResult<Py<PyDict>> {
     let simulator = seeded_simulator(seed);
-    let graph = match graph {
-        "triangle" => Graph::triangle(),
-        "square" => Graph::square(),
-        "petersen_5" | "petersen" => Graph::petersen_5(),
-        other => {
-            return Err(value_error(format!(
-                "unknown graph '{other}', expected triangle, square, or petersen_5"
-            )));
-        }
-    };
+    let graph = resolve_graph(edges, num_vertices, graph)?;
 
     let result = qaoa_maxcut(&graph, p, max_iterations, shots, &simulator).map_err(value_error)?;
     let best_solution = result
@@ -123,13 +126,69 @@ fn qaoa_maxcut_py(
         .collect::<String>();
 
     let dict = PyDict::new_bound(py);
-    dict.set_item("best_solution", best_solution)?;
+    dict.set_item("best_solution", &best_solution)?;
+    dict.set_item("solution", best_solution)?;
     dict.set_item("best_cost", result.best_cost)?;
+    dict.set_item("cost", result.best_cost)?;
     dict.set_item("optimal_gamma", result.optimal_gamma)?;
     dict.set_item("optimal_beta", result.optimal_beta)?;
     dict.set_item("approximation_ratio", result.approximation_ratio)?;
     dict.set_item("cost_history", result.cost_history)?;
     Ok(dict.unbind())
+}
+
+fn resolve_graph(
+    edges: Option<&Bound<'_, PyAny>>,
+    num_vertices: Option<usize>,
+    graph: Option<&str>,
+) -> PyResult<Graph> {
+    if let Some(edges) = edges {
+        let weighted_edges = parse_edges(edges)?;
+        let Some(num_vertices) = num_vertices else {
+            return Err(value_error(
+                "num_vertices is required when edges are provided",
+            ));
+        };
+        if num_vertices == 0 {
+            return Err(value_error("num_vertices must be greater than zero"));
+        }
+        for (u, v, _weight) in &weighted_edges {
+            if *u >= num_vertices || *v >= num_vertices {
+                return Err(value_error(format!(
+                    "edge ({u}, {v}) is out of range for {num_vertices} vertices"
+                )));
+            }
+        }
+        return Ok(Graph {
+            num_vertices,
+            edges: weighted_edges,
+        });
+    }
+
+    match graph.unwrap_or("square") {
+        "triangle" => Ok(Graph::triangle()),
+        "square" => Ok(Graph::square()),
+        "petersen_5" | "petersen" => Ok(Graph::petersen_5()),
+        other => Err(value_error(format!(
+            "unknown graph '{other}', expected triangle, square, or petersen_5"
+        ))),
+    }
+}
+
+fn parse_edges(edges: &Bound<'_, PyAny>) -> PyResult<Vec<(usize, usize, f64)>> {
+    if let Ok(weighted_edges) = edges.extract::<Vec<(usize, usize, f64)>>() {
+        return Ok(weighted_edges);
+    }
+
+    edges
+        .extract::<Vec<(usize, usize)>>()
+        .map(|edge_list| {
+            edge_list
+                .into_iter()
+                .map(|(u, v)| (u, v, 1.0))
+                .collect::<Vec<_>>()
+        })
+        .map_err(|_| value_error("edges must be a list of (u, v) or (u, v, weight) tuples"))
 }
 
 #[pyfunction]
@@ -175,7 +234,7 @@ fn phase_estimation_inputs(
     eigenstate: Option<&str>,
 ) -> PyResult<(waros_quantum::gate::Gate, fn(&mut Circuit, usize))> {
     match (unitary, eigenstate.unwrap_or_default()) {
-        ("identity", _) | ("i", _) => Ok((identity_gate(), |_circuit, _target| {})),
+        ("identity" | "i", _) => Ok((identity_gate(), |_circuit, _target| {})),
         ("z", "" | "one") => Ok((gate::z(), |circuit, target| {
             let _ = circuit.x(target);
         })),

@@ -1,5 +1,9 @@
 # WarOS
 
+[![CI](https://github.com/WarEnterprise/waros/actions/workflows/ci.yml/badge.svg)](https://github.com/WarEnterprise/waros/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/waros)](https://pypi.org/project/waros/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 WarOS is a hybrid quantum-classical operating system project from War Enterprise. The repository runs entirely on classical hardware today and provides a validated quantum SDK, realistic noise simulation, an `OpenQASM` toolchain, a CLI, and post-quantum cryptography primitives.
 
 ## Workspace
@@ -7,13 +11,13 @@ WarOS is a hybrid quantum-classical operating system project from War Enterprise
 - `kernel/`
   Bare-metal `no_std` microkernel bootstrap for x86_64 using the `bootloader` crate, with a framebuffer console, serial debug output, GDT/IDT/PIC setup, a bitmap frame allocator, heap initialization, PS/2 keyboard input, a minimal `WarShell`, and a kernel-resident quantum simulator for interactive Bell/GHZ/Grover/teleportation demos.
 - `crates/waros-quantum`
-  State-vector simulator, circuit builder, QFT, Monte Carlo noise, advanced algorithms (QPE, Shor, VQE, QAOA, Simon, random walk), `OpenQASM` 2.0 parser/serializer, examples, and benchmarks.
+  State-vector and MPS simulators, circuit builder, QFT, Monte Carlo noise, QEC helpers, Qiskit-compatible `OpenQASM` import support, advanced algorithms (QPE, Shor, VQE, QAOA, Simon, random walk), examples, and benchmarks.
 - `crates/waros-cli`
   Command-line interface for running QASM files, inspecting circuits, benchmarking, REPL usage, and simulated `qstat`.
 - `crates/waros-crypto`
   ML-KEM, ML-DSA / SLH-DSA wrappers via `pqcrypto`, SHA-3 / SHAKE helpers, and a simulated QRNG backed by the quantum SDK.
 - `crates/waros-python`
-  PyO3 + maturin bindings exposing the quantum simulator, QASM utilities, advanced algorithms, noise models, and post-quantum cryptography to Python as `waros`.
+  PyO3 + maturin bindings exposing the quantum simulator, QASM utilities, a Qiskit-style compatibility layer, advanced algorithms, noise models, and post-quantum cryptography to Python as `waros`.
 
 ## Quick Start
 
@@ -90,7 +94,10 @@ fn main() -> Result<(), WarosError> {
 - Built-in QFT / inverse QFT, circuit composition, depth analysis, and ASCII diagrams.
 - Monte Carlo depolarizing, damping, phase, and readout noise profiles.
 - Advanced algorithm demos and APIs for Quantum Phase Estimation, Shor factoring, VQE chemistry, QAOA MaxCut, Simon's algorithm, and quantum random walks.
+- State-vector layout selection (`AoS` or `SoA`) plus an MPS backend for low-entanglement larger-qubit workloads.
 - `OpenQASM` 2.0 parsing/serialization plus runnable QASM fixtures in [`examples/qasm`](examples/qasm).
+- Qiskit-oriented import support including `u1`/`u2`/`u3`, custom gates, conditionals, and a Python compatibility wrapper.
+- Quantum error-correction helpers with repetition-code and Steane-code circuit builders.
 - Post-quantum cryptography using maintained `pqcrypto` crates and SHA-3 / SHAKE.
 - Python bindings via PyO3 and maturin with `Circuit`, `Simulator`, `NoiseModel`, `QuantumResult`, QASM helpers, a `waros.crypto` submodule, and a `waros.algorithms` submodule.
 - Bootable x86_64 kernel bootstrap with framebuffer output, interrupt handling, memory initialization, PS/2 keyboard input, and a minimal interactive shell.
@@ -125,6 +132,7 @@ qaoa = waros.algorithms.qaoa_maxcut("square", seed=42)
 ```bash
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -W clippy::all -W clippy::pedantic -A clippy::module_name_repetitions -A clippy::cast_possible_truncation
+cargo doc --no-deps --workspace
 cargo build --release --workspace
 ```
 

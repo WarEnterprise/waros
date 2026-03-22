@@ -16,14 +16,17 @@ mod quantum;
 mod shell;
 
 use core::alloc::Layout;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use bootloader_api::config::{BootloaderConfig, Mapping};
 use bootloader_api::{entry_point, BootInfo};
-use x86_64::instructions::interrupts;
+use x86_64::instructions::interrupts as cpu_interrupts;
 
 use crate::display::console::Colors;
 
 pub const KERNEL_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const BUILD_DATE: &str = "2026-03-22";
+static BOOT_COMPLETE_MS: AtomicU64 = AtomicU64::new(0);
 
 pub static BOOTLOADER_CONFIG: BootloaderConfig = {
     let mut config = BootloaderConfig::new_default();
@@ -86,6 +89,7 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
         format_args!("PIT timer: {} Hz", arch::x86_64::pit::PIT_FREQUENCY_HZ),
         format_args!("PIT timer: {} Hz", arch::x86_64::pit::PIT_FREQUENCY_HZ),
     );
+    cpu_interrupts::enable();
 
     memory::init(boot_context.memory_regions)?;
     let stats = memory::stats();
@@ -121,27 +125,35 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
 
     drivers::keyboard::init();
     boot_ok("Keyboard driver active");
+    boot_ok("Quantum subsystem ready (15 qubits max)");
+
+    let boot_complete_ms = boot_elapsed_ms();
+    BOOT_COMPLETE_MS.store(boot_complete_ms, Ordering::Relaxed);
 
     display::branding::show_separator();
+    kprint_colored!(Colors::DIM, "Boot complete in {} ms.\n", boot_complete_ms);
     boot_notice("System ready. Type 'help' for available commands.");
     kprintln!();
-
-    interrupts::enable();
     Ok(())
 }
 
 fn boot_ok(message: &str) {
+    let elapsed = boot_elapsed_ms();
     kprint_colored!(Colors::GREEN, "[OK]");
-    kprintln!(" {}", message);
-    serial_println!("[OK] {}", message);
+    crate::kprint!(" {}", message);
+    kprint_colored!(Colors::DIM, " ({:>3} ms)", elapsed);
+    kprintln!();
+    serial_println!("[OK] {} ({} ms)", message, elapsed);
 }
 
 fn boot_ok_fmt(screen_message: core::fmt::Arguments<'_>, serial_message: core::fmt::Arguments<'_>) {
+    let elapsed = boot_elapsed_ms();
     kprint_colored!(Colors::GREEN, "[OK]");
     crate::kprint!(" ");
     crate::kprint!("{}", screen_message);
+    kprint_colored!(Colors::DIM, " ({:>3} ms)", elapsed);
     kprintln!();
-    serial_println!("[OK] {}", serial_message);
+    serial_println!("[OK] {} ({} ms)", serial_message, elapsed);
 }
 
 fn boot_notice(message: &str) {
@@ -155,6 +167,15 @@ fn fatal(message: &str) -> ! {
     kprintln!(" {}", message);
     serial_println!("[ERR] {}", message);
     arch::x86_64::hlt_loop()
+}
+
+#[must_use]
+pub fn boot_complete_ms() -> u64 {
+    BOOT_COMPLETE_MS.load(Ordering::Relaxed)
+}
+
+fn boot_elapsed_ms() -> u64 {
+    arch::x86_64::pit::elapsed_millis(crate::arch::x86_64::interrupts::tick_count())
 }
 
 #[alloc_error_handler]

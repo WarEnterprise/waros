@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect::<String>()
     );
     println!("  Best cut value:        {:.1}", result.best_cost);
-    println!("  Approximation ratio:   {:.2}", ratio);
+    println!("  Approximation ratio:   {ratio:.2}");
     println!();
     println!("  QAOA alternates cost and mixer unitaries to bias toward good cuts.");
 

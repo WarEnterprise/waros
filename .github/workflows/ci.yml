@@ -1,0 +1,45 @@
+name: WarOS CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - name: Build workspace
+        run: cargo build --workspace
+      - name: Test workspace
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -W clippy::all -W clippy::pedantic -A clippy::module_name_repetitions -A clippy::cast_possible_truncation
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Docs
+        run: cargo doc --no-deps --workspace
+      - name: Build kernel
+        run: cd kernel && cargo +nightly build --release --target x86_64-unknown-none
+
+  python:
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install maturin and pytest
+        run: pip install maturin pytest
+      - name: Build Python bindings
+        run: cd crates/waros-python && maturin develop
+      - name: Test Python bindings
+        run: cd crates/waros-python && pytest tests/test_waros.py -v

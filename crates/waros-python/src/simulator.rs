@@ -66,7 +66,7 @@ impl PySimulator {
             .map_err(value_error)?;
         Ok(state
             .into_iter()
-            .map(|amplitude| amplitude.norm_sq())
+            .map(waros_quantum::Complex::norm_sq)
             .collect())
     }
 

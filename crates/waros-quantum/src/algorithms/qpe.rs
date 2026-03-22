@@ -1,3 +1,5 @@
+#![allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
+
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 
@@ -23,6 +25,12 @@ pub struct QPEResult {
 /// The current implementation supports 1-qubit unitaries. It derives the phase
 /// from the prepared eigenstate and then quantizes it to the requested number of
 /// precision bits, matching the ideal output of phase estimation.
+///
+/// # Errors
+///
+/// Returns [`WarosError`] when the requested precision is zero, when the gate
+/// width is unsupported, or when the prepared state is not an eigenstate of the
+/// supplied unitary.
 pub fn quantum_phase_estimation<F>(
     unitary: &Gate,
     eigenstate_prep: F,
@@ -73,11 +81,7 @@ fn infer_eigenvalue(unitary: &Gate, eigenstate: [Complex; 2]) -> WarosResult<Com
         unitary.get(1, 0) * eigenstate[0] + unitary.get(1, 1) * eigenstate[1],
     ];
 
-    let reference = if eigenstate[0].norm_sq() >= eigenstate[1].norm_sq() {
-        0
-    } else {
-        1
-    };
+    let reference = usize::from(eigenstate[0].norm_sq() < eigenstate[1].norm_sq());
 
     if eigenstate[reference].norm_sq() <= EIGENSTATE_EPSILON {
         return Err(WarosError::SimulationError(

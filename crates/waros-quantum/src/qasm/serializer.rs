@@ -16,6 +16,18 @@ pub(super) fn to_qasm(circuit: &Circuit) -> String {
             Instruction::GateOp { gate, targets } => {
                 lines.push(format_gate(gate.name.as_str(), targets));
             }
+            Instruction::ConditionalGate {
+                value,
+                gate,
+                targets,
+                ..
+            } => {
+                let gate_statement = format_gate(gate.name.as_str(), targets);
+                lines.push(format!(
+                    "if(c=={value}) {}",
+                    gate_statement.trim_end_matches(';')
+                ));
+            }
             Instruction::Measure {
                 qubit,
                 classical_bit,

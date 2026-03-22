@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use std::collections::HashMap;
 
 use pyo3::prelude::*;
@@ -73,12 +75,13 @@ impl PyQuantumResult {
     fn __str__(&self) -> String {
         let mut output = format!("QuantumResult ({} shots):\n", self.inner.total_shots());
         for (state, count, probability) in self.inner.histogram() {
-            output.push_str(&format!(
-                "  |{}> : {} ({:.1}%)\n",
+            let _ = writeln!(
+                output,
+                "  |{}> : {} ({:.1}%)",
                 state,
                 count,
                 probability * 100.0
-            ));
+            );
         }
         output.trim_end().to_string()
     }

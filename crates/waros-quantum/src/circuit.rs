@@ -3,14 +3,25 @@ use crate::gate::{self, Gate};
 
 mod extensions;
 
-/// Maximum number of qubits supported by the state-vector backend.
-pub const MAX_QUBITS: usize = 30;
+/// Maximum number of qubits supported by the circuit model.
+///
+/// The exact backend may impose stricter runtime limits, but circuit
+/// construction supports wider systems so tensor-network backends can
+/// simulate low-entanglement workloads beyond the state-vector range.
+pub const MAX_QUBITS: usize = 128;
 
 /// A single quantum instruction inside a circuit.
 #[derive(Debug, Clone)]
 pub enum Instruction {
     /// Apply a quantum gate to the provided target qubits.
     GateOp { gate: Gate, targets: Vec<usize> },
+    /// Apply a quantum gate when a classical register equals a specific value.
+    ConditionalGate {
+        classical_bits: Vec<usize>,
+        value: usize,
+        gate: Gate,
+        targets: Vec<usize>,
+    },
     /// Measure a qubit into a classical bit.
     Measure { qubit: usize, classical_bit: usize },
     /// Insert a logical barrier across the provided qubits.
@@ -92,7 +103,12 @@ impl Circuit {
     pub fn gate_count(&self) -> usize {
         self.instructions
             .iter()
-            .filter(|instruction| matches!(instruction, Instruction::GateOp { .. }))
+            .filter(|instruction| {
+                matches!(
+                    instruction,
+                    Instruction::GateOp { .. } | Instruction::ConditionalGate { .. }
+                )
+            })
             .count()
     }
 
@@ -141,6 +157,18 @@ impl Circuit {
         self.num_classical_bits = self.num_classical_bits.max(required);
     }
 
+    fn validate_classical_bits(&self, classical_bits: &[usize]) -> WarosResult<()> {
+        for &classical_bit in classical_bits {
+            if classical_bit >= self.num_classical_bits {
+                return Err(WarosError::SimulationError(format!(
+                    "classical bit {classical_bit} out of range (circuit has {} classical bits)",
+                    self.num_classical_bits
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn add1(&mut self, gate: Gate, qubit: usize) -> WarosResult<&mut Self> {
         self.validate_qubit(qubit)?;
         self.instructions.push(Instruction::GateOp {
@@ -187,6 +215,43 @@ impl Circuit {
 
         self.validate_distinct_qubits(targets)?;
         self.instructions.push(Instruction::GateOp {
+            gate,
+            targets: targets.to_vec(),
+        });
+        Ok(self)
+    }
+
+    /// Apply a custom gate conditioned on a classical register value.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the gate or target list is invalid, or if any
+    /// classical bit lies outside the allocated classical register.
+    pub fn conditional_gate(
+        &mut self,
+        classical_bits: &[usize],
+        value: usize,
+        gate: Gate,
+        targets: &[usize],
+    ) -> WarosResult<&mut Self> {
+        if classical_bits.is_empty() {
+            return Err(WarosError::SimulationError(
+                "conditional gates require at least one classical bit".into(),
+            ));
+        }
+        self.validate_classical_bits(classical_bits)?;
+        if gate.num_qubits != targets.len() {
+            return Err(WarosError::SimulationError(format!(
+                "gate '{}' expects {} targets, got {}",
+                gate.name,
+                gate.num_qubits,
+                targets.len()
+            )));
+        }
+        self.validate_distinct_qubits(targets)?;
+        self.instructions.push(Instruction::ConditionalGate {
+            classical_bits: classical_bits.to_vec(),
+            value,
             gate,
             targets: targets.to_vec(),
         });

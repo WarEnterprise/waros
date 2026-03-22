@@ -1,15 +1,17 @@
+#![allow(clippy::missing_errors_doc)]
+
 use crate::circuit::Circuit;
 use crate::error::{WarosError, WarosResult};
 use crate::simulator::Simulator;
 
-/// Weighted graph used for MaxCut instances.
+/// Weighted graph used for `MaxCut` instances.
 #[derive(Debug, Clone)]
 pub struct Graph {
     pub num_vertices: usize,
     pub edges: Vec<(usize, usize, f64)>,
 }
 
-/// Result of a QAOA MaxCut optimization run.
+/// Result of a QAOA `MaxCut` optimization run.
 #[derive(Debug, Clone)]
 pub struct QAOAResult {
     pub best_solution: Vec<bool>,
@@ -20,7 +22,7 @@ pub struct QAOAResult {
     pub cost_history: Vec<f64>,
 }
 
-/// Run QAOA for a weighted MaxCut problem.
+/// Run QAOA for a weighted `MaxCut` problem.
 pub fn qaoa_maxcut(
     graph: &Graph,
     p: usize,
@@ -99,7 +101,7 @@ pub fn qaoa_maxcut(
     })
 }
 
-/// Exhaustively compute the optimal MaxCut value for a small graph.
+/// Exhaustively compute the optimal `MaxCut` value for a small graph.
 #[must_use]
 pub fn classical_maxcut(graph: &Graph) -> f64 {
     let mut best = f64::NEG_INFINITY;
@@ -249,17 +251,17 @@ fn numerical_gradient(
     Ok((grad_gamma, grad_beta))
 }
 
-/// Evaluate the weighted MaxCut cost for a bit assignment.
+/// Evaluate the weighted `MaxCut` cost for a bit assignment.
 #[must_use]
 pub fn maxcut_cost(graph: &Graph, assignment: &[bool]) -> f64 {
     graph
         .edges
         .iter()
         .map(|(u, v, weight)| {
-            if assignment[*u] != assignment[*v] {
-                *weight
-            } else {
+            if assignment[*u] == assignment[*v] {
                 0.0
+            } else {
+                *weight
             }
         })
         .sum()

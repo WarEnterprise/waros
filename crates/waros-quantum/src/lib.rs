@@ -25,6 +25,7 @@ pub mod error;
 pub mod gate;
 pub mod noise;
 pub mod qasm;
+pub mod qec;
 pub mod result;
 pub mod simulator;
 
@@ -39,5 +40,6 @@ pub use complex::Complex;
 pub use error::{WarosError, WarosResult};
 pub use noise::{NoiseChannel, NoiseModel};
 pub use qasm::{parse_qasm, to_qasm, QasmError};
+pub use qec::{QECCode, RepetitionCode, SteaneCode};
 pub use result::QuantumResult;
-pub use simulator::{Backend, Simulator, SimulatorBuilder};
+pub use simulator::{Backend, Simulator, SimulatorBuilder, StateVectorLayout};

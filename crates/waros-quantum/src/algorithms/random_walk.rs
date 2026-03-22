@@ -1,3 +1,5 @@
+#![allow(clippy::cast_possible_wrap, clippy::cast_precision_loss)]
+
 /// Result of a discrete-time quantum random walk on a 1D line.
 #[derive(Debug, Clone)]
 pub struct RandomWalkResult {
