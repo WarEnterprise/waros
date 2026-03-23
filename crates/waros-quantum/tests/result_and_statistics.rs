@@ -187,13 +187,13 @@ fn zero_shot_runs_are_rejected() {
 }
 
 #[test]
-fn thirty_qubit_circuit_is_allowed() {
-    let circuit = Circuit::new(30).expect("30 qubits is supported");
-    assert_eq!(circuit.num_qubits(), 30);
+fn one_hundred_twenty_eight_qubit_circuit_is_allowed() {
+    let circuit = Circuit::new(128).expect("128 qubits is supported");
+    assert_eq!(circuit.num_qubits(), 128);
 }
 
 #[test]
-fn thirty_one_qubits_are_rejected() {
-    let error = Circuit::new(31).expect_err("31 qubits exceeds the limit");
-    assert_eq!(error, WarosError::TooManyQubits(31, 30));
+fn one_hundred_twenty_nine_qubits_are_rejected() {
+    let error = Circuit::new(129).expect_err("129 qubits exceeds the limit");
+    assert_eq!(error, WarosError::TooManyQubits(129, 128));
 }

@@ -92,9 +92,9 @@ impl NoiseModel {
         two_q_fidelity: f64,
         readout_fidelity: f64,
     ) -> Self {
-        let gate_time_us = (gate_time_ns / 1_000.0).max(0.0);
-        let gamma = relaxation_parameter(gate_time_us, t1_us);
-        let lambda = relaxation_parameter(gate_time_us, t2_us);
+        let gate_duration_us = (gate_time_ns / 1_000.0).max(0.0);
+        let gamma = relaxation_parameter(gate_duration_us, t1_us);
+        let lambda = relaxation_parameter(gate_duration_us, t2_us);
         let single_q_error = clamp_probability(1.0 - single_q_fidelity);
         let two_q_error = clamp_probability(1.0 - two_q_fidelity);
         let readout_error = clamp_probability(1.0 - readout_fidelity);

@@ -172,10 +172,10 @@ fn error_missing_semicolon() {
 
 #[test]
 fn error_malformed_header() {
-    let source = r#"
+    let source = r"
         OPENQASM 3.0;
         qreg q[1];
-    "#;
+    ";
     let error = parse_qasm(source).expect_err("malformed header must fail");
     assert!(matches!(error, QasmError::ParseError { .. }));
 }
@@ -217,7 +217,7 @@ fn parse_multiple_registers() {
     let result = Simulator::with_seed(109)
         .run(&circuit, 100)
         .expect("simulation succeeds");
-    assert_eq!(result.probability("11"), 1.0);
+    assert!((result.probability("11") - 1.0).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -234,4 +234,56 @@ fn qasm_expression_parser_handles_nested_terms() {
     );
     let circuit = parse_qasm(&source).expect("qasm parses");
     assert_eq!(circuit.gate_count(), 2);
+}
+
+#[test]
+fn parse_qiskit_style_u_gates_and_identity() {
+    let source = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[1];
+        u1(pi/2) q[0];
+        u2(0, pi) q[0];
+        id q[0];
+    "#;
+    let circuit = parse_qasm(source).expect("qasm parses");
+    assert_eq!(circuit.gate_count(), 2);
+}
+
+#[test]
+fn parse_custom_gate_definition() {
+    let source = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        gate myh q { u2(0, pi) q; }
+        qreg q[1];
+        creg c[1];
+        myh q[0];
+        measure q[0] -> c[0];
+    "#;
+    let circuit = parse_qasm(source).expect("qasm parses");
+    let result = Simulator::with_seed(17)
+        .run(&circuit, 10_000)
+        .expect("simulation succeeds");
+    assert!((result.probability("0") - 0.5).abs() < 0.05);
+    assert!((result.probability("1") - 0.5).abs() < 0.05);
+}
+
+#[test]
+fn parse_conditional_execution() {
+    let source = r#"
+        OPENQASM 2.0;
+        include "qelib1.inc";
+        qreg q[1];
+        creg c[1];
+        x q[0];
+        measure q[0] -> c[0];
+        if(c==1) x q[0];
+        measure q[0] -> c[0];
+    "#;
+    let circuit = parse_qasm(source).expect("qasm parses");
+    let result = Simulator::with_seed(23)
+        .run(&circuit, 256)
+        .expect("simulation succeeds");
+    assert!((result.probability("0") - 1.0).abs() < 1e-10);
 }

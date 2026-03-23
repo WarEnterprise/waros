@@ -15,6 +15,7 @@ pub enum SecurityLevel {
     Level5,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum PublicKeyKind {
     Level1(mlkem512::PublicKey),
@@ -22,6 +23,7 @@ enum PublicKeyKind {
     Level5(mlkem1024::PublicKey),
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum SecretKeyKind {
     Level1(mlkem512::SecretKey),
@@ -29,6 +31,7 @@ enum SecretKeyKind {
     Level5(mlkem1024::SecretKey),
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum CiphertextKind {
     Level1(mlkem512::Ciphertext),

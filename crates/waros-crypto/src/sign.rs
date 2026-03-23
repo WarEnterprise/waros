@@ -4,7 +4,7 @@ use pqcrypto_traits::sign::{DetachedSignature as _, PublicKey as _, SecretKey as
 
 use crate::error::{CryptoError, CryptoResult};
 
-/// Signature schemes supported by WarOS.
+/// Signature schemes supported by `WarOS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SignatureScheme {
     /// ML-DSA / Dilithium.
@@ -13,12 +13,14 @@ pub enum SignatureScheme {
     SlhDsa,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum SignPublicKeyKind {
     MlDsa(dilithium3::PublicKey),
     SlhDsa(sphincsshake128fsimple::PublicKey),
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum SignSecretKeyKind {
     MlDsa(dilithium3::SecretKey),

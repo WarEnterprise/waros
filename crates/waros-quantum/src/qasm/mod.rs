@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::Circuit;
 
-/// Errors returned while parsing OpenQASM 2.0 source.
+/// Errors returned while parsing `OpenQASM` 2.0 source.
 #[derive(Debug, Error, PartialEq)]
 pub enum QasmError {
     /// Generic parse error with line information.
@@ -26,7 +26,7 @@ pub enum QasmError {
     },
 }
 
-/// Parse OpenQASM 2.0 source into a [`Circuit`].
+/// Parse `OpenQASM` 2.0 source into a [`Circuit`].
 ///
 /// # Errors
 ///
@@ -36,7 +36,7 @@ pub fn parse_qasm(source: &str) -> Result<Circuit, QasmError> {
     parser::parse_qasm(source)
 }
 
-/// Serialize a circuit into OpenQASM 2.0 source.
+/// Serialize a circuit into `OpenQASM` 2.0 source.
 #[must_use]
 pub fn to_qasm(circuit: &Circuit) -> String {
     serializer::to_qasm(circuit)

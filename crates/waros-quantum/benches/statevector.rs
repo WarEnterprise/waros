@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use waros_quantum::{Circuit, Simulator};
+use waros_quantum::{Backend, Circuit, Simulator, StateVectorLayout};
 
 fn hadamard_circuit(num_qubits: usize) -> Circuit {
     let mut circuit = Circuit::new(num_qubits).expect("valid circuit");
@@ -173,11 +173,105 @@ fn bench_grover_n(criterion: &mut Criterion) {
     group.finish();
 }
 
+fn bench_statevector_layouts(criterion: &mut Criterion) {
+    let mut group = criterion.benchmark_group("bench_statevector_layouts");
+    let aos_simulator = Simulator::builder()
+        .parallel(true)
+        .statevector_layout(StateVectorLayout::AoS)
+        .build();
+    let soa_simulator = Simulator::builder()
+        .parallel(true)
+        .statevector_layout(StateVectorLayout::SoA)
+        .build();
+
+    for (label, circuit) in [
+        ("hadamard_20", hadamard_circuit(20)),
+        ("bell_chain_20", bell_chain_circuit(20)),
+    ] {
+        group.bench_with_input(
+            BenchmarkId::new("AoS", label),
+            &circuit,
+            |bench, circuit| {
+                bench.iter(|| {
+                    aos_simulator
+                        .statevector(black_box(circuit))
+                        .expect("simulation succeeds")
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new("SoA", label),
+            &circuit,
+            |bench, circuit| {
+                bench.iter(|| {
+                    soa_simulator
+                        .statevector(black_box(circuit))
+                        .expect("simulation succeeds")
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+fn bench_backend_comparison(criterion: &mut Criterion) {
+    let mut group = criterion.benchmark_group("bench_backend_comparison");
+    let statevector_simulator = Simulator::builder()
+        .backend(Backend::StateVector)
+        .statevector_layout(StateVectorLayout::SoA)
+        .build();
+    let mps_simulator = Simulator::builder()
+        .backend(Backend::MPS { max_bond_dim: 64 })
+        .build();
+
+    let bell_chain = bell_chain_circuit(20);
+    group.bench_with_input(
+        BenchmarkId::new("StateVector", "bell_chain_20"),
+        &bell_chain,
+        |bench, circuit| {
+            bench.iter(|| {
+                statevector_simulator
+                    .statevector(black_box(circuit))
+                    .expect("simulation succeeds")
+            });
+        },
+    );
+    group.bench_with_input(
+        BenchmarkId::new("MPS", "bell_chain_20"),
+        &bell_chain,
+        |bench, circuit| {
+            bench.iter(|| {
+                mps_simulator
+                    .run(black_box(circuit), 128)
+                    .expect("simulation succeeds")
+            });
+        },
+    );
+
+    let hadamard_40 = hadamard_circuit(40);
+    group.bench_with_input(
+        BenchmarkId::new("MPS", "hadamard_40"),
+        &hadamard_40,
+        |bench, circuit| {
+            bench.iter(|| {
+                mps_simulator
+                    .run(black_box(circuit), 128)
+                    .expect("simulation succeeds")
+            });
+        },
+    );
+
+    group.finish();
+}
+
 criterion_group!(
     statevector_benches,
     bench_hadamard_n,
     bench_bell_state_n,
     bench_qft_n,
-    bench_grover_n
+    bench_grover_n,
+    bench_statevector_layouts,
+    bench_backend_comparison
 );
 criterion_main!(statevector_benches);

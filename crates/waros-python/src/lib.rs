@@ -1,9 +1,18 @@
+#![allow(
+    clippy::needless_pass_by_value,
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::unused_self,
+    clippy::useless_conversion
+)]
+
 use std::fmt::Display;
 
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
+mod algorithms;
 mod circuit;
 mod crypto;
 mod noise;
@@ -28,10 +37,16 @@ fn waros(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     m.add_function(wrap_pyfunction!(qasm::parse_qasm, m)?)?;
     m.add_function(wrap_pyfunction!(qasm::to_qasm, m)?)?;
+    algorithms::register_root(m)?;
 
     let crypto_module = PyModule::new_bound(m.py(), "crypto")?;
     crypto::register(&crypto_module)?;
+    m.add("crypto", &crypto_module)?;
     m.add_submodule(&crypto_module)?;
+
+    let algorithms_module = PyModule::new_bound(m.py(), "algorithms")?;
+    algorithms::register(&algorithms_module)?;
+    m.add_submodule(&algorithms_module)?;
 
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())

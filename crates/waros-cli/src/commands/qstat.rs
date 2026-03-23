@@ -4,28 +4,28 @@ use sysinfo::System;
 
 use crate::utils::CliResult;
 
+#[allow(clippy::unnecessary_wraps)]
 pub fn execute() -> CliResult {
     let mut system = System::new();
     system.refresh_memory();
     let available_memory = system.available_memory();
-    let max_qubits = if available_memory < 16 {
+    let amplitude_budget = available_memory / 16;
+    let max_qubits = if amplitude_budget == 0 {
         0
     } else {
-        ((available_memory / 16) as f64).log2().floor() as usize
+        usize::try_from(u64::BITS - 1 - amplitude_budget.leading_zeros()).unwrap_or(0)
     };
     let threads = thread::available_parallelism()
-        .map(|parallelism| parallelism.get())
+        .map(std::num::NonZeroUsize::get)
         .unwrap_or(1);
+    let available_mib = available_memory / 1024 / 1024;
 
     println!("╔══════════════════════════════════════════════════╗");
     println!("║              WarOS Quantum - System Status      ║");
     println!("╚══════════════════════════════════════════════════╝");
     println!();
     println!("  Backend:     StateVector (classical simulation)");
-    println!(
-        "  Max qubits:  {max_qubits} (estimated from {:.1} GiB available RAM)",
-        available_memory as f64 / 1024.0 / 1024.0 / 1024.0
-    );
+    println!("  Max qubits:  {max_qubits} (estimated from {available_mib} MiB available RAM)");
     println!("  Threads:     {threads} (Rayon parallel for >=16 qubits)");
     println!("  Features:    QFT, noise simulation, QASM parser");
     println!("  Version:     waros-quantum {}", env!("CARGO_PKG_VERSION"));

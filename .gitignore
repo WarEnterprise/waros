@@ -1,4 +1,6 @@
 /target
+kernel/target/
+tools/kernel-image-builder/target/
 **/*.rs.bk
 Cargo.lock
 *.swp
