@@ -371,7 +371,7 @@ fn to_ascii_renders_controls_targets_and_measurements() {
     let ascii = circuit.to_ascii();
     assert!(ascii.contains("q0:"));
     assert!(ascii.contains("q1:"));
-    assert!(ascii.contains('@'));
-    assert!(ascii.contains('X'));
+    assert!(ascii.contains('@') || ascii.contains('●'));
+    assert!(ascii.contains('X') || ascii.contains('⊕'));
     assert!(ascii.contains("[M]"));
 }

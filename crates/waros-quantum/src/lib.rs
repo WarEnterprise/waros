@@ -18,19 +18,33 @@
 //! # }
 //! ```
 
+pub mod algorithms;
 pub mod circuit;
 pub mod complex;
 pub mod error;
 pub mod gate;
 pub mod noise;
+pub mod optimizer;
 pub mod qasm;
+pub mod qec;
 pub mod result;
 pub mod simulator;
 
+pub use algorithms::{
+    apply_hidden_xor_oracle, classical_maxcut, continued_fraction_period, evaluate_expectation,
+    gcd, maxcut_cost, mod_pow, qaoa_maxcut, quantum_phase_estimation, quantum_random_walk,
+    shor_factor, simon_algorithm, solve_gf2, vqe, AnsatzType, Graph, Hamiltonian, Pauli, PauliTerm,
+    QAOAResult, QPEResult, RandomWalkResult, ShorResult, SimonResult, VQEResult,
+};
 pub use circuit::Circuit;
 pub use complex::Complex;
 pub use error::{WarosError, WarosResult};
 pub use noise::{NoiseChannel, NoiseModel};
+pub use optimizer::{CircuitOptimizer, OptimizationStats};
 pub use qasm::{parse_qasm, to_qasm, QasmError};
+pub use qec::{QECCode, RepetitionCode, SteaneCode};
 pub use result::QuantumResult;
-pub use simulator::{Backend, Simulator, SimulatorBuilder};
+pub use simulator::{
+    quantum_state_tomography, Backend, DensityMatrixSimulator, Simulator, SimulatorBuilder,
+    StateVectorLayout,
+};

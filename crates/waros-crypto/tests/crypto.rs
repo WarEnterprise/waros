@@ -1,4 +1,5 @@
 use std::time::Instant;
+use std::{fmt::Write as _, num::TryFromIntError};
 
 use waros_crypto::{
     hash,
@@ -9,7 +10,15 @@ use waros_crypto::{
 };
 
 fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut encoded, "{byte:02x}").expect("write to string");
+    }
+    encoded
+}
+
+fn usize_to_f64(value: usize) -> Result<f64, TryFromIntError> {
+    u32::try_from(value).map(f64::from)
 }
 
 #[test]
@@ -97,9 +106,8 @@ fn verification_fails_with_modified_signature() {
     let signature = sign::sign(&sk, b"waros");
     let mut tampered = signature.as_bytes().to_vec();
     tampered[0] ^= 0x01;
-    match Signature::from_bytes(signature.scheme(), &tampered) {
-        Ok(tampered) => assert!(!sign::verify(&pk, b"waros", &tampered)),
-        Err(_) => {}
+    if let Ok(tampered) = Signature::from_bytes(signature.scheme(), &tampered) {
+        assert!(!sign::verify(&pk, b"waros", &tampered));
     }
 }
 
@@ -169,9 +177,10 @@ fn qrng_random_bytes_differ_between_calls() {
 #[test]
 fn qrng_random_bits_distribution_is_balanced() {
     let bits = qrng::random_bits(10_000);
-    let ones = bits.iter().filter(|bit| **bit).count() as f64;
-    let zeros = bits.len() as f64 - ones;
-    let expected = bits.len() as f64 / 2.0;
+    let ones = usize_to_f64(bits.iter().filter(|bit| **bit).count()).expect("bit count fits");
+    let total = usize_to_f64(bits.len()).expect("bit count fits");
+    let zeros = total - ones;
+    let expected = total / 2.0;
     let chi_squared =
         ((zeros - expected).powi(2) / expected) + ((ones - expected).powi(2) / expected);
     assert!(chi_squared < 12.0, "chi-squared was {chi_squared:.4}");
@@ -185,13 +194,14 @@ fn qrng_random_seed_has_expected_size() {
 #[test]
 fn integration_sign_kem_verify_workflow() {
     let message = b"WarOS hybrid quantum-classical stack";
-    let (sign_pk, sign_sk) = sign::keygen();
-    let signature = sign::sign(&sign_sk, message);
-    assert!(sign::verify(&sign_pk, message, &signature));
+    let (verification_key, signing_key) = sign::keygen();
+    let signature = sign::sign(&signing_key, message);
+    assert!(sign::verify(&verification_key, message, &signature));
 
-    let (kem_pk, kem_sk) = kem::keygen();
-    let (ciphertext, shared_secret_enc) = kem::encapsulate(&kem_pk);
-    let shared_secret_dec = kem::decapsulate(&kem_sk, &ciphertext).expect("decapsulation succeeds");
+    let (kem_public_key, kem_secret_material) = kem::keygen();
+    let (ciphertext, shared_secret_enc) = kem::encapsulate(&kem_public_key);
+    let shared_secret_dec =
+        kem::decapsulate(&kem_secret_material, &ciphertext).expect("decapsulation succeeds");
     assert_eq!(shared_secret_enc, shared_secret_dec);
 }
 

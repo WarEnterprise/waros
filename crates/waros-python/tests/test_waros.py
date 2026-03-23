@@ -5,7 +5,12 @@ Run with:
     pytest tests/test_waros.py -v
 """
 
+from pathlib import Path
+import sys
+
 import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import waros
 
@@ -92,7 +97,7 @@ class TestCircuit:
 
     def test_max_qubits(self):
         with pytest.raises(ValueError):
-            waros.Circuit(31)
+            waros.Circuit(129)
 
 
 class TestSimulator:
@@ -283,3 +288,51 @@ class TestCrypto:
 
     def test_version(self):
         assert hasattr(waros, "__version__")
+
+
+class TestAlgorithms:
+    def test_shor_factor(self):
+        result = waros.algorithms.shor_factor(15, seed=42)
+        assert sorted(result["factors"]) == [3, 5]
+        assert result["period"] == 4
+        assert result["attempts"] >= 1
+
+    def test_vqe_hydrogen(self):
+        result = waros.algorithms.vqe_hydrogen(max_iterations=10, shots=500, seed=42)
+        assert result["energy"] < -1.0
+        assert len(result["params"]) == 2
+        assert result["iterations"] >= 1
+
+    def test_qaoa_maxcut_from_edges(self):
+        result = waros.algorithms.qaoa_maxcut(
+            [(0, 1), (1, 2), (2, 3), (3, 0)],
+            4,
+            p=2,
+            max_iterations=10,
+            shots=500,
+            seed=42,
+        )
+        assert set(result["solution"]).issubset({"0", "1"})
+        assert result["cost"] >= 2.0
+
+    def test_phase_estimation(self):
+        result = waros.algorithms.phase_estimation("t", precision_bits=3, shots=128, seed=42)
+        assert abs(result["phase"] - 0.125) < 0.01
+
+    def test_random_walk(self):
+        result = waros.algorithms.random_walk(6)
+        assert abs(sum(result["probabilities"]) - 1.0) < 1e-9
+
+
+class TestCompat:
+    def test_qiskit_style_quantum_circuit(self):
+        from waros.compat import QuantumCircuit
+
+        circuit = QuantumCircuit(2, 2)
+        circuit.h(0)
+        circuit.cx(0, 1)
+        circuit.measure([0, 1], [0, 1])
+
+        result = circuit.run(shots=1000)
+        assert abs(result.probability("00") - 0.5) < 0.1
+        assert abs(result.probability("11") - 0.5) < 0.1

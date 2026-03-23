@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// Result alias for WarOS cryptography APIs.
+/// Result alias for `WarOS` cryptography APIs.
 pub type CryptoResult<T> = Result<T, CryptoError>;
 
 /// Errors returned by the cryptography modules.

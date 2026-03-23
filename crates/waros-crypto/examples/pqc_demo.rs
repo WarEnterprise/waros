@@ -1,4 +1,5 @@
 use std::time::Instant;
+use std::{fmt::Write as _, num::TryFromIntError};
 
 use waros_crypto::{
     hash,
@@ -14,15 +15,16 @@ fn main() {
     println!();
 
     let start = Instant::now();
-    let (kem_pk, kem_sk) = kem::keygen_with_level(SecurityLevel::Level3);
+    let (kem_public_key, kem_secret_material) = kem::keygen_with_level(SecurityLevel::Level3);
     let keygen_elapsed = start.elapsed();
 
     let start = Instant::now();
-    let (ciphertext, shared_secret_enc) = kem::encapsulate(&kem_pk);
+    let (ciphertext, shared_secret_enc) = kem::encapsulate(&kem_public_key);
     let encapsulate_elapsed = start.elapsed();
 
     let start = Instant::now();
-    let shared_secret_dec = kem::decapsulate(&kem_sk, &ciphertext).expect("decapsulation succeeds");
+    let shared_secret_dec =
+        kem::decapsulate(&kem_secret_material, &ciphertext).expect("decapsulation succeeds");
     let decapsulate_elapsed = start.elapsed();
 
     println!("-- Key Encapsulation (ML-KEM-768) --");
@@ -30,8 +32,11 @@ fn main() {
         "  Keygen:        {:>6.3} ms",
         keygen_elapsed.as_secs_f64() * 1_000.0
     );
-    println!("  Public key:    {} bytes", kem_pk.as_bytes().len());
-    println!("  Secret key:    {} bytes", kem_sk.as_bytes().len());
+    println!("  Public key:    {} bytes", kem_public_key.as_bytes().len());
+    println!(
+        "  Secret key:    {} bytes",
+        kem_secret_material.as_bytes().len()
+    );
     println!(
         "  Encapsulate:   {:>6.3} ms",
         encapsulate_elapsed.as_secs_f64() * 1_000.0
@@ -56,16 +61,16 @@ fn main() {
     println!();
 
     let start = Instant::now();
-    let (sign_pk, sign_sk) = sign::keygen();
+    let (verification_key, signing_key) = sign::keygen();
     let sign_keygen_elapsed = start.elapsed();
     let message = b"WarOS";
 
     let start = Instant::now();
-    let signature = sign::sign(&sign_sk, message);
+    let signature = sign::sign(&signing_key, message);
     let sign_elapsed = start.elapsed();
 
     let start = Instant::now();
-    let verified = sign::verify(&sign_pk, message, &signature);
+    let verified = sign::verify(&verification_key, message, &signature);
     let verify_elapsed = start.elapsed();
 
     println!("-- Digital Signature (ML-DSA / Dilithium3) --");
@@ -73,8 +78,11 @@ fn main() {
         "  Keygen:        {:>6.3} ms",
         sign_keygen_elapsed.as_secs_f64() * 1_000.0
     );
-    println!("  Public key:    {} bytes", sign_pk.as_bytes().len());
-    println!("  Secret key:    {} bytes", sign_sk.as_bytes().len());
+    println!(
+        "  Public key:    {} bytes",
+        verification_key.as_bytes().len()
+    );
+    println!("  Secret key:    {} bytes", signing_key.as_bytes().len());
     println!(
         "  Sign:          {:>6.3} ms",
         sign_elapsed.as_secs_f64() * 1_000.0
@@ -109,7 +117,15 @@ fn main() {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        write!(&mut encoded, "{byte:02x}").expect("write to string");
+    }
+    encoded
+}
+
+fn usize_to_f64(value: usize) -> Result<f64, TryFromIntError> {
+    u32::try_from(value).map(f64::from)
 }
 
 fn byte_entropy(bytes: &[u8]) -> f64 {
@@ -121,7 +137,8 @@ fn byte_entropy(bytes: &[u8]) -> f64 {
         .into_iter()
         .filter(|count| *count > 0)
         .map(|count| {
-            let probability = count as f64 / bytes.len() as f64;
+            let probability = usize_to_f64(count).expect("histogram count fits")
+                / usize_to_f64(bytes.len()).expect("input length fits");
             -probability * probability.log2()
         })
         .sum()

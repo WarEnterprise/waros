@@ -1,4 +1,4 @@
-# WarOS — Quantum Computing & Post-Quantum Cryptography for Python
+# WarOS - Quantum Computing & Post-Quantum Cryptography for Python
 
 High-performance quantum circuit simulation and post-quantum cryptography, powered by Rust.
 
@@ -21,6 +21,8 @@ circuit.measure_all()
 simulator = waros.Simulator(seed=42)
 result = simulator.run(circuit, shots=10_000)
 print(result)
+print(circuit.stats())
+print(circuit.draw())
 ```
 
 ## Realistic Noise
@@ -66,6 +68,30 @@ measure q[1] -> c[1];
 
 circuit = waros.parse_qasm(qasm_source)
 result = waros.Simulator(seed=42).run(circuit, shots=1_000)
+```
+
+## Notebook and Compatibility Helpers
+
+```python
+from waros.compat import QuantumCircuit
+
+qc = QuantumCircuit(2, 2)
+qc.h(0)
+qc.cx(0, 1)
+qc.measure([0, 1], [0, 1])
+
+result = qc.run(shots=1_000)
+display(result)
+```
+
+## One-Line Algorithm Demos
+
+```python
+bell = waros.algorithms.run_bell_state(shots=1_000, seed=42)
+grover = waros.algorithms.run_grover(shots=1_000, seed=42)
+teleport = waros.algorithms.run_teleport(state_theta=1.047, shots=1_000, seed=42)
+factors = waros.algorithms.shor_factor(15, seed=42)
+energy = waros.algorithms.vqe_hydrogen(max_iterations=30, seed=42)
 ```
 
 Part of the [WarOS](https://github.com/WarEnterprise/waros) hybrid quantum-classical operating system project.

@@ -39,6 +39,7 @@ pub fn execute(qubits: usize) -> CliResult {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn handle_command(circuit: &mut Circuit, qubits: usize, input: &str) -> CliResult<String> {
     let parts: Vec<&str> = input.split_whitespace().collect();
     match parts.as_slice() {

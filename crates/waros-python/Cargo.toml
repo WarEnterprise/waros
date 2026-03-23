@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Python bindings for WarOS Quantum Simulator & Crypto"
 
 [lib]
-name = "waros"
+name = "_waros"
 crate-type = ["cdylib"]
 
 [dependencies]

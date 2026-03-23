@@ -1,5 +1,8 @@
+use std::collections::HashMap;
+
 use pyo3::prelude::*;
 
+use waros_quantum::circuit::Instruction;
 use waros_quantum::Circuit as RustCircuit;
 
 use crate::value_error;
@@ -48,6 +51,23 @@ impl PyCircuit {
     /// Return a shallow copy of the circuit.
     fn copy(&self) -> Self {
         self.clone()
+    }
+
+    /// Return basic circuit statistics.
+    fn stats(&self) -> HashMap<String, usize> {
+        let mut stats = HashMap::from([
+            ("qubits".to_string(), self.inner.num_qubits()),
+            ("gates".to_string(), self.inner.gate_count()),
+            ("depth".to_string(), self.inner.depth()),
+        ]);
+        let measurements = self
+            .inner
+            .instructions()
+            .iter()
+            .filter(|instruction| matches!(instruction, Instruction::Measure { .. }))
+            .count();
+        stats.insert("measurements".to_string(), measurements);
+        stats
     }
 
     /// Apply a Hadamard gate.
@@ -235,7 +255,7 @@ impl PyCircuit {
         self.inner.to_ascii()
     }
 
-    /// Export the circuit as OpenQASM 2.0 source.
+    /// Export the circuit as `OpenQASM` 2.0 source.
     fn to_qasm(&self) -> String {
         waros_quantum::to_qasm(&self.inner)
     }
@@ -264,4 +284,17 @@ impl PyCircuit {
     fn __len__(&self) -> usize {
         self.inner.gate_count()
     }
+
+    fn _repr_html_(&self) -> String {
+        format!(
+            "<div><strong>Circuit</strong><pre>{}</pre></div>",
+            html_escape(&self.draw())
+        )
+    }
+}
+
+fn html_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }

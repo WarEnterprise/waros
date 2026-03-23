@@ -62,6 +62,28 @@ fn run_single_shot(
                     }
                 }
             }
+            Instruction::ConditionalGate {
+                classical_bits: register_bits,
+                value,
+                gate,
+                targets,
+            } => {
+                if read_classical_register(register_bits, &classical_bits) == *value {
+                    statevector::apply_gate(&mut state, num_qubits, targets, gate, parallel);
+                    if let Some(model) = noise_model {
+                        let channels = if gate.num_qubits == 1 {
+                            &model.single_qubit_noise
+                        } else {
+                            &model.two_qubit_noise
+                        };
+                        for &qubit in targets {
+                            apply_channels_to_qubit(
+                                &mut state, num_qubits, qubit, channels, rng, parallel,
+                            )?;
+                        }
+                    }
+                }
+            }
             Instruction::Measure {
                 qubit,
                 classical_bit,
@@ -91,6 +113,15 @@ fn run_single_shot(
         .iter()
         .map(|bit| char::from(b'0' + *bit))
         .collect())
+}
+
+fn read_classical_register(register: &[usize], classical_bits: &[u8]) -> usize {
+    register
+        .iter()
+        .enumerate()
+        .fold(0usize, |value, (offset, classical_bit)| {
+            value | (usize::from(classical_bits[*classical_bit] == 1) << offset)
+        })
 }
 
 fn apply_measurement_noise(

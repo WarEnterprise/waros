@@ -72,7 +72,7 @@ fn test_bitflip_on_zero_state() {
         .build()
         .run(&circuit, 1_000)
         .expect("simulation succeeds");
-    assert_eq!(result.probability("1"), 1.0);
+    assert!((result.probability("1") - 1.0).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn test_readout_error_flips_bits() {
         .build()
         .run(&circuit, 1_000)
         .expect("simulation succeeds");
-    assert_eq!(result.probability("1"), 1.0);
+    assert!((result.probability("1") - 1.0).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn test_amplitude_damping_decays_to_zero() {
         .build()
         .run(&circuit, 1_000)
         .expect("simulation succeeds");
-    assert_eq!(result.probability("0"), 1.0);
+    assert!((result.probability("0") - 1.0).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -221,7 +221,7 @@ fn test_idle_noise_applies_on_barrier() {
         .build()
         .run(&circuit, 1_000)
         .expect("simulation succeeds");
-    assert_eq!(result.probability("0"), 1.0);
+    assert!((result.probability("0") - 1.0).abs() < f64::EPSILON);
 }
 
 #[test]

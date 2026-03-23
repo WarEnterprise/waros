@@ -41,6 +41,18 @@
 
 ---
 
+## Current Implementation Status (March 2026)
+
+The repository currently implements a subset of this blueprint:
+
+- `waros-quantum`: statevector + MPS simulation, QASM, QEC helpers, Shor/VQE/QAOA/QPE/Simon demos, and Python bindings.
+- `waros-crypto`: ML-KEM, ML-DSA, SLH-DSA, SHA-3 / SHAKE, and simulated QRNG helpers.
+- `waros-kernel`: bootable x86_64 kernel with framebuffer console, PS/2 keyboard shell, in-kernel quantum simulator, WarFS RAM filesystem, cooperative task scheduler scaffolding, and COM2 serial networking primitives.
+
+Everything below remains the architectural target. Unless a subsystem is clearly reflected by code in the repository, treat the section as roadmap rather than shipped functionality.
+
+---
+
 ## 1. Vision & Philosophy
 
 ### 1.1 The Problem
@@ -2427,14 +2439,14 @@ Phase 4: Pure WarOS environment
 
 ### Phase 0: Foundation (Months 1-6)
 ```
-[ ] Boot on x86_64 (UEFI boot, basic VGA console)
+[x] Boot on x86_64 (bootloader-based BIOS/QEMU bring-up with framebuffer console)
 [ ] Minimal microkernel: process creation, IPC, memory management
-[ ] Basic WarShell (command line)
+[x] Basic WarShell (interactive command line with system, debug, and status commands)
 [x] Quantum simulation backend (state vector, validated gate set, mid-circuit measurement support)
 [ ] QISA assembler and basic circuit execution in simulation
 [ ] Basic WarFS (ext4-compatible + quantum object types)
 [x] Post-quantum crypto library integration (`pqcrypto` wrappers + SHA-3 + simulated QRNG)
-[ ] Build system (warbuild) and CI/CD pipeline
+[x] Build system (warbuild) and CI/CD pipeline
 ```
 
 ### `waros-quantum` Hardening Status (March 2026)
@@ -2454,6 +2466,12 @@ Phase 4: Pure WarOS environment
 [x] ASCII circuit rendering for gates, measurements, and barriers
 [x] Monte Carlo noise model with IBM-like / IonQ-like hardware profiles
 [x] OpenQASM 2.0 parser / serializer and executable QASM fixture set
+[x] Matrix Product State backend with automatic backend selection for larger low-entanglement circuits
+[x] Struct-of-arrays statevector layout for SIMD-friendly gate application
+[x] Qiskit-oriented `OpenQASM` compatibility (`u1/u2/u3`, custom gates, expressions, conditionals)
+[x] Advanced algorithm module with QPE, Shor, VQE, QAOA, Simon, and random-walk demos
+[x] Quantum error-correction helpers for repetition and Steane-code circuit construction
+[x] 26 algorithm regression tests for factoring, chemistry, optimization, and hidden-period workflows
 ```
 
 ### `waros-cli` Tooling Status (March 2026)
@@ -2474,16 +2492,67 @@ Phase 4: Pure WarOS environment
 [x] 22 post-quantum cryptography and QRNG regression tests
 ```
 
+### `waros-kernel` Bootstrap Status (March 2026)
+```
+[x] Standalone `no_std` x86_64 kernel crate with nightly toolchain configuration
+[x] Bootloader-based entry path with generated UEFI and BIOS disk images
+[x] Framebuffer text console with bundled bitmap font and WarOS boot branding
+[x] Serial debug output on COM1
+[x] GDT, IDT, PIC remap, timer IRQ, and keyboard IRQ handlers
+[x] Bitmap-based physical frame allocator and kernel heap initialization
+[x] PS/2 keyboard input buffering and minimal interactive WarShell
+[x] Kernel-local `no_std` quantum simulator with shell commands (`qalloc`, `qrun`, `qstate`, `qmeasure`, `qcircuit`, `qinfo`)
+[x] Built-in Bell, GHZ, Grover, teleportation, QFT, Deutsch, Bernstein-Vazirani, and superdense coding demos
+[x] Additional kernel demos for Shor factoring, VQE hydrogen energy, and QAOA MaxCut
+[x] BIOS/QEMU smoke-test on a host with `qemu-system-x86_64` installed
+[ ] UEFI/OVMF smoke-test on a host with firmware available
+```
+
+### Current Architecture Snapshot (March 2026)
+```
+IMPLEMENTED                              PLANNED
+===========                              =======
+[waros-quantum]                          [density-matrix backend]
+  - StateVector simulator                [GPU backend]
+  - SoA statevector layout               [hardware QPU drivers]
+  - MPS backend                          [fault-tolerant scale-up]
+  - QFT, noise, QASM, QEC helpers
+  - Shor, VQE, QAOA, QPE, Simon
+  - 180+ tests
+
+[waros-crypto]                           [QKD protocols]
+  - ML-KEM, ML-DSA, SLH-DSA              [quantum signatures]
+  - SHA-3, SHAKE
+  - QRNG
+
+[waros-cli]                              [GUI/TUI dashboard]
+  - run, show, qstat, bench, repl
+
+[waros-python]                           [expanded ecosystem adapters]
+  - Full Python API on PyPI
+  - algorithms module
+  - Qiskit-style compatibility layer
+
+[waros-kernel]                           [filesystem]
+  - x86_64 BIOS/UEFI images              [multitasking]
+  - GDT, IDT, PIC, paging, heap          [networking]
+  - Keyboard, serial, framebuffer        [USB drivers]
+  - 20+ shell commands                   [ARM64 port]
+  - In-kernel quantum simulator          [real QPU QHAL]
+```
+
 ### Phase 1: Quantum Core (Months 7-12)
 ```
 [ ] QRM: Qubit allocation, entanglement tracking
 [ ] QAPS: Coherence-deadline scheduler
 [ ] UMA-Q: Quantum address space, no-cloning enforcement
 [ ] QHAL: Simulator driver fully functional
-[ ] QEC: Repetition code and Steane code
+[x] QEC: Repetition code and Steane code
 [ ] WarQIR: Circuit representation and compilation pipeline
 [x] Basic Python SDK
-[ ] Qiskit/Cirq compatibility layer
+[x] Python algorithm bindings for QPE, Shor, VQE, QAOA, Simon, and random walks
+[x] Qiskit compatibility layer
+[ ] Cirq compatibility layer
 ```
 
 ### Phase 2: Hardware Integration (Months 13-18)
