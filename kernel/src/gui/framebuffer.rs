@@ -86,6 +86,25 @@ impl<'a> Surface<'a> {
         }
     }
 
+    pub fn fill_vertical_gradient(
+        &mut self,
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+        top: Color,
+        bottom: Color,
+    ) {
+        if height == 0 {
+            return;
+        }
+
+        for row in 0..height {
+            let color = lerp_color(top, bottom, row, height.saturating_sub(1).max(1));
+            self.fill_rect(x, y + row, width, 1, color);
+        }
+    }
+
     pub fn draw_hline(&mut self, x: usize, y: usize, width: usize, color: Color) {
         self.fill_rect(x, y, width, 1, color);
     }
@@ -102,6 +121,102 @@ impl<'a> Surface<'a> {
         self.draw_hline(x, y + height.saturating_sub(1), width, color);
         self.draw_vline(x, y, height, color);
         self.draw_vline(x + width.saturating_sub(1), y, height, color);
+    }
+
+    pub fn fill_rounded_rect(
+        &mut self,
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+        radius: usize,
+        color: Color,
+    ) {
+        if width == 0 || height == 0 {
+            return;
+        }
+
+        if radius == 0 || width <= radius * 2 || height <= radius * 2 {
+            self.fill_rect(x, y, width, height, color);
+            return;
+        }
+
+        self.fill_rect(x + radius, y, width - radius * 2, height, color);
+        self.fill_rect(x, y + radius, radius, height - radius * 2, color);
+        self.fill_rect(
+            x + width - radius,
+            y + radius,
+            radius,
+            height - radius * 2,
+            color,
+        );
+
+        let r_sq = (radius * radius) as i32;
+        for dy in 0..radius {
+            for dx in 0..radius {
+                let ddx = radius as i32 - dx as i32 - 1;
+                let ddy = radius as i32 - dy as i32 - 1;
+                if ddx * ddx + ddy * ddy <= r_sq {
+                    self.set_pixel(x + dx, y + dy, color);
+                    self.set_pixel(x + width - radius + dx, y + dy, color);
+                    self.set_pixel(x + dx, y + height - radius + dy, color);
+                    self.set_pixel(x + width - radius + dx, y + height - radius + dy, color);
+                }
+            }
+        }
+    }
+
+    pub fn draw_rounded_rect(
+        &mut self,
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+        radius: usize,
+        color: Color,
+    ) {
+        if width == 0 || height == 0 {
+            return;
+        }
+        if radius == 0 || width <= radius * 2 || height <= radius * 2 {
+            self.draw_rect(x, y, width, height, color);
+            return;
+        }
+
+        self.draw_hline(x + radius, y, width - radius * 2, color);
+        self.draw_hline(x + radius, y + height - 1, width - radius * 2, color);
+        self.draw_vline(x, y + radius, height - radius * 2, color);
+        self.draw_vline(x + width - 1, y + radius, height - radius * 2, color);
+
+        let r_sq = (radius * radius) as i32;
+        for dy in 0..radius {
+            for dx in 0..radius {
+                let ddx = radius as i32 - dx as i32 - 1;
+                let ddy = radius as i32 - dy as i32 - 1;
+                let distance = ddx * ddx + ddy * ddy;
+                if distance <= r_sq && distance >= r_sq - radius as i32 * 2 {
+                    self.set_pixel(x + dx, y + dy, color);
+                    self.set_pixel(x + width - radius + dx, y + dy, color);
+                    self.set_pixel(x + dx, y + height - radius + dy, color);
+                    self.set_pixel(x + width - radius + dx, y + height - radius + dy, color);
+                }
+            }
+        }
+    }
+
+    pub fn fill_circle(&mut self, center_x: usize, center_y: usize, radius: usize, color: Color) {
+        let radius_sq = (radius * radius) as i32;
+        for dy in -(radius as i32)..=(radius as i32) {
+            for dx in -(radius as i32)..=(radius as i32) {
+                if dx * dx + dy * dy <= radius_sq {
+                    let x = center_x as i32 + dx;
+                    let y = center_y as i32 + dy;
+                    if x >= 0 && y >= 0 {
+                        self.set_pixel(x as usize, y as usize, color);
+                    }
+                }
+            }
+        }
     }
 
     pub fn draw_line(
@@ -177,4 +292,41 @@ pub fn flush_to_screen(buffer: &[u32], width: usize, height: usize) {
             }
         }
     });
+}
+
+pub fn flush_regions_to_screen(buffer: &[u32], width: usize, height: usize, regions: &[Rect]) {
+    if regions.is_empty() {
+        flush_to_screen(buffer, width, height);
+        return;
+    }
+
+    let _ = console::with_console(|console| {
+        let max_width = width.min(console.width_pixels());
+        let max_height = height.min(console.height_pixels());
+        for region in regions {
+            let x_start = region.x.min(max_width);
+            let y_start = region.y.min(max_height);
+            let x_end = region.x.saturating_add(region.width).min(max_width);
+            let y_end = region.y.saturating_add(region.height).min(max_height);
+            for y in y_start..y_end {
+                let row_offset = y * width;
+                for x in x_start..x_end {
+                    console.write_pixel(x, y, buffer[row_offset + x]);
+                }
+            }
+        }
+    });
+}
+
+fn lerp_color(start: Color, end: Color, position: usize, max: usize) -> Color {
+    let [_, sr, sg, sb] = start.value().to_be_bytes();
+    let [_, er, eg, eb] = end.value().to_be_bytes();
+    let blend = |a: u8, b: u8| -> u8 {
+        if max == 0 {
+            return a;
+        }
+        (((a as usize * (max - position)) + (b as usize * position)) / max) as u8
+    };
+
+    Color::new(blend(sr, er), blend(sg, eg), blend(sb, eb))
 }

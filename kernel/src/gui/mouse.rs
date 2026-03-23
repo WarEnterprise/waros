@@ -139,6 +139,19 @@ pub fn take_snapshot() -> MouseSnapshot {
     MOUSE.lock().snapshot()
 }
 
+#[must_use]
+pub fn current_snapshot() -> MouseSnapshot {
+    let mouse = MOUSE.lock();
+    MouseSnapshot {
+        x: mouse.x,
+        y: mouse.y,
+        left: mouse.left,
+        right: mouse.right,
+        middle: mouse.middle,
+        dirty: mouse.dirty,
+    }
+}
+
 fn wait_ps2_input() {
     for _ in 0..100_000 {
         if port::inb(0x64) & 0x02 == 0 {

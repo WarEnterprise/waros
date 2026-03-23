@@ -52,6 +52,7 @@ pub fn start_gui() {
     compositor.invalidate();
 
     let mut previous_left = false;
+    let mut previous_right = false;
 
     loop {
         task::tick();
@@ -65,6 +66,9 @@ pub fn start_gui() {
         if mouse_snapshot.left && !previous_left {
             compositor.handle_mouse_down(mouse_snapshot.x, mouse_snapshot.y);
             compositor.invalidate();
+        } else if mouse_snapshot.right && !previous_right {
+            compositor.handle_right_click(mouse_snapshot.x, mouse_snapshot.y);
+            compositor.invalidate();
         } else if mouse_snapshot.left && previous_left {
             compositor.handle_mouse_move(mouse_snapshot.x, mouse_snapshot.y);
             if mouse_snapshot.dirty {
@@ -77,6 +81,7 @@ pub fn start_gui() {
             compositor.invalidate();
         }
         previous_left = mouse_snapshot.left;
+        previous_right = mouse_snapshot.right;
 
         while let Some(key) = keyboard::read_char() {
             if key == 0x1B {
@@ -90,6 +95,13 @@ pub fn start_gui() {
         }
 
         compositor.render();
+
+        if compositor.should_exit_to_shell() {
+            console::set_rendering_enabled(true);
+            console::clear_screen();
+            GUI_ACTIVE.store(false, Ordering::SeqCst);
+            return;
+        }
 
         if !compositor.needs_redraw() && !task::has_tasks() {
             hlt();

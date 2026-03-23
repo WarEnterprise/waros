@@ -23,6 +23,9 @@ impl SystemInfoState {
     pub fn render(&mut self, buffer: &mut [u32], width: usize, height: usize) {
         let mut surface = Surface::new(buffer, width, height);
         surface.clear(Theme::WINDOW_BG);
+        let padding_x = Theme::WINDOW_PADDING;
+        let padding_y = 10usize;
+        let line_step = 20usize;
 
         let memory_stats = memory::stats();
         let uptime = interrupts::tick_count() / u64::from(pit::PIT_FREQUENCY_HZ);
@@ -53,26 +56,17 @@ impl SystemInfoState {
             alloc::format!("Files: {}", files),
             alloc::format!("Network: {}", network),
             alloc::format!("Quantum: {}", quantum_state),
+            alloc::format!("Files: {}", files),
         ];
 
-        for (index, line) in lines.iter().enumerate() {
+        let max_lines = height.saturating_sub(padding_y * 2) / line_step;
+        for (index, line) in lines.iter().take(max_lines).enumerate() {
             let color = if index < 2 {
                 Theme::TEXT_ACCENT
             } else {
                 Theme::TEXT_PRIMARY
             };
-            font::draw_text(&mut surface, 8, 8 + index * 18, line, color);
-        }
-
-        if width > 80 && height > 40 {
-            surface.draw_rect(8, height.saturating_sub(56), width - 16, 44, Theme::WINDOW_BORDER);
-            font::draw_text(
-                &mut surface,
-                16,
-                height.saturating_sub(42),
-                "Building the future of computing",
-                Theme::TASKBAR_ACCENT,
-            );
+            font::draw_text(&mut surface, padding_x, padding_y + index * line_step, line, color);
         }
     }
 }

@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use crate::quantum;
 
 use super::super::font;
+use super::super::mouse;
 use super::super::framebuffer::{Rect, Surface};
 use super::super::theme::Theme;
 use super::super::widgets;
@@ -19,39 +20,41 @@ impl QuantumMonitorState {
     pub fn render(&mut self, buffer: &mut [u32], width: usize, height: usize) {
         let mut surface = Surface::new(buffer, width, height);
         surface.clear(Theme::WINDOW_BG);
+        let padding = Theme::WINDOW_PADDING;
+        let mouse = mouse::current_snapshot();
 
-        font::draw_text(&mut surface, 8, 8, "Quantum Monitor", Theme::QUANTUM_GATE);
+        font::draw_text(&mut surface, padding, 10, "Quantum Monitor", Theme::QUANTUM_GATE);
         if let Some(snapshot) = quantum::gui_snapshot() {
             font::draw_text(
                 &mut surface,
-                8,
-                32,
+                padding,
+                34,
                 &alloc::format!("Qubits: {}", snapshot.num_qubits),
                 Theme::TEXT_PRIMARY,
             );
             font::draw_text(
                 &mut surface,
-                8,
-                48,
+                padding,
+                52,
                 &alloc::format!("State bytes: {}", snapshot.bytes_used),
                 Theme::TEXT_SECONDARY,
             );
 
             let wires = snapshot.num_qubits.min(4).max(1);
             for qubit in 0..wires {
-                let y = 86 + qubit * 26;
+                let y = 94 + qubit * 28;
                 font::draw_text(
                     &mut surface,
-                    8,
+                    padding,
                     y.saturating_sub(6),
                     &alloc::format!("q{}", qubit),
                     Theme::TEXT_SECONDARY,
                 );
-                surface.draw_hline(32, y, width.saturating_sub(48), Theme::QUANTUM_WIRE);
+                surface.draw_hline(padding + 24, y, width.saturating_sub(padding * 2 + 40), Theme::QUANTUM_WIRE);
             }
 
             for (column, operation) in snapshot.operations.iter().take(6).enumerate() {
-                draw_operation(&mut surface, operation, column, 32, 86, width);
+                draw_operation(&mut surface, operation, column, padding + 24, 94, width.saturating_sub(padding * 2));
             }
 
             if let Some(result_line) = snapshot
@@ -61,68 +64,76 @@ impl QuantumMonitorState {
             {
                 font::draw_text(
                     &mut surface,
-                    8,
-                    height.saturating_sub(56),
+                    padding,
+                    height.saturating_sub(62),
                     "Last result:",
                     Theme::TEXT_PRIMARY,
                 );
                 font::draw_text(
                     &mut surface,
-                    8,
-                    height.saturating_sub(40),
-                    &truncate(result_line, width.saturating_sub(16)),
+                    padding,
+                    height.saturating_sub(44),
+                    &truncate(result_line, width.saturating_sub(padding * 2)),
                     Theme::QUANTUM_RESULT,
                 );
             }
         } else {
+            let title = "No active quantum register";
+            let subtitle = "Use qalloc and qrun in the terminal";
+            let title_x = width.saturating_sub(font::text_width(title, 1)) / 2;
             font::draw_text(
                 &mut surface,
-                8,
-                40,
-                "No active quantum register.",
-                Theme::TEXT_SECONDARY,
+                title_x,
+                height / 2 - 18,
+                title,
+                Theme::TEXT_PRIMARY,
             );
+            surface.fill_circle(width / 2, height / 2 - 34, 8, Theme::QUANTUM_GATE);
             font::draw_text(
                 &mut surface,
-                8,
-                60,
-                "Use qalloc and qrun in the terminal window.",
+                width.saturating_sub(font::text_width(subtitle, 1)) / 2,
+                height / 2 + 4,
+                subtitle,
                 Theme::TEXT_SECONDARY,
             );
         }
 
+        let button_y = height.saturating_sub(30);
+        let run_rect = Rect {
+            x: padding,
+            y: button_y,
+            width: 80,
+            height: 22,
+        };
+        let reset_rect = Rect {
+            x: padding + 88,
+            y: button_y,
+            width: 80,
+            height: 22,
+        };
+        let measure_rect = Rect {
+            x: padding + 176,
+            y: button_y,
+            width: 96,
+            height: 22,
+        };
         widgets::draw_button(
             &mut surface,
-            Rect {
-                x: 8,
-                y: height.saturating_sub(28),
-                width: 80,
-                height: 20,
-            },
+            run_rect,
             "Run",
-            true,
+            widgets::button_style(point_in_rect(mouse.x, mouse.y, run_rect), point_in_rect(mouse.x, mouse.y, run_rect), true, false),
         );
         widgets::draw_button(
             &mut surface,
-            Rect {
-                x: 96,
-                y: height.saturating_sub(28),
-                width: 80,
-                height: 20,
-            },
+            reset_rect,
             "Reset",
-            false,
+            widgets::button_style(false, point_in_rect(mouse.x, mouse.y, reset_rect), false, false),
         );
         widgets::draw_button(
             &mut surface,
-            Rect {
-                x: 184,
-                y: height.saturating_sub(28),
-                width: 96,
-                height: 20,
-            },
+            measure_rect,
             "Measure",
-            false,
+            widgets::button_style(false, point_in_rect(mouse.x, mouse.y, measure_rect), false, false),
         );
     }
 }
@@ -180,6 +191,13 @@ fn draw_operation(
             Theme::WINDOW_BG,
         );
     }
+}
+
+fn point_in_rect(x: i32, y: i32, rect: Rect) -> bool {
+    x >= rect.x as i32
+        && x < (rect.x + rect.width) as i32
+        && y >= rect.y as i32
+        && y < (rect.y + rect.height) as i32
 }
 
 fn parse_single(operation: &str) -> Option<(String, usize)> {

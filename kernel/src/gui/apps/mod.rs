@@ -42,7 +42,7 @@ impl AppType {
         match self {
             Self::Terminal => (72, 64, 720, 440),
             Self::Quantum => (820, 72, 380, 250),
-            Self::SystemInfo => (840, 344, 360, 220),
+            Self::SystemInfo => (840, 336, 360, 260),
             Self::FileBrowser => (120, 120, 420, 260),
         }
     }
@@ -76,9 +76,9 @@ impl AppKind {
         }
     }
 
-    pub fn render(&mut self, buffer: &mut [u32], width: usize, height: usize) {
+    pub fn render(&mut self, buffer: &mut [u32], width: usize, height: usize, focused: bool) {
         match self {
-            Self::Terminal(state) => state.render(buffer, width, height),
+            Self::Terminal(state) => state.render(buffer, width, height, focused),
             Self::Quantum(state) => state.render(buffer, width, height),
             Self::SystemInfo(state) => state.render(buffer, width, height),
             Self::FileBrowser(state) => state.render(buffer, width, height),
@@ -90,6 +90,17 @@ impl AppKind {
         match self {
             Self::Terminal(state) => state.handle_key(key),
             Self::Quantum(_) | Self::SystemInfo(_) | Self::FileBrowser(_) => false,
+        }
+    }
+
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, Self::Terminal(_))
+    }
+
+    pub fn clear_terminal(&mut self) {
+        if let Self::Terminal(state) = self {
+            state.clear();
         }
     }
 }

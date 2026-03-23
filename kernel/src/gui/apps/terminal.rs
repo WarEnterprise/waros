@@ -60,39 +60,37 @@ impl TerminalState {
         }
     }
 
-    pub fn render(&mut self, buffer: &mut [u32], width: usize, height: usize) {
+    pub fn render(&mut self, buffer: &mut [u32], width: usize, height: usize, focused: bool) {
         let mut surface = Surface::new(buffer, width, height);
         surface.clear(Theme::TERMINAL_BG);
 
-        let line_height = font::line_height(1);
-        let visible_lines = height.saturating_sub(line_height + 12) / line_height;
+        let line_height = 18usize;
+        let left_padding = 8usize;
+        let top_padding = 4usize;
+        let scrollbar_width = 4usize;
+        let content_width = width.saturating_sub(left_padding * 2 + scrollbar_width + 6);
+        let visible_lines = height.saturating_sub(line_height + top_padding + 10) / line_height;
         let start = self.lines.len().saturating_sub(visible_lines);
         for (row, line) in self.lines.iter().skip(start).enumerate() {
-            let y = 6 + row * line_height;
-            font::draw_text(
-                &mut surface,
-                8,
-                y,
-                &truncate_for_width(line, width.saturating_sub(16)),
-                Theme::TERMINAL_TEXT,
-            );
+            let y = top_padding + row * line_height;
+            render_terminal_line(&mut surface, left_padding, y, line, content_width);
         }
 
         let prompt = gui_prompt();
         let input_y = height.saturating_sub(line_height + 6);
-        font::draw_text(&mut surface, 8, input_y, &prompt, Theme::TERMINAL_PROMPT);
+        font::draw_text(&mut surface, left_padding, input_y, &prompt, Theme::TERMINAL_PROMPT);
         let prompt_width = font::text_width(&prompt, 1);
         font::draw_text(
             &mut surface,
-            8 + prompt_width,
+            left_padding + prompt_width,
             input_y,
             &self.input,
             Theme::TERMINAL_TEXT,
         );
 
-        let blink_on = (interrupts::tick_count() / 25).is_multiple_of(2);
+        let blink_on = focused && (interrupts::tick_count() / 50).is_multiple_of(2);
         if blink_on {
-            let cursor_x = 8 + prompt_width + font::text_width(&self.input, 1);
+            let cursor_x = left_padding + prompt_width + font::text_width(&self.input, 1);
             surface.fill_rect(
                 cursor_x,
                 input_y + 2,
@@ -101,6 +99,35 @@ impl TerminalState {
                 Theme::TERMINAL_CURSOR,
             );
         }
+
+        if self.lines.len() > visible_lines && visible_lines > 0 {
+            let track_x = width.saturating_sub(scrollbar_width + 4);
+            surface.fill_rounded_rect(
+                track_x,
+                top_padding,
+                scrollbar_width,
+                height.saturating_sub(line_height + 12),
+                2,
+                Theme::TERMINAL_SCROLL_TRACK,
+            );
+            let thumb_height = ((visible_lines * (height.saturating_sub(line_height + 12)))
+                / self.lines.len())
+                .max(18);
+            let scrollable = self.lines.len().saturating_sub(visible_lines).max(1);
+            let thumb_y = top_padding + ((start * height.saturating_sub(line_height + 12)) / scrollable);
+            surface.fill_rounded_rect(
+                track_x,
+                thumb_y,
+                scrollbar_width,
+                thumb_height.min(height.saturating_sub(line_height + 12)),
+                2,
+                Theme::TERMINAL_SCROLL_THUMB,
+            );
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.lines.clear();
     }
 
     fn consume_output(&mut self, output: &str) {
@@ -118,6 +145,35 @@ impl TerminalState {
         }
         self.lines.push(line);
     }
+}
+
+fn render_terminal_line(surface: &mut Surface<'_>, x: usize, y: usize, line: &str, max_width_px: usize) {
+    if let Some(split) = line.find("]$ ") {
+        let prompt = &line[..split + 3];
+        let command = &line[split + 3..];
+        font::draw_text(surface, x, y, &truncate_for_width(prompt, max_width_px), Theme::TERMINAL_PROMPT);
+        let prompt_width = font::text_width(prompt, 1).min(max_width_px);
+        font::draw_text(
+            surface,
+            x + prompt_width,
+            y,
+            &truncate_for_width(command, max_width_px.saturating_sub(prompt_width)),
+            Theme::TERMINAL_TEXT,
+        );
+        return;
+    }
+
+    let color = if is_error_line(line) {
+        Theme::TERMINAL_ERROR
+    } else {
+        Theme::TERMINAL_OUTPUT
+    };
+    font::draw_text(surface, x, y, &truncate_for_width(line, max_width_px), color);
+}
+
+fn is_error_line(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.contains("[err]") || lower.contains("error") || lower.contains("failed")
 }
 
 fn gui_prompt() -> String {
