@@ -97,6 +97,34 @@ impl BitmapAllocator {
         None
     }
 
+    /// Allocate a physically contiguous run of 4 KiB frames.
+    pub fn allocate_contiguous_frames(&mut self, count: usize) -> Option<PhysAddr> {
+        if count == 0 || count > self.free_frames {
+            return None;
+        }
+
+        let max = self.max_frame_index.min(MAX_TRACKED_FRAMES);
+        if max <= count {
+            return None;
+        }
+
+        let search_limit = max.saturating_sub(count);
+        for start_index in 1..=search_limit {
+            if (0..count).any(|offset| self.is_allocated(start_index + offset)) {
+                continue;
+            }
+
+            for offset in 0..count {
+                self.set_allocated(start_index + offset, true);
+            }
+            self.free_frames -= count;
+            self.scan_hint = start_index + count;
+            return Some(PhysAddr::new((start_index as u64) * FRAME_SIZE));
+        }
+
+        None
+    }
+
     /// Free a previously allocated physical frame.
     #[allow(dead_code)]
     pub fn free_frame(&mut self, address: PhysAddr) {
@@ -109,6 +137,25 @@ impl BitmapAllocator {
         if self.is_allocated(frame_index) {
             self.set_allocated(frame_index, false);
             self.free_frames += 1;
+        }
+    }
+
+    /// Free a contiguous run of frames previously allocated as one region.
+    #[allow(dead_code)]
+    pub fn free_contiguous_frames(&mut self, address: PhysAddr, count: usize) {
+        let Ok(start_index) = usize::try_from(address.as_u64() / FRAME_SIZE) else {
+            return;
+        };
+        if start_index == 0 || count == 0 {
+            return;
+        }
+
+        let end_index = start_index.saturating_add(count).min(self.max_frame_index);
+        for frame_index in start_index..end_index {
+            if self.is_allocated(frame_index) {
+                self.set_allocated(frame_index, false);
+                self.free_frames += 1;
+            }
         }
     }
 

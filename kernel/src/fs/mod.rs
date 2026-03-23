@@ -186,11 +186,12 @@ pub fn init() {
 /// Populate the built-in system files after boot completes.
 pub fn seed_system_files() -> Result<(), FsError> {
     let readme = concat!(
-        "WarOS v0.1.0 - Quantum-Classical Hybrid Operating System\n",
-        "War Enterprise (c) 2026\n\n",
+        "WarOS v0.2.0 - Quantum-Classical Hybrid Operating System\n",
+        "War Enterprise - Building the future of computing\n\n",
         "This is a RAM-based filesystem. Files are lost on reboot.\n",
         "Use 'help fs' for filesystem commands.\n",
         "Use 'help quantum' for quantum computing commands.\n\n",
+        "warenterprise.com/waros\n",
         "github.com/WarEnterprise/waros\n",
     );
 

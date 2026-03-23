@@ -1,4 +1,4 @@
-use alloc::string::String;
+use alloc::string::{String, ToString};
 
 use x86_64::instructions::hlt;
 
@@ -14,8 +14,15 @@ pub mod history;
 const INPUT_LIMIT: usize = 256;
 
 fn prompt() {
-    kprint_colored!(Colors::GREEN, "waros");
-    kprint_colored!(Colors::DIM, "> ");
+    let ip = crate::net::network_config()
+        .map(|config| config.ip.to_string())
+        .unwrap_or_else(|| "offline".to_string());
+
+    kprint_colored!(Colors::DIM, "[");
+    kprint_colored!(Colors::GREEN, "WarOS");
+    kprint_colored!(Colors::DIM, " ");
+    kprint_colored!(Colors::YELLOW, "{}", ip);
+    kprint_colored!(Colors::DIM, " /]$ ");
 }
 
 /// Re-render the shell prompt.
@@ -31,6 +38,7 @@ pub fn run() -> ! {
 
     loop {
         task::tick();
+        let _ = crate::net::poll();
 
         if let Some(byte) = keyboard::read_char() {
             match byte {

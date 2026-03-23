@@ -8,6 +8,7 @@ use crate::arch::x86_64::pit::PIT_FREQUENCY_HZ;
 use crate::arch::x86_64::port;
 use crate::display::branding;
 use crate::display::console::{self, Colors};
+use crate::drivers::keyboard;
 use crate::fs;
 use crate::memory;
 use crate::memory::heap;
@@ -59,10 +60,15 @@ pub fn execute_command(command_line: &str) {
         "spawn" => cmd_spawn(command_line),
         "kill" => cmd_kill(&parts[1..]),
         "banner" => cmd_banner(),
+        "keyboard" => cmd_keyboard(&parts[1..]),
         "quantum" => cmd_quantum(),
         "crypto" => cmd_crypto(),
+        "ifconfig" => cmd_ifconfig(),
         "net" => cmd_net(command_line),
-        "ping" => cmd_ping(),
+        "ping" => cmd_ping(&parts[1..]),
+        "dns" => cmd_dns(&parts[1..]),
+        "wget" => cmd_wget(&parts[1..]),
+        "curl" => cmd_curl(&parts[1..]),
         "qalloc" | "qfree" | "qreset" | "qrun" | "qstate" | "qprobs" | "qmeasure" | "qcircuit"
         | "qinfo" | "qsave" | "qexport" | "qresult" => {
             if let Err(error) = quantum::handle_quantum_command(command, &parts[1..]) {
@@ -95,87 +101,65 @@ fn cmd_help(topic: Option<&str>) {
         return;
     }
 
-    kprint_colored!(Colors::CYAN, "WarOS Shell");
-    kprintln!(" v{} - Available commands:\n", KERNEL_VERSION);
-
-    kprint_colored!(Colors::PURPLE, "  Filesystem\n");
-    kprintln!("    ls          List files in WarFS");
-    kprintln!("    cat         Show a text file");
-    kprintln!("    write       Write text to a file");
-    kprintln!("    rm          Delete a file");
-    kprintln!("    touch       Create an empty file");
-    kprintln!("    stat        File metadata");
-    kprintln!("    df          Filesystem usage");
-
-    kprint_colored!(Colors::PURPLE, "  System\n");
-    kprintln!("    info        System information");
-    kprintln!("    version     Detailed version information");
-    kprintln!("    version --all  Full build, boot, and subsystem report");
-    kprintln!("    cpu         CPU vendor and feature flags");
-    kprintln!("    mem         Physical memory statistics");
-    kprintln!("    time        Uptime as HH:MM:SS");
-    kprintln!("    uptime      Uptime in ticks and seconds");
-    kprintln!("    date        Current kernel date/time view");
-    kprintln!("    whoami      Current shell identity");
-    kprintln!("    uname       Kernel and architecture string");
-    kprintln!("    neofetch    System summary display");
-    kprintln!("    lspci       Enumerate basic PCI devices");
-
+    kprint_colored!(
+        Colors::CYAN,
+        "WarOS v{} - Quantum-Classical Hybrid Operating System\n",
+        KERNEL_VERSION
+    );
+    kprintln!("War Enterprise | warenterprise.com/waros | Apache 2.0");
+    kprint_colored!(
+        Colors::DIM,
+        "----------------------------------------------------------------\n"
+    );
     kprintln!();
-    kprint_colored!(Colors::PURPLE, "  Quantum & Crypto\n");
-    kprintln!("    quantum     Quantum subsystem status");
-    kprintln!("    crypto      Post-quantum crypto status");
-    kprintln!("    qalloc      Allocate qubit register: qalloc <1-18>");
-    kprintln!("    qrun        Apply gate: qrun <gate> <qubit(s)>");
-    kprintln!("    qstate      Show current state vector");
-    kprintln!("    qprobs      Show probability distribution");
-    kprintln!("    qmeasure    Measure current register");
-    kprintln!("    qcircuit    Run built-in quantum demo");
-    kprintln!("    qinfo       Kernel quantum simulator info");
-    kprintln!("    qsave       Save current circuit as QASM");
-    kprintln!("    qexport     Export current circuit as QASM");
-    kprintln!("    qresult     Save last measurement results");
-    kprintln!("    qreset      Reset register to |0...0>");
-    kprintln!("    qfree       Free current quantum register");
 
+    kprint_colored!(Colors::PURPLE, "System\n");
+    kprintln!("  info            cpu             mem             time");
+    kprintln!("  date            uptime          version         neofetch");
+    kprintln!("  uname           whoami          lspci");
     kprintln!();
-    kprint_colored!(Colors::PURPLE, "  Tools\n");
-    kprintln!("    echo        Echo text");
-    kprintln!("    hex         Hex dump memory: hex <addr> [len]");
-    kprintln!("    color       Display color palette");
-    kprintln!("    history     Show last 10 commands");
-    kprintln!("    tasks       List background tasks");
-    kprintln!("    spawn       Run a command as a background task");
-    kprintln!("    kill        Stop a background task");
 
+    kprint_colored!(Colors::PURPLE, "Quantum\n");
+    kprintln!("  quantum         qalloc <n>      qrun <gate>     qstate");
+    kprintln!("  qprobs          qmeasure        qcircuit        qinfo");
+    kprintln!("  qsave           qexport         qresult         qreset");
+    kprintln!("  qfree           crypto");
     kprintln!();
-    kprint_colored!(Colors::PURPLE, "  Display\n");
-    kprintln!("    clear       Clear screen");
-    kprintln!("    banner      Show boot banner");
 
+    kprint_colored!(Colors::PURPLE, "Network\n");
+    kprintln!("  ifconfig        ping <host>     dns <domain>    wget <url>");
+    kprintln!("  curl <url>      net status      net diag        net poll");
+    kprintln!("  net txprobe     net send <txt>  net qsend <f>   net listen");
     kprintln!();
-    kprint_colored!(Colors::PURPLE, "  Networking\n");
-    kprintln!("    net         COM2 link commands (status, send, qsend, listen)");
-    kprintln!("    ping        Ping another WarOS node over COM2");
 
+    kprint_colored!(Colors::PURPLE, "Filesystem\n");
+    kprintln!("  ls              cat <file>      write <f> <t>   rm <file>");
+    kprintln!("  touch <file>    stat <file>     df");
     kprintln!();
-    kprint_colored!(Colors::PURPLE, "  Control\n");
-    kprintln!("    halt        Halt CPU");
-    kprintln!("    reboot      Restart system");
-    kprintln!("    panic       Trigger test panic");
-    kprintln!("    waros       About WarOS");
 
+    kprint_colored!(Colors::PURPLE, "Tools\n");
+    kprintln!("  echo            hex <addr> [n]  color           history");
+    kprintln!("  tasks           spawn <cmd>     kill <id>       banner");
+    kprintln!("  keyboard <us|br>");
     kprintln!();
-    kprint_colored!(Colors::DIM, "  Type a command and press Enter.\n");
+
+    kprint_colored!(Colors::PURPLE, "Control\n");
+    kprintln!("  clear           halt            reboot          panic");
+    kprintln!("  waros           help <topic>");
+    kprintln!();
+    kprint_colored!(
+        Colors::DIM,
+        "Type 'help quantum' or 'help fs' for focused command details.\n"
+    );
 }
 
 fn cmd_info() {
-    kprintln!("WarOS v{} - Quantum-Classical Hybrid OS", KERNEL_VERSION);
+    kprintln!("WarOS v{} - Quantum-Classical Hybrid Operating System", KERNEL_VERSION);
     kprintln!("Architecture: x86_64");
-    kprintln!("Kernel: WarKernel (microkernel bootstrap)");
+    kprintln!("Kernel: waros-kernel {}", KERNEL_VERSION);
     kprintln!("Boot mode: BIOS via bootloader");
     kprintln!("Timer: {} Hz PIT", PIT_FREQUENCY_HZ);
-    kprintln!("War Enterprise (c) 2026");
+    kprintln!("War Enterprise - Building the future of computing");
 }
 
 fn cmd_version(args: &[&str]) {
@@ -212,18 +196,17 @@ fn cmd_version(args: &[&str]) {
         kprintln!("  Boot time:    {} ms", boot_complete_ms());
         kprintln!("  Files:        {}", file_count);
         kprintln!("  Built:        {} (rustc nightly)", BUILD_DATE);
+        kprintln!("  Identity:     War Enterprise | Florianopolis, Brazil");
+        kprintln!("  Tagline:      Building the future of computing");
         kprintln!("  License:      Apache 2.0");
         kprintln!("  Repository:   github.com/WarEnterprise/waros");
         return;
     }
 
-    kprintln!("WarOS kernel version information:");
-    kprintln!("  Kernel:    v{}", KERNEL_VERSION);
-    kprintln!("  Platform:  x86_64");
-    kprintln!("  Toolchain: Rust nightly");
-    kprintln!("  Boot:      bootloader BIOS/UEFI images");
-    kprintln!("  Quantum:   Kernel simulator + Rust/Python SDK");
-    kprintln!("  Crypto:    PQC suite available in workspace");
+    kprintln!("WarOS v{} (waros-kernel {})", KERNEL_VERSION, KERNEL_VERSION);
+    kprintln!("Built: {} | Rust nightly", BUILD_DATE);
+    kprintln!("War Enterprise - Building the future of computing");
+    kprintln!("warenterprise.com/waros | github.com/WarEnterprise/waros");
 }
 
 fn cmd_cpu() {
@@ -413,6 +396,31 @@ fn cmd_history() {
 fn cmd_banner() {
     console::clear_screen();
     branding::show_banner();
+}
+
+fn cmd_keyboard(args: &[&str]) {
+    let Some(layout) = args.first().copied() else {
+        let current = keyboard::current_layout();
+        kprintln!("Keyboard layout: {}", keyboard::layout_name(current));
+        kprintln!("Usage: keyboard <us|br>");
+        return;
+    };
+
+    match layout {
+        "us" => {
+            keyboard::set_layout(keyboard::KeyboardLayout::UsQwerty);
+            kprintln!("[WarOS] INPUT: keyboard layout set to US QWERTY.");
+        }
+        "br" => {
+            keyboard::set_layout(keyboard::KeyboardLayout::BrazilAbnt2);
+            kprintln!("[WarOS] INPUT: keyboard layout set to Brazilian ABNT2 mode.");
+            kprintln!("               Start QEMU with '-k pt-br' for correct host translation.");
+        }
+        _ => {
+            kprint_colored!(Colors::RED, "[WarOS] INPUT:");
+            kprintln!(" unknown layout '{}'. Use 'us' or 'br'.", layout);
+        }
+    }
 }
 
 fn cmd_quantum() {
@@ -672,69 +680,72 @@ fn cmd_neofetch() {
     let feature_leaf = __cpuid(1);
     let vendor_bytes = vendor_string_bytes(vendor_leaf.ebx, vendor_leaf.edx, vendor_leaf.ecx);
     let vendor = str::from_utf8(&vendor_bytes).unwrap_or("Unknown");
+    let net_summary = net::network_config()
+        .map(|config| config.cidr_string())
+        .unwrap_or_else(|| "offline".into());
 
     kprintln!();
-    kprint_colored!(Colors::PURPLE, "  W A R O S");
-    kprintln!("                   waros@waros");
-    kprint_colored!(Colors::CYAN, "  Quantum-Classical");
-    kprintln!("       -----------");
-    kprint_colored!(Colors::CYAN, "  Hybrid OS");
-    kprintln!("               OS:       WarOS v{}", KERNEL_VERSION);
-    kprintln!("                         Kernel:   waros-kernel {}", KERNEL_VERSION);
-    kprintln!("                         Arch:     x86_64");
+    kprint_colored!(Colors::GREEN, "     _       __           ____  _____");
+    kprintln!("      waros@warenterprise");
+    kprint_colored!(Colors::GREEN, "    | |     / /___ ______/ __ \\/ ___/");
+    kprintln!("      ----------------------------");
+    kprint_colored!(Colors::GREEN, "    | | /| / / __ `/ ___/ / / /\\__ \\");
+    kprintln!("      OS:      WarOS v{}", KERNEL_VERSION);
+    kprint_colored!(Colors::GREEN, "    | |/ |/ / /_/ / /  / /_/ /___/ /");
+    kprintln!("      Kernel:  waros-kernel {}", KERNEL_VERSION);
+    kprint_colored!(Colors::GREEN, "    |__/|__/\\__,_/_/   \\____//____/");
+    kprintln!("      Arch:    x86_64");
     kprintln!(
-        "                         CPU:      {} Fam {} Mod {}",
+        "      CPU:     {} Fam {} Mod {}",
         vendor,
         cpu_family(feature_leaf.eax),
         cpu_model(feature_leaf.eax)
     );
     kprintln!(
-        "                         RAM:      {} MiB ({} frames)",
+        "      RAM:     {} MiB ({} frames)",
         (stats.total_frames * 4) / 1024,
         stats.total_frames
     );
-    kprintln!("                         Heap:     {} MiB", heap::HEAP_SIZE / (1024 * 1024));
-    kprintln!("                         Uptime:   {:02}:{:02}:{:02}", hours, minutes, seconds);
-    kprintln!("                         Boot:     {} ms", boot_complete_ms());
-    kprintln!("                         Quantum:  StateVector (18 qubits max)");
-    kprintln!("                         Crypto:   ML-KEM, ML-DSA, SLH-DSA");
-    kprintln!("                         Files:    {}", file_count);
-    kprintln!("                         License:  Apache 2.0");
+    kprintln!("      Heap:    {} MiB", heap::HEAP_SIZE / (1024 * 1024));
+    kprintln!("      Uptime:  {:02}:{:02}:{:02}", hours, minutes, seconds);
+    kprintln!("      Boot:    {} ms", boot_complete_ms());
+    kprintln!("      Net:     {}", net_summary);
+    kprintln!("      Quantum: 18 qubits (StateVector)");
+    kprintln!("      Crypto:  ML-KEM + ML-DSA + SHA-3");
+    kprintln!("      FS:      WarFS ({} files)", file_count);
+    kprintln!("      Shell:   WarShell v{}", KERNEL_VERSION);
+    kprintln!("      Origin:  Florianopolis, SC, Brazil");
+    kprintln!("      Motto:   Building the future of computing");
 }
 
 fn cmd_lspci() {
-    kprintln!("PCI devices (bus 0 scan):");
-    let mut found = false;
-    for device in 0u8..32 {
-        for function in 0u8..8 {
-            let vendor_id = pci_config_read(bus_device_function(0, device, function), 0) & 0xFFFF;
-            if vendor_id == 0xFFFF {
-                if function == 0 {
-                    break;
-                }
-                continue;
-            }
-
-            let device_info = pci_config_read(bus_device_function(0, device, function), 0);
-            let class_info = pci_config_read(bus_device_function(0, device, function), 8);
-            let device_id = (device_info >> 16) & 0xFFFF;
-            let class_code = (class_info >> 24) & 0xFF;
-            let subclass = (class_info >> 16) & 0xFF;
-            kprintln!(
-                "  00:{:02X}.{}  vendor={:04X} device={:04X} class={:02X}:{:02X}",
-                device,
-                function,
-                vendor_id,
-                device_id,
-                class_code,
-                subclass
-            );
-            found = true;
-        }
+    let devices = net::pci_devices();
+    kprintln!("PCI devices ({} detected):", devices.len());
+    if devices.is_empty() {
+        kprintln!("  No PCI devices detected.");
+        return;
     }
 
-    if !found {
-        kprintln!("  No PCI devices detected on bus 0.");
+    for device in devices {
+        let (bar_kind, bar_value) = match device.bar(0) {
+            net::pci::PciBar::Io(base) => ("io", u64::from(base)),
+            net::pci::PciBar::Memory32(base) => ("mmio32", u64::from(base)),
+            net::pci::PciBar::Memory64(base) => ("mmio64", base),
+            net::pci::PciBar::Unused => ("none", 0),
+        };
+        kprintln!(
+            "  {:02X}:{:02X}.{}  vendor={:04X} device={:04X} class={:02X}:{:02X} {}={} ({})",
+            device.bus,
+            device.device,
+            device.function,
+            device.vendor_id,
+            device.device_id,
+            device.class_code,
+            device.subclass,
+            bar_kind,
+            bar_value,
+            net::pci::class_name(device.class_code, device.subclass)
+        );
     }
 }
 
@@ -742,13 +753,170 @@ fn cmd_net(command_line: &str) {
     let mut parts = command_line.splitn(3, char::is_whitespace);
     let _ = parts.next();
     let Some(subcommand) = parts.next() else {
-        kprintln!("Usage: net <status|send|qsend|listen>");
+        kprintln!("Usage: net <status|diag|poll|txprobe|send|qsend|listen>");
         return;
     };
 
     match subcommand {
         "status" => {
-            kprintln!("Network interface: {}", net::status());
+            kprintln!("Network stack: {}", net::status());
+            kprintln!("PCI inventory: {} device(s)", net::pci_devices().len());
+            if let Some(hardware) = net::hardware_status() {
+                kprintln!("  MAC:       {}", net::format_mac(&hardware.mac));
+                kprintln!("  RX queue:  {}", hardware.rx_queue_size);
+                kprintln!("  TX queue:  {}", hardware.tx_queue_size);
+                kprintln!("  IRQ line:  {}", hardware.interrupt_line);
+                kprintln!("  RX/TX:     {}/{}", hardware.rx_frames, hardware.tx_frames);
+            }
+            if let Some(config) = net::network_config() {
+                kprintln!("  IPv4:      {}", config.cidr_string());
+                if let Some(gateway) = config.gateway {
+                    kprintln!("  Gateway:   {}", gateway);
+                }
+                if let Some(dns_server) = config.dns_server {
+                    kprintln!("  DNS:       {}", dns_server);
+                }
+            }
+            kprintln!("  ARP cache: {} entrie(s)", net::arp_entries().len());
+            kprintln!("  DNS cache: {} entrie(s)", net::dns_cache().len());
+        }
+        "diag" => {
+            let Some(diag) = net::hardware_diagnostics() else {
+                kprint_colored!(Colors::RED, "[WarOS] NET:");
+                kprintln!(" virtio-net is not initialized.");
+                return;
+            };
+
+            let target = net::network_config()
+                .and_then(|config| config.gateway)
+                .unwrap_or(net::ipv4::Ipv4Addr::new(10, 0, 2, 2));
+            let rx_before = diag.rx_frames;
+            let tx_before = diag.tx_frames;
+
+            kprintln!("WarOS Network Diagnostics");
+            kprintln!("  Device status: 0x{:02X}", diag.device_status);
+            kprintln!("  PCI command:   0x{:04X}", diag.pci_command);
+            kprintln!(
+                "  RX queue:      size={} avail={} used={} processed={} buffers={}",
+                diag.rx_queue.size,
+                diag.rx_queue.avail_idx,
+                diag.rx_queue.used_idx,
+                diag.rx_queue.last_used_idx,
+                diag.rx_buffers
+            );
+            kprintln!(
+                "  TX queue:      size={} avail={} used={} processed={} free={}/{}",
+                diag.tx_queue.size,
+                diag.tx_queue.avail_idx,
+                diag.tx_queue.used_idx,
+                diag.tx_queue.last_used_idx,
+                diag.tx_free,
+                diag.tx_buffers
+            );
+            kprintln!(
+                "  Frames:        tx={} rx={} pending={}",
+                diag.tx_frames,
+                diag.rx_frames,
+                diag.pending_frames
+            );
+            kprintln!("  ARP probe:     who-has {}", target);
+
+            match net::send_arp_probe(target) {
+                Ok(()) => kprintln!("  Probe status:  transmitted"),
+                Err(error) => {
+                    kprint_colored!(Colors::RED, "[WarOS] NET:");
+                    kprintln!(" ARP probe failed: {}.", error);
+                    return;
+                }
+            }
+
+            let deadline = interrupts::tick_count().saturating_add(u64::from(PIT_FREQUENCY_HZ));
+            let mut events = 0usize;
+            while interrupts::tick_count() < deadline {
+                events = events.saturating_add(net::poll());
+            }
+
+            if let Some(after) = net::hardware_diagnostics() {
+                kprintln!(
+                    "  After probe:   tx={} rx={} events={}",
+                    after.tx_frames,
+                    after.rx_frames,
+                    events
+                );
+                kprintln!(
+                    "  RX queue now:  avail={} used={} processed={}",
+                    after.rx_queue.avail_idx,
+                    after.rx_queue.used_idx,
+                    after.rx_queue.last_used_idx
+                );
+                kprintln!(
+                    "  TX queue now:  avail={} used={} processed={} free={}/{}",
+                    after.tx_queue.avail_idx,
+                    after.tx_queue.used_idx,
+                    after.tx_queue.last_used_idx,
+                    after.tx_free,
+                    after.tx_buffers
+                );
+                if after.rx_frames > rx_before || after.tx_frames > tx_before {
+                    kprint_colored!(Colors::GREEN, "  Traffic:       ");
+                    kprintln!("frame counters moved after the ARP probe.");
+                } else {
+                    kprint_colored!(Colors::YELLOW, "  Traffic:       ");
+                    kprintln!("no frame counters moved after the ARP probe.");
+                }
+            }
+
+            if let Some(mac) = net::arp_lookup(target) {
+                kprint_colored!(Colors::GREEN, "  ARP cache:     ");
+                kprintln!("{} -> {}", target, net::format_mac(&mac));
+            } else {
+                kprint_colored!(Colors::YELLOW, "  ARP cache:     ");
+                kprintln!("no entry for {} yet.", target);
+            }
+        }
+        "poll" => {
+            let harvested = net::poll();
+            kprintln!("Polled network stack: {} event(s) processed.", harvested);
+            while let Some(frame) = net::receive_raw_frame() {
+                match net::ethernet::EthernetFrame::parse(&frame) {
+                    Ok(ethernet) => {
+                        kprintln!(
+                            "  {} bytes type=0x{:04X} src={} dst={}",
+                            frame.len(),
+                            ethernet.ethertype(),
+                            net::format_mac(&ethernet.src_mac()),
+                            net::format_mac(&ethernet.dst_mac())
+                        );
+                    }
+                    Err(_) => {
+                        kprintln!("  {} bytes (unparsed)", frame.len());
+                    }
+                }
+            }
+        }
+        "txprobe" => {
+            let Some(hardware) = net::hardware_status() else {
+                kprint_colored!(Colors::RED, "[ERR]");
+                kprintln!(" virtio-net is not initialized.");
+                return;
+            };
+            let frame = net::ethernet::EthernetFrame::new(
+                [0xFF; 6],
+                hardware.mac,
+                0x88B5,
+                Vec::from(&b"waros-phase-a-probe"[..]),
+            )
+            .serialize();
+            match net::send_raw_frame(&frame) {
+                Ok(()) => {
+                    kprint_colored!(Colors::GREEN, "Sent ");
+                    kprintln!("raw Ethernet probe frame ({} bytes).", frame.len());
+                }
+                Err(error) => {
+                    kprint_colored!(Colors::RED, "[ERR]");
+                    kprintln!(" failed to send raw frame: {}.", error);
+                }
+            }
         }
         "send" => {
             let Some(text) = parts.next() else {
@@ -825,34 +993,121 @@ fn cmd_net(command_line: &str) {
             }
         }
         _ => {
-            kprintln!("Unknown net command '{}'.", subcommand);
+            kprintln!("[WarOS] NET: unknown subcommand '{}'.", subcommand);
         }
     }
 }
 
-fn cmd_ping() {
-    if net::NET
-        .lock()
-        .send(net::MessageType::Ping, b"ping")
-        .is_err()
-    {
-        kprint_colored!(Colors::RED, "[ERR]");
-        kprintln!(" failed to send ping.");
+fn cmd_ifconfig() {
+    let Some(hardware) = net::hardware_status() else {
+        kprint_colored!(Colors::YELLOW, "[WARN]");
+        kprintln!(" no virtio-net device is active.");
         return;
-    }
+    };
 
-    for _ in 0..100_000 {
-        if let Some(message) = net::receive() {
-            if message.msg_type == net::MessageType::Pong {
-                kprint_colored!(Colors::GREEN, "Ping");
-                kprintln!(" response received.");
-                return;
-            }
+    kprintln!("Interface: virtio-net");
+    kprintln!("  MAC:     {}", net::format_mac(&hardware.mac));
+    if let Some(config) = net::network_config() {
+        kprintln!("  IPv4:    {}", config.cidr_string());
+        kprintln!("  Mask:    {}", config.subnet_mask);
+        kprintln!(
+            "  Gateway: {}",
+            config.gateway.unwrap_or(net::ipv4::Ipv4Addr::ZERO)
+        );
+        kprintln!(
+            "  DNS:     {}",
+            config.dns_server.unwrap_or(net::ipv4::Ipv4Addr::ZERO)
+        );
+    } else {
+        kprintln!("  IPv4:    unconfigured");
+    }
+}
+
+fn cmd_ping(args: &[&str]) {
+    let Some(target) = args.first().copied() else {
+        kprintln!("Usage: ping <host>");
+        return;
+    };
+
+    match net::ping_host(target) {
+        Ok(reply) => {
+            kprint_colored!(Colors::GREEN, "Reply ");
+            kprintln!(
+                "from {}: seq={} bytes={}",
+                reply.source,
+                reply.seq_no,
+                reply.payload_len
+            );
+        }
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[ERR]");
+            kprintln!(" ping failed: {}.", error);
         }
     }
+}
 
-    kprint_colored!(Colors::YELLOW, "[WARN]");
-    kprintln!(" no pong received.");
+fn cmd_dns(args: &[&str]) {
+    let Some(domain) = args.first().copied() else {
+        kprintln!("Usage: dns <domain>");
+        return;
+    };
+
+    match net::resolve_host(domain) {
+        Ok(address) => kprintln!("{} -> {}", domain, address),
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[ERR]");
+            kprintln!(" DNS lookup failed: {}.", error);
+        }
+    }
+}
+
+fn cmd_wget(args: &[&str]) {
+    let Some(url) = args.first().copied() else {
+        kprintln!("Usage: wget <url>");
+        return;
+    };
+
+    match net::http_get(url) {
+        Ok(response) => print_http_body(&response.body),
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[ERR]");
+            kprintln!(" request failed: {}.", error);
+        }
+    }
+}
+
+fn cmd_curl(args: &[&str]) {
+    let Some(url) = args.first().copied() else {
+        kprintln!("Usage: curl <url>");
+        return;
+    };
+
+    match net::http_get(url) {
+        Ok(response) => {
+            kprintln!("HTTP {}", response.status_code);
+            for (name, value) in response.headers {
+                kprintln!("{}: {}", name, value);
+            }
+            kprintln!();
+            print_http_body(&response.body);
+        }
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[ERR]");
+            kprintln!(" request failed: {}.", error);
+        }
+    }
+}
+
+fn print_http_body(body: &[u8]) {
+    if let Ok(text) = str::from_utf8(body) {
+        kprint!("{}", text);
+        if !text.ends_with('\n') {
+            kprintln!();
+        }
+    } else {
+        kprint_colored!(Colors::RED, "[ERR]");
+        kprintln!(" response body is not UTF-8 text.");
+    }
 }
 
 fn cmd_panic() {
@@ -874,14 +1129,18 @@ fn cmd_halt() {
 }
 
 fn cmd_waros() {
-    kprintln!("WarOS - The first OS for the post-quantum era.");
-    kprintln!("Quantum-native. Classically complete. Open source.");
+    kprintln!("WarOS v{} - Quantum-Classical Hybrid Operating System", KERNEL_VERSION);
+    kprintln!("War Enterprise - Building the future of computing");
+    kprintln!("warenterprise.com/waros");
     kprintln!("github.com/WarEnterprise/waros");
 }
 
 fn cmd_unknown(command: &str) {
-    kprint_colored!(Colors::RED, "[ERR]");
-    kprintln!(" Unknown command: '{}'. Type 'help' for commands.", command);
+    kprint_colored!(Colors::RED, "[WarOS] ERROR:");
+    kprintln!(
+        " command '{}' not found. Type 'help' for available commands.",
+        command
+    );
 }
 
 fn task_state_name(state: task::TaskState) -> &'static str {
@@ -891,16 +1150,6 @@ fn task_state_name(state: task::TaskState) -> &'static str {
         task::TaskState::Waiting => "waiting",
         task::TaskState::Completed => "completed",
     }
-}
-
-fn bus_device_function(bus: u8, device: u8, function: u8) -> u32 {
-    (u32::from(bus) << 16) | (u32::from(device) << 11) | (u32::from(function) << 8)
-}
-
-fn pci_config_read(address: u32, register: u8) -> u32 {
-    let config_address = 0x8000_0000u32 | address | (u32::from(register) & 0xFC);
-    port::outl(0xCF8, config_address);
-    port::inl(0xCFC)
 }
 
 fn vendor_string_bytes(ebx: u32, edx: u32, ecx: u32) -> [u8; 12] {

@@ -1,0 +1,199 @@
+use alloc::vec;
+use alloc::vec::Vec;
+
+use smoltcp::iface::SocketHandle;
+use smoltcp::socket::tcp;
+
+use super::ipv4::Ipv4Addr;
+use super::{NetError, NetworkSubsystem};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TcpState {
+    Closed,
+    Connecting,
+    Established,
+    Closing,
+}
+
+pub struct TcpConnection {
+    handle: SocketHandle,
+    pub remote_ip: Ipv4Addr,
+    pub remote_port: u16,
+    pub local_port: u16,
+    pub state: TcpState,
+}
+
+impl TcpConnection {
+    pub fn connect(
+        stack: &mut NetworkSubsystem,
+        remote_ip: Ipv4Addr,
+        remote_port: u16,
+        timeout_ms: u64,
+    ) -> Result<Self, NetError> {
+        let socket = tcp::Socket::new(
+            tcp::SocketBuffer::new(vec![0; 4096]),
+            tcp::SocketBuffer::new(vec![0; 4096]),
+        );
+        let handle = stack.sockets.add(socket);
+        let local_port = stack.allocate_local_port();
+
+        {
+            let (iface, sockets) = (&mut stack.iface, &mut stack.sockets);
+            let iface = iface
+                .as_mut()
+                .ok_or(NetError::InitializationFailed("network interface not ready"))?;
+            let socket = sockets.get_mut::<tcp::Socket>(handle);
+            socket
+                .connect(
+                    iface.context(),
+                    (remote_ip.to_ip_address(), remote_port),
+                    local_port,
+                )
+                .map_err(|_| NetError::InitializationFailed("TCP connect failed"))?;
+        }
+
+        let deadline = stack.now_ms().saturating_add(timeout_ms);
+        loop {
+            stack.poll_network();
+            let established = {
+                let socket = stack.sockets.get_mut::<tcp::Socket>(handle);
+                socket.may_send()
+            };
+            if established {
+                return Ok(Self {
+                    handle,
+                    remote_ip,
+                    remote_port,
+                    local_port,
+                    state: TcpState::Established,
+                });
+            }
+            if stack.now_ms() >= deadline {
+                let _ = stack.sockets.remove(handle);
+                return Err(NetError::InitializationFailed("TCP connection timed out"));
+            }
+        }
+    }
+
+    pub fn send(
+        &mut self,
+        stack: &mut NetworkSubsystem,
+        data: &[u8],
+        timeout_ms: u64,
+    ) -> Result<usize, NetError> {
+        let deadline = stack.now_ms().saturating_add(timeout_ms);
+        let mut written = 0usize;
+
+        while written < data.len() {
+            stack.poll_network();
+            let sent = {
+                let socket = stack.sockets.get_mut::<tcp::Socket>(self.handle);
+                if socket.may_send() {
+                    socket
+                        .send_slice(&data[written..])
+                        .map_err(|_| NetError::InitializationFailed("TCP send failed"))?
+                } else {
+                    0
+                }
+            };
+
+            written += sent;
+            if written == data.len() {
+                break;
+            }
+            if stack.now_ms() >= deadline {
+                return Err(NetError::InitializationFailed("TCP send timed out"));
+            }
+        }
+
+        Ok(written)
+    }
+
+    pub fn recv(
+        &mut self,
+        stack: &mut NetworkSubsystem,
+        buffer: &mut [u8],
+        timeout_ms: u64,
+    ) -> Result<usize, NetError> {
+        let deadline = stack.now_ms().saturating_add(timeout_ms);
+        loop {
+            stack.poll_network();
+            let received = {
+                let socket = stack.sockets.get_mut::<tcp::Socket>(self.handle);
+                if socket.can_recv() {
+                    socket
+                        .recv_slice(buffer)
+                        .map_err(|_| NetError::InitializationFailed("TCP receive failed"))?
+                } else if !socket.may_recv() {
+                    0
+                } else {
+                    usize::MAX
+                }
+            };
+
+            if received != usize::MAX {
+                return Ok(received);
+            }
+            if stack.now_ms() >= deadline {
+                return Err(NetError::InitializationFailed("TCP receive timed out"));
+            }
+        }
+    }
+
+    pub fn read_to_end(
+        &mut self,
+        stack: &mut NetworkSubsystem,
+        timeout_ms: u64,
+    ) -> Result<Vec<u8>, NetError> {
+        let mut response = Vec::new();
+        let deadline = stack.now_ms().saturating_add(timeout_ms);
+        loop {
+            stack.poll_network();
+            let state = {
+                let socket = stack.sockets.get_mut::<tcp::Socket>(self.handle);
+                if socket.can_recv() {
+                    let mut chunk = vec![0u8; 1024];
+                    match socket.recv_slice(&mut chunk) {
+                        Ok(size) => {
+                            chunk.truncate(size);
+                            Some(chunk)
+                        }
+                        Err(_) => None,
+                    }
+                } else if !socket.may_recv() {
+                    return Ok(response);
+                } else {
+                    None
+                }
+            };
+
+            if let Some(chunk) = state {
+                response.extend_from_slice(&chunk);
+            } else if stack.now_ms() >= deadline {
+                return Err(NetError::InitializationFailed("TCP receive timed out"));
+            }
+        }
+    }
+
+    pub fn close(mut self, stack: &mut NetworkSubsystem, timeout_ms: u64) -> Result<(), NetError> {
+        self.state = TcpState::Closing;
+        {
+            let socket = stack.sockets.get_mut::<tcp::Socket>(self.handle);
+            socket.close();
+        }
+
+        let deadline = stack.now_ms().saturating_add(timeout_ms);
+        loop {
+            stack.poll_network();
+            let closed = {
+                let socket = stack.sockets.get_mut::<tcp::Socket>(self.handle);
+                !socket.is_active()
+            };
+            if closed || stack.now_ms() >= deadline {
+                break;
+            }
+        }
+        let _ = stack.sockets.remove(self.handle);
+        Ok(())
+    }
+}

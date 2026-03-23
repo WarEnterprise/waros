@@ -28,7 +28,7 @@ use x86_64::instructions::interrupts as cpu_interrupts;
 use crate::display::console::Colors;
 
 pub const KERNEL_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const BUILD_DATE: &str = "2026-03-22";
+pub const BUILD_DATE: &str = "2026-03-23";
 static BOOT_COMPLETE_MS: AtomicU64 = AtomicU64::new(0);
 
 pub static BOOTLOADER_CONFIG: BootloaderConfig = {
@@ -133,8 +133,46 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     task::init();
     boot_ok("Task scheduler: cooperative background tasks ready");
 
-    net::init();
-    boot_ok("Serial link: COM2 networking ready");
+    let network = net::init().map_err(|_| "network initialization failed")?;
+    boot_ok_fmt(
+        format_args!("PCI scan: {} devices found", network.pci_devices),
+        format_args!("PCI scan: {} devices found", network.pci_devices),
+    );
+    boot_ok_fmt(
+        format_args!("Serial link: {}", network.serial_status),
+        format_args!("Serial link: {}", network.serial_status),
+    );
+    if let Some(ref device) = network.hardware {
+        let mac = net::format_mac(&device.mac);
+        boot_ok_fmt(
+            format_args!("virtio-net: MAC {} (I/O 0x{:04X})", mac, device.io_base),
+            format_args!("virtio-net: MAC {} (I/O 0x{:04X})", mac, device.io_base),
+        );
+    } else {
+        boot_notice("virtio-net: no PCI device detected");
+    }
+    if let Some(config) = network.network_config {
+        boot_ok_fmt(
+            format_args!(
+                "DHCP: {} gw {}",
+                config.cidr_string(),
+                config.gateway.unwrap_or(net::ipv4::Ipv4Addr::ZERO)
+            ),
+            format_args!(
+                "DHCP: {} gw {}",
+                config.cidr_string(),
+                config.gateway.unwrap_or(net::ipv4::Ipv4Addr::ZERO)
+            ),
+        );
+        if let Some(dns_server) = config.dns_server {
+            boot_ok_fmt(
+                format_args!("DNS: {}", dns_server),
+                format_args!("DNS: {}", dns_server),
+            );
+        }
+    } else if network.hardware.is_some() {
+        boot_notice("DHCP: no lease acquired");
+    }
 
     drivers::keyboard::init();
     boot_ok("Keyboard driver active");
@@ -144,9 +182,10 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     BOOT_COMPLETE_MS.store(boot_complete_ms, Ordering::Relaxed);
     fs::seed_system_files().map_err(|_| "failed to seed filesystem system files")?;
 
+    display::branding::boot_complete_animation();
     display::branding::show_separator();
     kprint_colored!(Colors::DIM, "Boot complete in {} ms.\n", boot_complete_ms);
-    boot_notice("System ready. Type 'help' for available commands.");
+    boot_notice("WarOS shell online. Type 'help' for available commands.");
     kprintln!();
     Ok(())
 }

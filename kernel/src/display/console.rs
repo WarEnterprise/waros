@@ -69,6 +69,20 @@ impl FramebufferConsole {
         self.set_color(Colors::FG);
     }
 
+    #[must_use]
+    pub fn width_pixels(&self) -> usize {
+        self.framebuffer.info().width
+    }
+
+    #[must_use]
+    pub fn height_pixels(&self) -> usize {
+        self.framebuffer.info().height
+    }
+
+    pub fn write_pixel(&mut self, x: usize, y: usize, color: u32) {
+        self.framebuffer.write_pixel(x, y, color);
+    }
+
     /// Clear the full screen and reset the cursor to the origin.
     pub fn clear_screen(&mut self) {
         self.framebuffer.clear(self.bg_color);

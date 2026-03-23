@@ -5,9 +5,16 @@ use spin::{Lazy, Mutex};
 
 pub static KEYBOARD: Lazy<Mutex<Keyboard>> = Lazy::new(|| Mutex::new(Keyboard::new()));
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyboardLayout {
+    UsQwerty,
+    BrazilAbnt2,
+}
+
 /// PS/2 keyboard state and ring buffer for shell input.
 pub struct Keyboard {
     inner: PcKeyboard<layouts::Us104Key, ScancodeSet1>,
+    layout: KeyboardLayout,
     buffer: [u8; 1024],
     read_pos: usize,
     write_pos: usize,
@@ -21,6 +28,7 @@ impl Keyboard {
                 layouts::Us104Key,
                 HandleControl::Ignore,
             ),
+            layout: KeyboardLayout::UsQwerty,
             buffer: [0; 1024],
             read_pos: 0,
             write_pos: 0,
@@ -56,6 +64,20 @@ impl Keyboard {
         self.read_pos = (self.read_pos + 1) % self.buffer.len();
         Some(byte)
     }
+
+    pub fn set_layout(&mut self, layout: KeyboardLayout) {
+        self.layout = layout;
+        self.inner = PcKeyboard::new(
+            ScancodeSet1::new(),
+            layouts::Us104Key,
+            HandleControl::Ignore,
+        );
+    }
+
+    #[must_use]
+    pub fn layout(&self) -> KeyboardLayout {
+        self.layout
+    }
 }
 
 /// Initialize the keyboard driver state.
@@ -71,6 +93,23 @@ pub fn handle_scancode(scancode: u8) {
 /// Read one buffered character for the shell.
 pub fn read_char() -> Option<u8> {
     KEYBOARD.lock().read_char()
+}
+
+pub fn set_layout(layout: KeyboardLayout) {
+    KEYBOARD.lock().set_layout(layout);
+}
+
+#[must_use]
+pub fn current_layout() -> KeyboardLayout {
+    KEYBOARD.lock().layout()
+}
+
+#[must_use]
+pub fn layout_name(layout: KeyboardLayout) -> &'static str {
+    match layout {
+        KeyboardLayout::UsQwerty => "us",
+        KeyboardLayout::BrazilAbnt2 => "br",
+    }
 }
 
 fn key_to_byte(key: DecodedKey) -> Option<u8> {
