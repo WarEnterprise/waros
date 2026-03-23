@@ -80,3 +80,10 @@ pub extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: Interrupt
     keyboard::handle_scancode(scancode);
     pic::end_of_interrupt(InterruptIndex::Keyboard);
 }
+
+/// Mouse interrupt handler (IRQ12 -> vector 44).
+pub extern "x86-interrupt" fn mouse_interrupt_handler(_stack_frame: InterruptStackFrame) {
+    let byte = port::inb(0x60);
+    crate::gui::mouse::handle_byte(byte);
+    pic::end_of_interrupt(InterruptIndex::Mouse);
+}

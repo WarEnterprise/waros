@@ -35,6 +35,7 @@ pub fn execute_command(command_line: &str) {
         "clear" => {
             console::clear_screen();
         }
+        "startx" | "gui" => cmd_startx(),
         "ls" => cmd_ls(&parts[1..]),
         "cat" => cmd_cat(&parts[1..]),
         "write" => cmd_write(command_line),
@@ -149,7 +150,7 @@ fn cmd_help(topic: Option<&str>) {
     kprintln!("  echo            hex <addr> [n]  color           history");
     kprintln!("  tasks           spawn <cmd>     kill <id>       banner");
     kprintln!("  keyboard <us|br>  useradd <name>  userdel <name>  passwd [name]");
-    kprintln!("  su <name>       logout");
+    kprintln!("  su <name>       logout          startx|gui");
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Control\n");
@@ -607,6 +608,15 @@ fn cmd_su(args: &[&str]) {
 fn cmd_logout() {
     kprintln!("Logging out...");
     auth::session::logout();
+}
+
+fn cmd_startx() {
+    if crate::gui::is_active() {
+        kprintln!("[WarOS] GUI is already active.");
+        return;
+    }
+
+    crate::gui::start_gui();
 }
 
 fn cmd_chmod(args: &[&str]) {

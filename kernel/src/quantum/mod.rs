@@ -26,6 +26,14 @@ pub mod state;
 
 static QUANTUM_STATE: Mutex<Option<QuantumSession>> = Mutex::new(None);
 
+#[derive(Clone)]
+pub struct GuiQuantumSnapshot {
+    pub num_qubits: usize,
+    pub bytes_used: usize,
+    pub operations: alloc::vec::Vec<String>,
+    pub last_result_text: Option<String>,
+}
+
 /// Dispatch a shell quantum command.
 pub fn handle_quantum_command(command: &str, args: &[&str]) -> Result<(), &'static str> {
     match command {
@@ -137,6 +145,18 @@ pub fn active_register() -> Option<(usize, usize)> {
     guard
         .as_ref()
         .map(|session| (session.state.num_qubits, session.state.bytes_used()))
+}
+
+#[must_use]
+pub fn gui_snapshot() -> Option<GuiQuantumSnapshot> {
+    let guard = QUANTUM_STATE.lock();
+    let session = guard.as_ref()?;
+    Some(GuiQuantumSnapshot {
+        num_qubits: session.state.num_qubits,
+        bytes_used: session.state.bytes_used(),
+        operations: session.operations().iter().cloned().collect(),
+        last_result_text: session.last_result_text().map(ToString::to_string),
+    })
 }
 
 fn cmd_qalloc(args: &[&str]) -> Result<(), &'static str> {

@@ -62,4 +62,9 @@ impl QuantumSession {
     pub fn last_result_text(&self) -> Option<&str> {
         self.last_result_text.as_deref()
     }
+
+    #[must_use]
+    pub fn operations(&self) -> &[String] {
+        &self.operations
+    }
 }

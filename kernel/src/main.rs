@@ -12,6 +12,7 @@ mod boot;
 mod display;
 mod drivers;
 mod fs;
+mod gui;
 mod memory;
 mod net;
 mod panic;
@@ -134,10 +135,25 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
         let Some(frame_allocator) = allocator_guard.as_mut() else {
             return Err("frame allocator missing after initialization");
         };
-        memory::heap::init_heap(&mut mapper, frame_allocator)
-            .map_err(|_| "kernel heap initialization failed")?;
+        if let Err(error) = memory::heap::init_heap(&mut mapper, frame_allocator) {
+            serial_println!(
+                "[ERR] heap initialization failed ({} MiB requested): {:?}",
+                memory::heap::HEAP_SIZE / (1024 * 1024),
+                error
+            );
+            return Err("kernel heap initialization failed");
+        }
     }
-    boot_ok("Kernel heap: 4 MiB allocated");
+    boot_ok_fmt(
+        format_args!(
+            "Kernel heap: {} MiB allocated",
+            memory::heap::HEAP_SIZE / (1024 * 1024)
+        ),
+        format_args!(
+            "Kernel heap: {} MiB allocated",
+            memory::heap::HEAP_SIZE / (1024 * 1024)
+        ),
+    );
 
     fs::init();
     boot_ok("WarFS: in-memory filesystem ready");

@@ -7,7 +7,7 @@ use crate::memory::paging;
 use crate::memory::physical::BitmapAllocator;
 
 pub const HEAP_START: u64 = 0x_4444_4444_0000;
-pub const HEAP_SIZE: u64 = 4 * 1024 * 1024;
+pub const HEAP_SIZE: u64 = 8 * 1024 * 1024;
 
 #[global_allocator]
 static ALLOCATOR: LockedHeap = LockedHeap::empty();

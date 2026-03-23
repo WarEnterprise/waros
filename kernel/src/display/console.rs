@@ -1,7 +1,9 @@
+use alloc::string::String;
 use core::fmt::{self, Write};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bootloader_api::info::FrameBuffer;
-use spin::Mutex;
+use spin::{Lazy, Mutex};
 use x86_64::instructions::interrupts;
 
 use crate::display::font;
@@ -23,6 +25,9 @@ impl Colors {
 }
 
 pub static CONSOLE: Mutex<Option<FramebufferConsole>> = Mutex::new(None);
+static RENDERING_ENABLED: AtomicBool = AtomicBool::new(true);
+static CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
+static CAPTURE_BUFFER: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));
 
 /// Text console that renders glyphs into the framebuffer.
 pub struct FramebufferConsole {
@@ -180,9 +185,36 @@ pub fn with_console<R>(function: impl FnOnce(&mut FramebufferConsole) -> R) -> O
     guard.as_mut().map(function)
 }
 
+pub fn set_rendering_enabled(enabled: bool) {
+    RENDERING_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn rendering_enabled() -> bool {
+    RENDERING_ENABLED.load(Ordering::Relaxed)
+}
+
+pub fn begin_capture() {
+    CAPTURE_BUFFER.lock().clear();
+    CAPTURE_ACTIVE.store(true, Ordering::Relaxed);
+}
+
+#[must_use]
+pub fn end_capture() -> String {
+    CAPTURE_ACTIVE.store(false, Ordering::Relaxed);
+    core::mem::take(&mut *CAPTURE_BUFFER.lock())
+}
+
 /// Clear the screen using the active background color.
 pub fn clear_screen() {
-    let _ = with_console(FramebufferConsole::clear_screen);
+    if rendering_enabled() {
+        let _ = with_console(FramebufferConsole::clear_screen);
+    } else {
+        let _ = with_console(|console| {
+            console.cursor_col = 0;
+            console.cursor_row = 0;
+        });
+    }
 }
 
 /// Remove one character from the visible line buffer.
@@ -192,6 +224,24 @@ pub fn backspace() {
 
 /// Print formatted text to the framebuffer console.
 pub fn _print(args: fmt::Arguments<'_>) {
+    if CAPTURE_ACTIVE.load(Ordering::Relaxed) {
+        let rendered = alloc::format!("{args}");
+        capture_text(&rendered);
+        if !rendering_enabled() {
+            return;
+        }
+        interrupts::without_interrupts(|| {
+            let mut guard = CONSOLE.lock();
+            if let Some(console) = guard.as_mut() {
+                let _ = console.write_str(&rendered);
+            }
+        });
+        return;
+    }
+
+    if !rendering_enabled() {
+        return;
+    }
     interrupts::without_interrupts(|| {
         let mut guard = CONSOLE.lock();
         if let Some(console) = guard.as_mut() {
@@ -202,6 +252,27 @@ pub fn _print(args: fmt::Arguments<'_>) {
 
 /// Print formatted text using a temporary foreground color.
 pub fn _print_colored(color: u32, args: fmt::Arguments<'_>) {
+    if CAPTURE_ACTIVE.load(Ordering::Relaxed) {
+        let rendered = alloc::format!("{args}");
+        capture_text(&rendered);
+        if !rendering_enabled() {
+            return;
+        }
+        interrupts::without_interrupts(|| {
+            let mut guard = CONSOLE.lock();
+            if let Some(console) = guard.as_mut() {
+                let previous = console.fg_color;
+                console.set_color(color);
+                let _ = console.write_str(&rendered);
+                console.set_color(previous);
+            }
+        });
+        return;
+    }
+
+    if !rendering_enabled() {
+        return;
+    }
     interrupts::without_interrupts(|| {
         let mut guard = CONSOLE.lock();
         if let Some(console) = guard.as_mut() {
@@ -211,6 +282,12 @@ pub fn _print_colored(color: u32, args: fmt::Arguments<'_>) {
             console.set_color(previous);
         }
     });
+}
+
+fn capture_text(text: &str) {
+    if CAPTURE_ACTIVE.load(Ordering::Relaxed) {
+        CAPTURE_BUFFER.lock().push_str(text);
+    }
 }
 
 fn blend(background: u32, foreground: u32, alpha: u8) -> u32 {
