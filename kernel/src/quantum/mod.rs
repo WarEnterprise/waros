@@ -355,12 +355,9 @@ fn cmd_qsave(args: &[&str]) -> Result<(), &'static str> {
 
     let filename = with_extension(raw_name, ".qasm");
     let qasm = session.qasm_source();
-    fs::FILESYSTEM
-        .lock()
-        .write(&filename, qasm.as_bytes())
-        .map_err(map_fs_error)?;
+    let saved_path = fs::write_current(&filename, qasm.as_bytes()).map_err(map_fs_error)?;
     kprint_colored!(Colors::GREEN, "Saved circuit to ");
-    kprintln!("'{}' ({} bytes)", filename, qasm.len());
+    kprintln!("'{}' ({} bytes)", saved_path, qasm.len());
     Ok(())
 }
 
@@ -381,12 +378,9 @@ fn cmd_qresult(args: &[&str]) -> Result<(), &'static str> {
     };
 
     let filename = with_extension(raw_name, ".txt");
-    fs::FILESYSTEM
-        .lock()
-        .write(&filename, result_text.as_bytes())
-        .map_err(map_fs_error)?;
+    let saved_path = fs::write_current(&filename, result_text.as_bytes()).map_err(map_fs_error)?;
     kprint_colored!(Colors::GREEN, "Saved measurement results to ");
-    kprintln!("'{}' ({} bytes)", filename, result_text.len());
+    kprintln!("'{}' ({} bytes)", saved_path, result_text.len());
     Ok(())
 }
 
@@ -474,5 +468,6 @@ fn map_fs_error(error: fs::FsError) -> &'static str {
         fs::FsError::FileTooLarge => "file too large",
         fs::FsError::ReadOnly => "file is read-only",
         fs::FsError::InvalidFilename => "invalid filename",
+        fs::FsError::PermissionDenied => "permission denied",
     }
 }

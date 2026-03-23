@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use core::arch::x86_64::__cpuid;
 use core::str;
 
+use crate::auth::{self, UserRole, USER_DB};
 use crate::arch::x86_64::interrupts;
 use crate::arch::x86_64::pit::PIT_FREQUENCY_HZ;
 use crate::arch::x86_64::port;
@@ -34,7 +35,7 @@ pub fn execute_command(command_line: &str) {
         "clear" => {
             console::clear_screen();
         }
-        "ls" => cmd_ls(),
+        "ls" => cmd_ls(&parts[1..]),
         "cat" => cmd_cat(&parts[1..]),
         "write" => cmd_write(command_line),
         "rm" => cmd_rm(&parts[1..]),
@@ -69,6 +70,13 @@ pub fn execute_command(command_line: &str) {
         "dns" => cmd_dns(&parts[1..]),
         "wget" => cmd_wget(&parts[1..]),
         "curl" => cmd_curl(&parts[1..]),
+        "useradd" => cmd_useradd(&parts[1..]),
+        "userdel" => cmd_userdel(&parts[1..]),
+        "passwd" => cmd_passwd(&parts[1..]),
+        "users" => cmd_users(),
+        "su" => cmd_su(&parts[1..]),
+        "logout" => cmd_logout(),
+        "chmod" => cmd_chmod(&parts[1..]),
         "qalloc" | "qfree" | "qreset" | "qrun" | "qstate" | "qprobs" | "qmeasure" | "qcircuit"
         | "qinfo" | "qsave" | "qexport" | "qresult" => {
             if let Err(error) = quantum::handle_quantum_command(command, &parts[1..]) {
@@ -116,7 +124,7 @@ fn cmd_help(topic: Option<&str>) {
     kprint_colored!(Colors::PURPLE, "System\n");
     kprintln!("  info            cpu             mem             time");
     kprintln!("  date            uptime          version         neofetch");
-    kprintln!("  uname           whoami          lspci");
+    kprintln!("  uname           whoami          users           lspci");
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Quantum\n");
@@ -134,13 +142,14 @@ fn cmd_help(topic: Option<&str>) {
 
     kprint_colored!(Colors::PURPLE, "Filesystem\n");
     kprintln!("  ls              cat <file>      write <f> <t>   rm <file>");
-    kprintln!("  touch <file>    stat <file>     df");
+    kprintln!("  touch <file>    stat <file>     chmod <mode> <file>  df");
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Tools\n");
     kprintln!("  echo            hex <addr> [n]  color           history");
     kprintln!("  tasks           spawn <cmd>     kill <id>       banner");
-    kprintln!("  keyboard <us|br>");
+    kprintln!("  keyboard <us|br>  useradd <name>  userdel <name>  passwd [name]");
+    kprintln!("  su <name>       logout");
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Control\n");
@@ -423,6 +432,203 @@ fn cmd_keyboard(args: &[&str]) {
     }
 }
 
+fn cmd_useradd(args: &[&str]) {
+    if !auth::session::is_admin() {
+        kprint_colored!(Colors::RED, "[WarOS] ");
+        kprintln!("Permission denied. Only admin can create users.");
+        return;
+    }
+
+    let Some(username) = args.first().copied() else {
+        kprintln!("Usage: useradd <username> [--admin]");
+        return;
+    };
+
+    let role = if args.get(1) == Some(&"--admin") {
+        UserRole::Admin
+    } else {
+        UserRole::User
+    };
+
+    let mut db = USER_DB.lock();
+    match db.create_user(username, "changeme", role) {
+        Ok(uid) => {
+            db.save_to_fs();
+            kprint_colored!(Colors::GREEN, "[WarOS] ");
+            kprintln!(
+                "User '{}' created (uid={}, role={}).",
+                username,
+                uid,
+                role.as_str()
+            );
+            kprintln!("  Temporary password: changeme");
+        }
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[WarOS] ");
+            kprintln!("Failed to create user: {}.", error);
+        }
+    }
+}
+
+fn cmd_userdel(args: &[&str]) {
+    if !auth::session::is_admin() {
+        kprint_colored!(Colors::RED, "[WarOS] ");
+        kprintln!("Permission denied. Only admin can delete users.");
+        return;
+    }
+
+    let Some(username) = args.first().copied() else {
+        kprintln!("Usage: userdel <username>");
+        return;
+    };
+
+    let mut db = USER_DB.lock();
+    let Some(user) = db.find_by_name(username).cloned() else {
+        kprintln!("User '{}' not found.", username);
+        return;
+    };
+
+    match db.delete_user(user.uid) {
+        Ok(()) => {
+            db.save_to_fs();
+            kprint_colored!(Colors::GREEN, "[WarOS] ");
+            kprintln!("User '{}' deleted.", username);
+        }
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[WarOS] ");
+            kprintln!("Failed to delete user: {}.", error);
+        }
+    }
+}
+
+fn cmd_passwd(args: &[&str]) {
+    let Some(current) = auth::session::current_user() else {
+        kprint_colored!(Colors::RED, "[WarOS] ");
+        kprintln!("No active session.");
+        return;
+    };
+
+    let target_name = args.first().copied().unwrap_or(&current.username);
+    if target_name != current.username && current.role != UserRole::Admin {
+        kprint_colored!(Colors::RED, "[WarOS] ");
+        kprintln!("Permission denied. Use 'passwd' without arguments for your own account.");
+        return;
+    }
+
+    kprint!("New password: ");
+    let new_password = auth::login::read_line_hidden();
+    kprintln!();
+    kprint!("Confirm: ");
+    let confirm = auth::login::read_line_hidden();
+    kprintln!();
+
+    if new_password != confirm {
+        kprint_colored!(Colors::RED, "[WarOS] ");
+        kprintln!("Passwords do not match.");
+        return;
+    }
+
+    let mut db = USER_DB.lock();
+    let Some(target) = db.find_by_name(target_name).cloned() else {
+        kprintln!("User '{}' not found.", target_name);
+        return;
+    };
+
+    match db.change_password(target.uid, &new_password) {
+        Ok(()) => {
+            db.save_to_fs();
+            kprint_colored!(Colors::GREEN, "[WarOS] ");
+            kprintln!("Password changed for '{}'.", target_name);
+        }
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[WarOS] ");
+            kprintln!("Failed to change password: {}.", error);
+        }
+    }
+}
+
+fn cmd_users() {
+    let Some(current) = auth::session::current_user() else {
+        kprint_colored!(Colors::RED, "[WarOS] ");
+        kprintln!("No active session.");
+        return;
+    };
+
+    let db = USER_DB.lock();
+    kprintln!("  UID  USERNAME        ROLE     HOME               FILES");
+    for user in db.list_users() {
+        if current.role == UserRole::Admin || user.uid == current.uid {
+            kprintln!(
+                "  {:>3}  {:<15} {:<8} {:<18} {}",
+                user.uid,
+                user.username,
+                user.role.as_str(),
+                user.home_dir,
+                fs::file_count_for_user(user.uid)
+            );
+        }
+    }
+}
+
+fn cmd_su(args: &[&str]) {
+    let Some(username) = args.first().copied() else {
+        kprintln!("Usage: su <username>");
+        return;
+    };
+
+    let is_admin = auth::session::is_admin();
+    let mut db = USER_DB.lock();
+    let target = if is_admin {
+        db.find_by_name(username).cloned()
+    } else {
+        kprint!("Password: ");
+        let password = auth::login::read_line_hidden();
+        kprintln!();
+        db.authenticate(username, &password).ok()
+    };
+
+    match target {
+        Some(user) => {
+            let _ = db.record_login(user.uid);
+            db.save_to_fs();
+            drop(db);
+            auth::session::start(user.clone());
+            kprint_colored!(Colors::GREEN, "[WarOS] ");
+            kprintln!("Switched to user '{}'.", user.username);
+        }
+        None => {
+            drop(db);
+            kprint_colored!(Colors::RED, "[WarOS] ");
+            kprintln!("Authentication failed.");
+        }
+    }
+}
+
+fn cmd_logout() {
+    kprintln!("Logging out...");
+    auth::session::logout();
+}
+
+fn cmd_chmod(args: &[&str]) {
+    let Some(mode) = args.first().copied() else {
+        kprintln!("Usage: chmod <mode> <file>");
+        kprintln!("  Example: chmod rw-- notes.txt");
+        return;
+    };
+    let Some(path) = args.get(1).copied() else {
+        kprintln!("Usage: chmod <mode> <file>");
+        return;
+    };
+
+    match fs::chmod_current(path, mode) {
+        Ok(resolved) => {
+            kprint_colored!(Colors::GREEN, "[WarOS] ");
+            kprintln!("Updated permissions on '{}' to {}.", resolved, mode);
+        }
+        Err(error) => report_fs_error(path, error),
+    }
+}
+
 fn cmd_quantum() {
     kprint_colored!(Colors::PURPLE, "Quantum Subsystem Status\n");
     branding::show_separator();
@@ -458,21 +664,29 @@ fn cmd_crypto() {
     kprintln!("  All algorithms are quantum-resistant against quantum attacks.");
 }
 
-fn cmd_ls() {
-    let filesystem = fs::FILESYSTEM.lock();
-    if filesystem.list().is_empty() {
-        kprintln!("WarFS is empty.");
-        return;
-    }
+fn cmd_ls(args: &[&str]) {
+    let target = args.first().copied();
+    match fs::list_current(target) {
+        Ok((directory, entries)) => {
+            if entries.is_empty() {
+                kprintln!("No files in {}.", fs::display_path(&directory));
+                return;
+            }
 
-    for entry in filesystem.list() {
-        kprintln!(
-            "  {:<20} {:>6} B    {}{}",
-            entry.name.as_str(),
-            entry.data.len(),
-            fs::format_timestamp(entry.modified_at),
-            if entry.readonly { "  [ro]" } else { "" }
-        );
+            kprintln!("  OWNER      MODE  SIZE     MODIFIED   NAME");
+            for entry in entries {
+                kprintln!(
+                    "  {:<10} {:<4} {:>6} B  {:<8} {}{}",
+                    auth::username_for_uid(entry.owner_uid),
+                    entry.permissions.mode_string(),
+                    entry.data.len(),
+                    fs::format_timestamp(entry.modified_at),
+                    fs::basename(&entry.name),
+                    if entry.readonly { "  [ro]" } else { "" }
+                );
+            }
+        }
+        Err(error) => report_fs_error(target.unwrap_or("~"), error),
     }
 }
 
@@ -482,14 +696,15 @@ fn cmd_cat(args: &[&str]) {
         return;
     };
 
-    let filesystem = fs::FILESYSTEM.lock();
-    let Ok(data) = filesystem.read(name) else {
-        kprint_colored!(Colors::RED, "[ERR]");
-        kprintln!(" file not found.");
-        return;
+    let (path, data) = match fs::read_current(name) {
+        Ok(result) => result,
+        Err(error) => {
+            report_fs_error(name, error);
+            return;
+        }
     };
 
-    match str::from_utf8(data) {
+    match str::from_utf8(&data) {
         Ok(text) => {
             kprint!("{}", text);
             if !text.ends_with('\n') {
@@ -498,7 +713,7 @@ fn cmd_cat(args: &[&str]) {
         }
         Err(_) => {
             kprint_colored!(Colors::RED, "[ERR]");
-            kprintln!(" file is not valid UTF-8 text.");
+            kprintln!(" '{}' is not valid UTF-8 text.", fs::display_path(&path));
         }
     }
 }
@@ -515,15 +730,12 @@ fn cmd_write(command_line: &str) {
         return;
     };
 
-    match fs::FILESYSTEM.lock().write(name, text.as_bytes()) {
-        Ok(()) => {
+    match fs::write_current(name, text.as_bytes()) {
+        Ok(path) => {
             kprint_colored!(Colors::GREEN, "Wrote ");
-            kprintln!("{} bytes to '{}'.", text.len(), name);
+            kprintln!("{} bytes to '{}'.", text.len(), path);
         }
-        Err(error) => {
-            kprint_colored!(Colors::RED, "[ERR]");
-            kprintln!(" {}", error);
-        }
+        Err(error) => report_fs_error(name, error),
     }
 }
 
@@ -533,15 +745,12 @@ fn cmd_rm(args: &[&str]) {
         return;
     };
 
-    match fs::FILESYSTEM.lock().delete(name) {
-        Ok(()) => {
+    match fs::delete_current(name) {
+        Ok(path) => {
             kprint_colored!(Colors::GREEN, "Deleted ");
-            kprintln!("'{}'.", name);
+            kprintln!("'{}'.", path);
         }
-        Err(error) => {
-            kprint_colored!(Colors::RED, "[ERR]");
-            kprintln!(" {}", error);
-        }
+        Err(error) => report_fs_error(name, error),
     }
 }
 
@@ -551,16 +760,13 @@ fn cmd_touch(args: &[&str]) {
         return;
     };
 
-    let existed = fs::FILESYSTEM.lock().exists(name);
-    match fs::FILESYSTEM.lock().touch(name) {
-        Ok(()) => {
+    let existed = fs::stat_current(name).is_ok();
+    match fs::touch_current(name) {
+        Ok(path) => {
             kprint_colored!(Colors::GREEN, "{}", if existed { "Updated " } else { "Created " });
-            kprintln!("'{}'.", name);
+            kprintln!("'{}'.", path);
         }
-        Err(error) => {
-            kprint_colored!(Colors::RED, "[ERR]");
-            kprintln!(" {}", error);
-        }
+        Err(error) => report_fs_error(name, error),
     }
 }
 
@@ -570,17 +776,20 @@ fn cmd_stat(args: &[&str]) {
         return;
     };
 
-    let filesystem = fs::FILESYSTEM.lock();
-    let Ok(entry) = filesystem.stat(name) else {
-        kprint_colored!(Colors::RED, "[ERR]");
-        kprintln!(" file not found.");
-        return;
+    let entry = match fs::stat_current(name) {
+        Ok(entry) => entry,
+        Err(error) => {
+            report_fs_error(name, error);
+            return;
+        }
     };
 
-    kprintln!("File: {}", entry.name.as_str());
+    kprintln!("File: {}", fs::display_path(&entry.name));
     kprintln!("  Size:      {} bytes", entry.data.len());
     kprintln!("  Created:   {}", fs::format_timestamp(entry.created_at));
     kprintln!("  Modified:  {}", fs::format_timestamp(entry.modified_at));
+    kprintln!("  Owner:     {}", auth::username_for_uid(entry.owner_uid));
+    kprintln!("  Perms:     {}", entry.permissions.mode_string());
     kprintln!("  Read-only: {}", if entry.readonly { "yes" } else { "no" });
 }
 
@@ -662,7 +871,16 @@ fn cmd_date() {
 }
 
 fn cmd_whoami() {
-    kprintln!("root@waros");
+    if let Some(user) = auth::session::current_user() {
+        kprintln!(
+            "{} (uid={}, role={})",
+            user.username,
+            user.uid,
+            user.role.as_str()
+        );
+    } else {
+        kprintln!("not logged in");
+    }
 }
 
 fn cmd_uname() {
@@ -939,17 +1157,18 @@ fn cmd_net(command_line: &str) {
                 kprintln!("Usage: net qsend <file>");
                 return;
             };
-            let filesystem = fs::FILESYSTEM.lock();
-            let Ok(data) = filesystem.read(name) else {
-                kprint_colored!(Colors::RED, "[ERR]");
-                kprintln!(" file not found.");
-                return;
+            let (path, data) = match fs::read_current(name) {
+                Ok(result) => result,
+                Err(error) => {
+                    report_fs_error(name, error);
+                    return;
+                }
             };
-            match str::from_utf8(data) {
+            match str::from_utf8(&data) {
                 Ok(qasm) => match net::send_circuit(qasm) {
                     Ok(()) => {
                         kprint_colored!(Colors::GREEN, "Sent ");
-                        kprintln!("'{}' over COM2.", name);
+                        kprintln!("'{}' over COM2.", path);
                     }
                     Err(_error) => {
                         kprint_colored!(Colors::RED, "[ERR]");
@@ -1141,6 +1360,30 @@ fn cmd_unknown(command: &str) {
         " command '{}' not found. Type 'help' for available commands.",
         command
     );
+}
+
+fn report_fs_error(path: &str, error: fs::FsError) {
+    match error {
+        fs::FsError::PermissionDenied => {
+            let resolved = auth::session::resolve_path(path);
+            if let Some((uid, owner)) = fs::owner_label(&resolved) {
+                kprint_colored!(Colors::RED, "[WarOS] PERMISSION DENIED:");
+                kprintln!(
+                    " {} is owned by {} (uid={})",
+                    fs::display_path(&resolved),
+                    owner,
+                    uid
+                );
+            } else {
+                kprint_colored!(Colors::RED, "[WarOS] PERMISSION DENIED:");
+                kprintln!(" {}", fs::display_path(&resolved));
+            }
+        }
+        _ => {
+            kprint_colored!(Colors::RED, "[ERR]");
+            kprintln!(" {}", error);
+        }
+    }
 }
 
 fn task_state_name(state: task::TaskState) -> &'static str {

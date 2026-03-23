@@ -6,6 +6,7 @@
 
 extern crate alloc;
 
+mod auth;
 mod arch;
 mod boot;
 mod display;
@@ -44,7 +45,18 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         fatal(error);
     }
 
-    shell::run()
+    loop {
+        let user = if auth::first_boot_pending() {
+            let user = auth::login::first_boot_setup();
+            auth::clear_first_boot_pending();
+            user
+        } else {
+            auth::login::login_screen()
+        };
+
+        auth::session::start(user);
+        shell::run();
+    }
 }
 
 fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str> {
@@ -129,6 +141,17 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
 
     fs::init();
     boot_ok("WarFS: in-memory filesystem ready");
+
+    let auth_report = auth::init().map_err(|_| "user database initialization failed")?;
+    if auth_report.first_boot {
+        boot_ok("User database initialized (root account seeded)");
+        boot_notice("First boot setup pending: create your admin account after boot");
+    } else {
+        boot_ok_fmt(
+            format_args!("User database loaded ({} users)", auth_report.users),
+            format_args!("User database loaded ({} users)", auth_report.users),
+        );
+    }
 
     task::init();
     boot_ok("Task scheduler: cooperative background tasks ready");

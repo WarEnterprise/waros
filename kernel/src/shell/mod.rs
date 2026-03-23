@@ -1,7 +1,8 @@
-use alloc::string::{String, ToString};
+use alloc::string::String;
 
 use x86_64::instructions::hlt;
 
+use crate::auth::session;
 use crate::display::console::Colors;
 use crate::drivers::keyboard;
 use crate::shell::commands::execute_command;
@@ -14,15 +15,28 @@ pub mod history;
 const INPUT_LIMIT: usize = 256;
 
 fn prompt() {
-    let ip = crate::net::network_config()
-        .map(|config| config.ip.to_string())
-        .unwrap_or_else(|| "offline".to_string());
+    let Some(user) = session::current_user() else {
+        kprint!("login> ");
+        return;
+    };
 
+    let path = session::current_prompt_path();
     kprint_colored!(Colors::DIM, "[");
-    kprint_colored!(Colors::GREEN, "WarOS");
+    kprint_colored!(Colors::CYAN, "WarOS");
     kprint_colored!(Colors::DIM, " ");
-    kprint_colored!(Colors::YELLOW, "{}", ip);
-    kprint_colored!(Colors::DIM, " /]$ ");
+    if user.role == crate::auth::UserRole::Admin {
+        kprint_colored!(Colors::RED, "{}", user.username);
+    } else {
+        kprint_colored!(Colors::GREEN, "{}", user.username);
+    }
+    kprint_colored!(Colors::DIM, "@waros ");
+    kprint_colored!(Colors::BLUE, "{}", path);
+    kprint_colored!(Colors::DIM, "]");
+    if user.role == crate::auth::UserRole::Admin {
+        kprint_colored!(Colors::RED, "# ");
+    } else {
+        kprint!("$ ");
+    }
 }
 
 /// Re-render the shell prompt.
@@ -30,13 +44,17 @@ pub fn reprompt() {
     prompt();
 }
 
-/// Run the minimal interactive WarShell loop forever.
-pub fn run() -> ! {
+/// Run the interactive WarShell loop until the current session logs out.
+pub fn run() {
     let mut input = String::new();
     let mut truncated = false;
     prompt();
 
     loop {
+        if !session::is_logged_in() {
+            return;
+        }
+
         task::tick();
         let _ = crate::net::poll();
 
@@ -52,6 +70,9 @@ pub fn run() -> ! {
                     }
                     input.clear();
                     truncated = false;
+                    if !session::is_logged_in() {
+                        return;
+                    }
                     prompt();
                 }
                 0x08 => {
