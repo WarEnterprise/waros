@@ -10,4 +10,4 @@ description = "WarOS Quantum Computing Toolkit"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 sysinfo = "0.30"
-waros-quantum = { path = "../waros-quantum" }
+waros-quantum = { path = "../waros-quantum", features = ["ibm"] }

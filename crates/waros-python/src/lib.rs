@@ -15,6 +15,8 @@ use pyo3::types::PyModule;
 mod algorithms;
 mod circuit;
 mod crypto;
+#[cfg(feature = "ibm")]
+mod ibm;
 mod noise;
 mod qasm;
 mod result;
@@ -34,6 +36,8 @@ fn _waros(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<simulator::PySimulator>()?;
     m.add_class::<result::PyQuantumResult>()?;
     m.add_class::<noise::PyNoiseModel>()?;
+    #[cfg(feature = "ibm")]
+    m.add_class::<ibm::PyIBMBackend>()?;
 
     m.add_function(wrap_pyfunction!(qasm::parse_qasm, m)?)?;
     m.add_function(wrap_pyfunction!(qasm::to_qasm, m)?)?;

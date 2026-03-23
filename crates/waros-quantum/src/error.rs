@@ -47,4 +47,32 @@ pub enum WarosError {
     /// A generic simulation error.
     #[error("Simulation error: {0}")]
     SimulationError(String),
+
+    /// A network request to a remote backend failed.
+    #[error("Network error: {0}")]
+    NetworkError(String),
+
+    /// A remote API returned an error response.
+    #[error("IBM API error: {0}")]
+    APIError(String),
+
+    /// Authentication or credential resolution failed.
+    #[error("Authentication error: {0}")]
+    AuthError(String),
+
+    /// A remote quantum hardware execution failed.
+    #[error("Hardware error: {0}")]
+    HardwareError(String),
+
+    /// A remote job exceeded the allowed wait time.
+    #[error("Job timeout: {0}")]
+    Timeout(String),
+
+    /// Structured data from an external source could not be parsed.
+    #[error("Parse error: {0}")]
+    ParseError(String),
+
+    /// Local filesystem I/O failed.
+    #[error("IO error: {0}")]
+    IOError(String),
 }

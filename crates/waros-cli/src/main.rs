@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use commands::{bench, qstat, repl, run, show};
+use commands::{bench, ibm, qstat, repl, run, show};
 use utils::CliResult;
 
 #[derive(Parser)]
@@ -50,6 +50,53 @@ enum Command {
         #[arg(short, long, default_value_t = 5)]
         qubits: usize,
     },
+    /// Work with IBM Quantum Runtime hardware backends.
+    Ibm {
+        #[command(subcommand)]
+        command: IbmCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum IbmCommand {
+    /// Save IBM Quantum credentials for future commands.
+    Login {
+        /// IBM Quantum Platform API key.
+        #[arg(long)]
+        token: Option<String>,
+        /// IBM Quantum service instance CRN.
+        #[arg(long)]
+        instance_crn: Option<String>,
+    },
+    /// List available IBM backends.
+    Backends,
+    /// Run a QASM circuit on IBM hardware and wait for the result.
+    Run {
+        /// Path to the QASM file.
+        file: PathBuf,
+        /// IBM backend name, such as ibm_brisbane.
+        #[arg(long, default_value = "ibm_brisbane")]
+        backend: String,
+        /// Number of shots.
+        #[arg(short, long, default_value_t = 1000)]
+        shots: u32,
+        /// Maximum time to wait for the queued job.
+        #[arg(long, default_value_t = 600)]
+        timeout_secs: u64,
+    },
+    /// Check the status of a submitted IBM job.
+    Status {
+        /// IBM Quantum job ID.
+        job_id: String,
+    },
+    /// Fetch the final result for a submitted IBM job.
+    Result {
+        /// IBM Quantum job ID.
+        job_id: String,
+        /// Maximum time to wait for the queued job.
+        #[arg(long, default_value_t = 600)]
+        timeout_secs: u64,
+    },
 }
 
 fn main() -> CliResult {
@@ -65,5 +112,23 @@ fn main() -> CliResult {
         Command::Show { file } => show::execute(&file),
         Command::Bench { qubits } => bench::execute(qubits),
         Command::Repl { qubits } => repl::execute(qubits),
+        Command::Ibm { command } => match command {
+            IbmCommand::Login {
+                token,
+                instance_crn,
+            } => ibm::login(token, instance_crn),
+            IbmCommand::Backends => ibm::backends(),
+            IbmCommand::Run {
+                file,
+                backend,
+                shots,
+                timeout_secs,
+            } => ibm::run(&file, &backend, shots, timeout_secs),
+            IbmCommand::Status { job_id } => ibm::status(&job_id),
+            IbmCommand::Result {
+                job_id,
+                timeout_secs,
+            } => ibm::result(&job_id, timeout_secs),
+        },
     }
 }

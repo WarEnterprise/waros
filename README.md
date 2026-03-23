@@ -11,13 +11,13 @@ WarOS is a hybrid quantum-classical operating system project from War Enterprise
 - `kernel/`
   Bare-metal `no_std` kernel bootstrap for x86_64 using the `bootloader` crate, with a framebuffer console, serial debug output, GDT/IDT/PIC setup, a bitmap frame allocator, a 4 MiB kernel heap, WarFS in-memory files, cooperative background tasks, COM2 serial networking primitives, WarShell commands, and a kernel-resident quantum simulator.
 - `crates/waros-quantum`
-  State-vector and MPS simulators, circuit builder, QFT, Monte Carlo noise, QEC helpers, Qiskit-compatible `OpenQASM` import support, advanced algorithms (QPE, Shor, VQE, QAOA, Simon, random walk), examples, and benchmarks.
+  State-vector and MPS simulators, circuit builder, QFT, Monte Carlo noise, QEC helpers, Qiskit-compatible `OpenQASM` import support, an optional IBM Quantum Runtime hardware backend, advanced algorithms (QPE, Shor, VQE, QAOA, Simon, random walk), examples, and benchmarks.
 - `crates/waros-cli`
-  Command-line interface for running QASM files, inspecting circuits, benchmarking, REPL usage, and simulated `qstat`.
+  Command-line interface for running QASM files, inspecting circuits, benchmarking, REPL usage, simulated `qstat`, and IBM Quantum Runtime login/backends/run/status/result flows.
 - `crates/waros-crypto`
   ML-KEM, ML-DSA / SLH-DSA wrappers via `pqcrypto`, SHA-3 / SHAKE helpers, and a simulated QRNG backed by the quantum SDK.
 - `crates/waros-python`
-  PyO3 + maturin bindings exposing the quantum simulator, QASM utilities, a Qiskit-style compatibility layer, advanced algorithms, noise models, and post-quantum cryptography to Python as `waros`.
+  PyO3 + maturin bindings exposing the quantum simulator, IBM Quantum Runtime access, QASM utilities, a Qiskit-style compatibility layer, advanced algorithms, noise models, and post-quantum cryptography to Python as `waros`.
 
 ## Quick Start
 
@@ -32,6 +32,7 @@ cargo run --example qaoa_demo
 cargo run --example pqc_demo
 cargo run -p waros-cli -- qstat
 cargo run -p waros-cli -- run examples/qasm/bell.qasm --shots 1000
+cargo build -p waros-quantum --features ibm
 cd crates/waros-python
 maturin develop --release
 python -c "import waros; print(waros.__version__)"
@@ -99,9 +100,11 @@ fn main() -> Result<(), WarosError> {
 - State-vector layout selection (`AoS` or `SoA`) plus an MPS backend for low-entanglement larger-qubit workloads.
 - `OpenQASM` 2.0 parsing/serialization plus runnable QASM fixtures in [`examples/qasm`](examples/qasm).
 - Qiskit-oriented import support including `u1`/`u2`/`u3`, custom gates, conditionals, and a Python compatibility wrapper.
+- Feature-gated IBM Quantum Runtime hardware backend for Rust, Python, and CLI userspace execution.
 - Quantum error-correction helpers with repetition-code and Steane-code circuit builders.
 - Post-quantum cryptography using maintained `pqcrypto` crates and SHA-3 / SHAKE.
 - Python bindings via PyO3 and maturin with `Circuit`, `Simulator`, `NoiseModel`, `QuantumResult`, QASM helpers, a `waros.crypto` submodule, and a `waros.algorithms` submodule.
+- Python `IBMBackend` bindings with saved-credential helpers for IBM Quantum Runtime jobs.
 - Python convenience helpers for circuit stats, notebook HTML rendering, and one-line Bell/Grover/teleport demos via `waros.algorithms`.
 - Bootable x86_64 kernel bootstrap with framebuffer output, interrupt handling, memory initialization, PS/2 keyboard input, and a minimal interactive shell.
 - Kernel-resident `no_std` quantum simulator with 18-qubit registers, shell-driven gate execution, state/probability inspection, histogram measurement, and built-in Bell/GHZ/Grover/teleport/QFT/Deutsch/Bernstein-Vazirani/superdense/Shor/VQE/QAOA demos.
@@ -132,6 +135,34 @@ shor = waros.algorithms.shor_factor(15, seed=42)
 vqe = waros.algorithms.vqe_hydrogen(seed=42)
 qaoa = waros.algorithms.qaoa_maxcut("square", seed=42)
 bell = waros.algorithms.run_bell_state(shots=1_000, seed=42)
+```
+
+## IBM Quantum Hardware
+
+IBM Quantum integration is userspace-only. The kernel remains simulation-only and does not perform HTTPS requests.
+
+Current IBM Quantum Runtime authentication requires both an API key and a service CRN:
+
+```bash
+export WAROS_IBM_TOKEN="your-ibm-api-key"
+export WAROS_IBM_INSTANCE_CRN="your-service-crn"
+
+cargo run -p waros-cli -- ibm backends
+cargo run -p waros-cli -- ibm run examples/qasm/bell.qasm --backend ibm_brisbane --shots 1000
+cargo run -p waros-quantum --example ibm_real_hardware --features ibm
+```
+
+```python
+import waros
+
+circuit = waros.Circuit(2)
+circuit.h(0)
+circuit.cnot(0, 1)
+circuit.measure_all()
+
+ibm = waros.IBMBackend(token="your-ibm-api-key", instance_crn="your-service-crn")
+print(ibm.backends())
+print(ibm.run(circuit, shots=1000, backend="ibm_brisbane"))
 ```
 
 ## Validation

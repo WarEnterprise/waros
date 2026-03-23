@@ -47,6 +47,7 @@ Circuit = _native.Circuit
 NoiseModel = _native.NoiseModel
 QuantumResult = _native.QuantumResult
 Simulator = _native.Simulator
+IBMBackend = getattr(_native, "IBMBackend", None)
 __version__ = _native.__version__
 crypto = _native.crypto
 parse_qasm = _native.parse_qasm
@@ -131,3 +132,6 @@ __all__ = [
     "parse_qasm",
     "to_qasm",
 ]
+
+if IBMBackend is not None:
+    __all__.append("IBMBackend")

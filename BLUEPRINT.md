@@ -2466,6 +2466,7 @@ Phase 4: Pure WarOS environment
 [x] ASCII circuit rendering for gates, measurements, and barriers
 [x] Monte Carlo noise model with IBM-like / IonQ-like hardware profiles
 [x] OpenQASM 2.0 parser / serializer and executable QASM fixture set
+[x] Userspace IBM Quantum Runtime backend for Rust, Python, and CLI (kernel remains simulation-only)
 [x] Matrix Product State backend with automatic backend selection for larger low-entanglement circuits
 [x] Struct-of-arrays statevector layout for SIMD-friendly gate application
 [x] Qiskit-oriented `OpenQASM` compatibility (`u1/u2/u3`, custom gates, expressions, conditionals)
@@ -2558,6 +2559,7 @@ IMPLEMENTED                              PLANNED
 ### Phase 2: Hardware Integration (Months 13-18)
 ```
 [ ] QHAL: IBM Quantum backend driver
+[x] Userspace IBM Quantum Runtime client/backend layer in `waros-quantum`, `waros-python`, and `waros-cli`
 [ ] QHAL: IonQ backend driver
 [ ] QPU virtualization (time-slicing)
 [ ] QEC: Surface code implementation

@@ -15,6 +15,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import waros
 
 
+def test_ibm_backend_is_exported():
+    assert hasattr(waros, "IBMBackend")
+
+
 class TestCircuit:
     def test_create(self):
         circuit = waros.Circuit(2)

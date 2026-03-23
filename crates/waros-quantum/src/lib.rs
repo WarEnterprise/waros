@@ -19,6 +19,7 @@
 //! ```
 
 pub mod algorithms;
+pub mod backends;
 pub mod circuit;
 pub mod complex;
 pub mod error;
@@ -36,6 +37,8 @@ pub use algorithms::{
     shor_factor, simon_algorithm, solve_gf2, vqe, AnsatzType, Graph, Hamiltonian, Pauli, PauliTerm,
     QAOAResult, QPEResult, RandomWalkResult, ShorResult, SimonResult, VQEResult,
 };
+pub use backends::simulator::SimulatorBackend;
+pub use backends::{BackendCapabilities, JobHandle, JobStatus, QuantumBackend};
 pub use circuit::Circuit;
 pub use complex::Complex;
 pub use error::{WarosError, WarosResult};

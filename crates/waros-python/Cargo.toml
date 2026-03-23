@@ -11,6 +11,10 @@ description = "Python bindings for WarOS Quantum Simulator & Crypto"
 name = "_waros"
 crate-type = ["cdylib"]
 
+[features]
+default = ["ibm"]
+ibm = ["waros-quantum/ibm"]
+
 [dependencies]
 pyo3 = { version = "0.22", features = ["abi3-py39", "extension-module"] }
 waros-crypto = { path = "../waros-crypto" }
