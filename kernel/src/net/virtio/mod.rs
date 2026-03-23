@@ -1,5 +1,6 @@
 pub mod net;
 pub mod queue;
+pub mod transport;
 
 pub const STATUS_ACKNOWLEDGE: u8 = 0x01;
 pub const STATUS_DRIVER: u8 = 0x02;

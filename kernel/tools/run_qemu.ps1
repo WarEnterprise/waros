@@ -1,9 +1,17 @@
 $KernelDir = Split-Path -Parent $PSScriptRoot
 $Image = Join-Path $KernelDir "target\waros-bios.img"
+$DiskImage = Join-Path $KernelDir "target\waros-disk.img"
 
 & "$PSScriptRoot\create_image.ps1"
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
+}
+
+if (-not (Test-Path $DiskImage)) {
+    & "$PSScriptRoot\create_disk.ps1"
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
 }
 
 $Qemu = Get-Command qemu-system-x86_64 -ErrorAction SilentlyContinue
@@ -19,7 +27,8 @@ if ($null -eq $Qemu) {
 
 & $Qemu.Source `
     -drive format=raw,file=$Image `
-    -m 256M `
+    -drive format=raw,file=$DiskImage,if=virtio `
+    -m 512M `
     -serial stdio `
     -netdev user,id=net0 `
     -device virtio-net-pci,netdev=net0 `

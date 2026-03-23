@@ -11,10 +11,10 @@ use crate::arch::x86_64::interrupts;
 use crate::memory;
 use crate::{boot_complete_ms, BUILD_DATE, KERNEL_VERSION};
 
-pub const MAX_FILES: usize = 64;
+pub const MAX_FILES: usize = 128;
 pub const MAX_FILE_SIZE: usize = 64 * 1024;
 pub const TOTAL_CAPACITY: usize = 4 * 1024 * 1024;
-const MAX_PATH_LEN: usize = 96;
+pub const MAX_PATH_LEN: usize = 96;
 const MAX_COMPONENT_LEN: usize = 31;
 
 pub static FILESYSTEM: Lazy<Mutex<WarFS>> = Lazy::new(|| Mutex::new(WarFS::new()));
@@ -139,6 +139,7 @@ impl WarFS {
             return Err(FsError::PermissionDenied);
         }
         self.files.remove(index);
+        crate::disk::maybe_delete_path(&canonical);
         Ok(())
     }
 
@@ -219,6 +220,67 @@ impl WarFS {
         if !entry.permissions.apply_mode_string(mode) {
             return Err(FsError::InvalidFilename);
         }
+        if let Some(entry) = self.find(&canonical) {
+            crate::disk::maybe_sync_file_entry(entry);
+        }
+        Ok(())
+    }
+
+    pub fn load_file_from_disk(
+        &mut self,
+        name: &str,
+        data: &[u8],
+        owner_uid: u16,
+        mut permissions: FilePermissions,
+        readonly: bool,
+        created_at: u64,
+        modified_at: u64,
+    ) -> Result<(), FsError> {
+        if data.len() > MAX_FILE_SIZE {
+            return Err(FsError::FileTooLarge);
+        }
+
+        let canonical = canonical_path(name)?;
+        if canonical == "/" {
+            return Err(FsError::InvalidFilename);
+        }
+
+        let used_without_target = self
+            .files
+            .iter()
+            .filter(|entry| entry.name != canonical)
+            .map(|entry| entry.data.len())
+            .sum::<usize>();
+        if used_without_target.saturating_add(data.len()) > TOTAL_CAPACITY {
+            return Err(FsError::FilesystemFull);
+        }
+
+        permissions.owner_uid = owner_uid;
+        if let Some(entry) = self.find_mut(&canonical) {
+            entry.data.clear();
+            entry.data.extend_from_slice(data);
+            entry.created_at = created_at;
+            entry.modified_at = modified_at;
+            entry.readonly = readonly;
+            entry.owner_uid = owner_uid;
+            entry.permissions = permissions;
+            return Ok(());
+        }
+
+        if self.files.len() >= self.max_files {
+            return Err(FsError::FilesystemFull);
+        }
+
+        self.files.push(FileEntry {
+            name: canonical,
+            data: data.to_vec(),
+            created_at,
+            modified_at,
+            readonly,
+            owner_uid,
+            permissions,
+        });
+        self.files.sort_by(|left, right| left.name.cmp(&right.name));
         Ok(())
     }
 
@@ -267,23 +329,27 @@ impl WarFS {
             entry.data.extend_from_slice(data);
             entry.modified_at = now;
             entry.readonly = readonly;
-            return Ok(());
+        } else {
+            if self.files.len() >= self.max_files {
+                return Err(FsError::FilesystemFull);
+            }
+
+            self.files.push(FileEntry {
+                name: canonical.clone(),
+                data: data.to_vec(),
+                created_at: now,
+                modified_at: now,
+                readonly,
+                owner_uid: permissions.owner_uid,
+                permissions,
+            });
+            self.files.sort_by(|left, right| left.name.cmp(&right.name));
         }
 
-        if self.files.len() >= self.max_files {
-            return Err(FsError::FilesystemFull);
+        if let Some(entry) = self.find(&canonical) {
+            crate::disk::maybe_sync_file_entry(entry);
         }
 
-        self.files.push(FileEntry {
-            name: canonical,
-            data: data.to_vec(),
-            created_at: now,
-            modified_at: now,
-            readonly,
-            owner_uid: permissions.owner_uid,
-            permissions,
-        });
-        self.files.sort_by(|left, right| left.name.cmp(&right.name));
         Ok(())
     }
 
@@ -321,15 +387,20 @@ pub fn init() {
 }
 
 pub fn seed_system_files() -> Result<(), FsError> {
+    let persistence_line = if crate::disk::is_available() {
+        "Persistent disk: active (virtio-blk backing store).\n"
+    } else {
+        "Persistent disk: unavailable, user files are lost on reboot.\n"
+    };
     let readme = concat!(
         "WarOS v0.2.0 - Quantum-Classical Hybrid Operating System\n",
         "War Enterprise - Building the future of computing\n\n",
-        "This is a RAM-based filesystem. Files are lost on reboot.\n",
         "Use 'help fs' for filesystem commands.\n",
         "Use 'help quantum' for quantum computing commands.\n\n",
         "warenterprise.com/waros\n",
         "github.com/WarEnterprise/waros\n",
     );
+    let readme = format!("{readme}{persistence_line}");
 
     let stats = memory::stats();
     let sysinfo = format!(
@@ -338,12 +409,13 @@ Kernel: waros-kernel {KERNEL_VERSION}\n\
 Built: {BUILD_DATE}\n\
 Boot time: {} ms\n\
 RAM: {} MiB ({} frames)\n\
-Heap: 4 MiB\n\
+Heap: {} MiB\n\
 Quantum: StateVector (18 qubits max)\n\
 Filesystem: {} files max, {} KiB max per file\n",
         boot_complete_ms(),
         (stats.total_frames * 4) / 1024,
         stats.total_frames,
+        crate::memory::heap::HEAP_SIZE / (1024 * 1024),
         MAX_FILES,
         MAX_FILE_SIZE / 1024
     );

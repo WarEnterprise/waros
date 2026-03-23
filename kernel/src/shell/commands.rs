@@ -9,6 +9,7 @@ use crate::arch::x86_64::pit::PIT_FREQUENCY_HZ;
 use crate::arch::x86_64::port;
 use crate::display::branding;
 use crate::display::console::{self, Colors};
+use crate::disk;
 use crate::drivers::keyboard;
 use crate::fs;
 use crate::memory;
@@ -43,6 +44,10 @@ pub fn execute_command(command_line: &str) {
         "touch" => cmd_touch(&parts[1..]),
         "stat" => cmd_stat(&parts[1..]),
         "df" => cmd_df(),
+        "disk" => cmd_disk(),
+        "sync" => cmd_sync(),
+        "mount" => cmd_mount(),
+        "format" => cmd_format_disk(),
         "info" => cmd_info(),
         "version" => cmd_version(&parts[1..]),
         "cpu" => cmd_cpu(),
@@ -107,6 +112,10 @@ fn cmd_help(topic: Option<&str>) {
         kprintln!("  touch <file>   Create an empty file");
         kprintln!("  stat <file>    Show file metadata");
         kprintln!("  df             Filesystem usage");
+        kprintln!("  disk           Show persistent disk status");
+        kprintln!("  sync           Force sync RAM files to disk");
+        kprintln!("  mount          Show mounted filesystem mode");
+        kprintln!("  format         Format the mounted disk");
         return;
     }
 
@@ -144,6 +153,7 @@ fn cmd_help(topic: Option<&str>) {
     kprint_colored!(Colors::PURPLE, "Filesystem\n");
     kprintln!("  ls              cat <file>      write <f> <t>   rm <file>");
     kprintln!("  touch <file>    stat <file>     chmod <mode> <file>  df");
+    kprintln!("  disk            sync            mount               format");
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Tools\n");
@@ -816,6 +826,110 @@ fn cmd_df() {
         filesystem.free_space() / 1024
     );
     kprintln!("  Limit: {} KiB", fs::TOTAL_CAPACITY / 1024);
+}
+
+fn cmd_disk() {
+    match disk::disk_status() {
+        Ok(Some(status)) => {
+            let used_bytes = status.used_blocks as u64 * disk::format::BLOCK_SIZE as u64;
+            let free_blocks = status.total_blocks.saturating_sub(status.used_blocks);
+            let free_bytes = free_blocks as u64 * disk::format::BLOCK_SIZE as u64;
+            kprintln!("WarFS Disk:");
+            kprintln!(
+                "  Device:     virtio-blk (PCI {:02X}:{:02X}.{})",
+                status.bus,
+                status.device,
+                status.function
+            );
+            kprintln!("  I/O Base:   0x{:04X}", status.io_base);
+            kprintln!(
+                "  Capacity:   {} MB ({} sectors)",
+                status.disk_size / (1024 * 1024),
+                status.capacity_sectors
+            );
+            kprintln!("  Format:     WarFS v{}", status.version);
+            kprintln!(
+                "  Used:       {} blocks ({} KiB)",
+                status.used_blocks,
+                used_bytes / 1024
+            );
+            kprintln!(
+                "  Free:       {} blocks ({} KiB)",
+                free_blocks,
+                free_bytes / 1024
+            );
+            kprintln!("  Files:      {}", status.file_count);
+            kprintln!("  State:      {}", disk::state_label(status.state));
+            kprintln!("  Mounted at: /");
+        }
+        Ok(None) => {
+            kprint_colored!(Colors::YELLOW, "[INFO]");
+            kprintln!(" no virtio-blk disk is mounted. WarFS is running in RAM-only mode.");
+        }
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[ERR]");
+            kprintln!(" unable to read disk status: {}.", error);
+        }
+    }
+}
+
+fn cmd_sync() {
+    if !disk::is_available() {
+        kprint_colored!(Colors::YELLOW, "[INFO]");
+        kprintln!(" no disk is mounted. WarFS is already running in RAM-only mode.");
+        return;
+    }
+
+    match disk::sync_all() {
+        Ok(count) => {
+            kprint_colored!(Colors::GREEN, "Synced ");
+            kprintln!("{} files to disk.", count);
+        }
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[ERR]");
+            kprintln!(" sync failed: {}.", error);
+        }
+    }
+}
+
+fn cmd_mount() {
+    match disk::mount_mode() {
+        disk::MountMode::RamOnly => {
+            kprintln!("Mounted filesystems:");
+            kprintln!("  /  warfs  (ram-only)");
+        }
+        disk::MountMode::DiskBacked { version, disk_size } => {
+            kprintln!("Mounted filesystems:");
+            kprintln!(
+                "  /  warfs  (disk-backed, WarFS v{}, {} MB)",
+                version,
+                disk_size / (1024 * 1024)
+            );
+        }
+    }
+}
+
+fn cmd_format_disk() {
+    if !auth::session::is_admin() {
+        kprint_colored!(Colors::RED, "[WarOS] ");
+        kprintln!("Permission denied. Only admin can format the disk.");
+        return;
+    }
+
+    match disk::format_active() {
+        Ok(true) => {
+            kprint_colored!(Colors::YELLOW, "[WARN] ");
+            kprintln!("Disk formatted. Current RAM files remain loaded until reboot or resync.");
+        }
+        Ok(false) => {
+            kprint_colored!(Colors::YELLOW, "[INFO] ");
+            kprintln!("No virtio-blk disk is mounted.");
+        }
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[ERR]");
+            kprintln!(" disk format failed: {}.", error);
+        }
+    }
 }
 
 fn cmd_tasks() {

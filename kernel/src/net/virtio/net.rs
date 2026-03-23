@@ -10,11 +10,11 @@ use crate::net::pci::{self, PciBar, PciDevice};
 use crate::net::{NetError, VirtioDeviceInfo};
 
 use super::queue::{Virtqueue, VirtqueueSnapshot};
+use super::transport::LegacyTransport;
 use super::{
-    LEGACY_DEVICE_CONFIG, LEGACY_DEVICE_FEATURES, LEGACY_DEVICE_STATUS, LEGACY_GUEST_FEATURES,
-    LEGACY_ISR_STATUS, LEGACY_QUEUE_ADDRESS, LEGACY_QUEUE_NOTIFY, LEGACY_QUEUE_SELECT,
-    LEGACY_QUEUE_SIZE, STATUS_ACKNOWLEDGE, STATUS_DRIVER, STATUS_DRIVER_OK, STATUS_FEATURES_OK,
-    STATUS_FAILED, VIRTIO_NET_F_MAC, VIRTQ_DESC_F_WRITE, VirtioNetHeader,
+    LEGACY_DEVICE_STATUS, LEGACY_ISR_STATUS, LEGACY_QUEUE_NOTIFY, STATUS_ACKNOWLEDGE,
+    STATUS_DRIVER, STATUS_DRIVER_OK, STATUS_FEATURES_OK, STATUS_FAILED, VIRTIO_NET_F_MAC,
+    VIRTQ_DESC_F_WRITE, VirtioNetHeader,
 };
 
 const NETWORK_BUFFER_SIZE: usize = 2048;
@@ -283,105 +283,5 @@ impl VirtioNet {
         let mut status = Port::<u8>::new(self.io_base + LEGACY_DEVICE_STATUS);
         // SAFETY: `self.io_base` points to the virtio legacy I/O BAR status register.
         unsafe { status.read() }
-    }
-}
-
-struct LegacyTransport {
-    io_base: u16,
-}
-
-impl LegacyTransport {
-    fn new(io_base: u16) -> Self {
-        Self { io_base }
-    }
-
-    fn device_features(&mut self) -> u32 {
-        self.read_u32(LEGACY_DEVICE_FEATURES)
-    }
-
-    fn set_guest_features(&mut self, features: u32) {
-        self.write_u32(LEGACY_GUEST_FEATURES, features);
-    }
-
-    fn configure_queue(&mut self, queue_index: u16) -> Result<Virtqueue, NetError> {
-        self.write_u16(LEGACY_QUEUE_SELECT, queue_index);
-        let queue_size = self.read_u16(LEGACY_QUEUE_SIZE);
-        if queue_size == 0 {
-            return Err(NetError::InitializationFailed("virtqueue is not present"));
-        }
-
-        // Legacy virtio-pci exposes a fixed queue size chosen by the device. Using a smaller
-        // guest-side ring corrupts the shared layout because both sides then disagree on where
-        // the available and used rings live in physical memory.
-        let queue = Virtqueue::new(queue_index, queue_size)?;
-        self.write_u32(LEGACY_QUEUE_ADDRESS, queue.pfn());
-        Ok(queue)
-    }
-
-    fn read_mac(&mut self) -> [u8; 6] {
-        let mut mac = [0u8; 6];
-        for (index, slot) in mac.iter_mut().enumerate() {
-            *slot = self.read_u8(LEGACY_DEVICE_CONFIG + index as u16);
-        }
-        mac
-    }
-
-    fn reset(&mut self) {
-        self.write_u8(LEGACY_DEVICE_STATUS, 0);
-    }
-
-    fn status(&mut self) -> u8 {
-        self.read_u8(LEGACY_DEVICE_STATUS)
-    }
-
-    fn set_status(&mut self, status: u8) {
-        self.write_u8(LEGACY_DEVICE_STATUS, status);
-    }
-
-    fn add_status(&mut self, status: u8) {
-        let current = self.status();
-        self.set_status(current | status);
-    }
-
-    fn read_u8(&mut self, offset: u16) -> u8 {
-        let mut port = Port::<u8>::new(self.io_base + offset);
-        // SAFETY: The legacy virtio transport exposes byte-addressable I/O registers in BAR0.
-        unsafe { port.read() }
-    }
-
-    fn read_u16(&mut self, offset: u16) -> u16 {
-        let mut port = Port::<u16>::new(self.io_base + offset);
-        // SAFETY: The legacy virtio transport exposes 16-bit queue registers in BAR0.
-        unsafe { port.read() }
-    }
-
-    fn read_u32(&mut self, offset: u16) -> u32 {
-        let mut port = Port::<u32>::new(self.io_base + offset);
-        // SAFETY: The legacy virtio transport exposes 32-bit feature and queue registers in BAR0.
-        unsafe { port.read() }
-    }
-
-    fn write_u8(&mut self, offset: u16, value: u8) {
-        let mut port = Port::<u8>::new(self.io_base + offset);
-        // SAFETY: The legacy virtio transport exposes byte-addressable I/O registers in BAR0.
-        unsafe {
-            port.write(value);
-        }
-    }
-
-    fn write_u16(&mut self, offset: u16, value: u16) {
-        let mut port = Port::<u16>::new(self.io_base + offset);
-        // SAFETY: The legacy virtio transport exposes 16-bit queue registers in BAR0.
-        unsafe {
-            port.write(value);
-        }
-    }
-
-    fn write_u32(&mut self, offset: u16, value: u32) {
-        let mut port = Port::<u32>::new(self.io_base + offset);
-        // SAFETY: The legacy virtio transport exposes 32-bit feature and queue registers in BAR0.
-        unsafe {
-            port.write(value);
-        }
     }
 }

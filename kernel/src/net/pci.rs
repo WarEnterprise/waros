@@ -166,6 +166,7 @@ impl PciDevice {
 #[must_use]
 pub fn class_name(class_code: u8, subclass: u8) -> &'static str {
     match (class_code, subclass) {
+        (0x01, 0x00) => "Mass storage controller",
         (0x01, 0x06) => "SATA controller",
         (0x02, 0x00) => "Ethernet controller",
         (0x03, 0x00) => "VGA controller",

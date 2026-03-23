@@ -10,6 +10,7 @@ mod auth;
 mod arch;
 mod boot;
 mod display;
+mod disk;
 mod drivers;
 mod fs;
 mod gui;
@@ -156,7 +157,41 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     );
 
     fs::init();
-    boot_ok("WarFS: in-memory filesystem ready");
+    boot_ok("WarFS: filesystem core ready");
+
+    let disk_report = {
+        let mut filesystem = fs::FILESYSTEM.lock();
+        disk::init(&mut filesystem)
+    };
+    match disk_report {
+        Ok(Some(report)) if report.formatted => {
+            boot_notice(&alloc::format!(
+                "Disk: {} MB, no WarFS found, formatting complete",
+                report.size_mb
+            ));
+            boot_ok_fmt(
+                format_args!("Disk: {} MB, WarFS v{} formatted", report.size_mb, report.version),
+                format_args!("Disk: {} MB, WarFS v{} formatted", report.size_mb, report.version),
+            );
+        }
+        Ok(Some(report)) => {
+            boot_ok_fmt(
+                format_args!(
+                    "Disk: {} MB, WarFS v{}, {} files loaded",
+                    report.size_mb, report.version, report.loaded_files
+                ),
+                format_args!(
+                    "Disk: {} MB, WarFS v{}, {} files loaded",
+                    report.size_mb, report.version, report.loaded_files
+                ),
+            );
+        }
+        Ok(None) => boot_notice("No virtio-blk disk (running RAM-only mode)"),
+        Err(error) => {
+            let message = alloc::format!("virtio-blk unavailable ({}), running RAM-only mode", error);
+            boot_notice(message.as_str());
+        }
+    }
 
     let auth_report = auth::init().map_err(|_| "user database initialization failed")?;
     if auth_report.first_boot {
