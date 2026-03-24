@@ -7,7 +7,7 @@ use x86_64::instructions::port::Port;
 
 use crate::net::buffer::PacketBuffer;
 use crate::net::pci::{self, PciBar, PciDevice};
-use crate::net::{NetError, VirtioDeviceInfo};
+use crate::net::{NetError, NetworkDeviceInfo, NetworkTransport};
 
 use super::queue::{Virtqueue, VirtqueueSnapshot};
 use super::transport::LegacyTransport;
@@ -102,16 +102,19 @@ impl VirtioNet {
     }
 
     #[must_use]
-    pub fn info(&self) -> VirtioDeviceInfo {
-        VirtioDeviceInfo {
+    pub fn info(&self) -> NetworkDeviceInfo {
+        NetworkDeviceInfo {
+            name: "VirtIO Network",
+            driver: "virtio-net",
             mac: self.mac,
-            io_base: self.io_base,
+            transport: NetworkTransport::Io(self.io_base),
             rx_queue_size: self.rx_queue.size,
             tx_queue_size: self.tx_queue.size,
             interrupt_line: self.pci.interrupt_line,
             pending_frames: self.pending_rx.len(),
             rx_frames: self.rx_frames,
             tx_frames: self.tx_frames,
+            link_speed_mbps: 1000,
         }
     }
 

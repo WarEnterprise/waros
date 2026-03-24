@@ -4,7 +4,7 @@ use x86_64::instructions::hlt;
 
 use crate::auth::{AuthError, UserAccount, UserRole, USER_DB};
 use crate::display::console::{self, Colors};
-use crate::drivers::keyboard;
+use crate::hal;
 use crate::{kprint, kprint_colored, kprintln, KERNEL_VERSION};
 
 pub fn first_boot_setup() -> UserAccount {
@@ -145,7 +145,7 @@ pub fn read_line_hidden() -> String {
 fn read_line(hidden: bool) -> String {
     let mut input = String::new();
     loop {
-        if let Some(byte) = keyboard::read_char() {
+        if let Some(byte) = hal::input::read_char() {
             match byte {
                 b'\n' => return input,
                 0x08 => {
@@ -165,6 +165,7 @@ fn read_line(hidden: bool) -> String {
                 _ => {}
             }
         } else {
+            hal::usb::poll();
             hlt();
         }
     }

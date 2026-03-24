@@ -14,6 +14,7 @@ mod disk;
 mod drivers;
 mod fs;
 mod gui;
+mod hal;
 mod memory;
 mod net;
 mod panic;
@@ -156,8 +157,18 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
         ),
     );
 
+    hal::init_registry();
+    hal::register_core_devices(framebuffer_info.width as u32, framebuffer_info.height as u32);
+    hal::display::register_framebuffer(framebuffer_info);
+    boot_ok("WarHAL device registry initialized");
+
     fs::init();
     boot_ok("WarFS: filesystem core ready");
+
+    match hal::acpi::init_global() {
+        Ok(_) => boot_ok("ACPI: power management available"),
+        Err(error) => boot_notice(alloc::format!("ACPI: not available ({:?})", error).as_str()),
+    }
 
     let disk_report = {
         let mut filesystem = fs::FILESYSTEM.lock();
@@ -192,7 +203,6 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
             boot_notice(message.as_str());
         }
     }
-
     let auth_report = auth::init().map_err(|_| "user database initialization failed")?;
     if auth_report.first_boot {
         boot_ok("User database initialized (root account seeded)");
@@ -208,22 +218,44 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     boot_ok("Task scheduler: cooperative background tasks ready");
 
     let network = net::init().map_err(|_| "network initialization failed")?;
+    let pci_inventory = net::pci_devices();
+    hal::bus::pci::enumerate_and_register(&pci_inventory);
+    if hal::storage::register_active_storage().is_some() {
+        boot_ok("WarHAL: persistent storage registered");
+    }
+    let usb_controllers = hal::usb::probe_controllers();
+    hal::net::register_detected_nics();
     boot_ok_fmt(
         format_args!("PCI scan: {} devices found", network.pci_devices),
         format_args!("PCI scan: {} devices found", network.pci_devices),
     );
+    if usb_controllers > 0 {
+        boot_ok_fmt(
+            format_args!("USB controllers discovered: {}", usb_controllers),
+            format_args!("USB controllers discovered: {}", usb_controllers),
+        );
+    } else {
+        boot_notice("USB: no host controller detected");
+    }
     boot_ok_fmt(
         format_args!("Serial link: {}", network.serial_status),
         format_args!("Serial link: {}", network.serial_status),
     );
     if let Some(ref device) = network.hardware {
+        let _ = hal::net::register_active_network();
         let mac = net::format_mac(&device.mac);
-        boot_ok_fmt(
-            format_args!("virtio-net: MAC {} (I/O 0x{:04X})", mac, device.io_base),
-            format_args!("virtio-net: MAC {} (I/O 0x{:04X})", mac, device.io_base),
-        );
+        match device.transport {
+            net::NetworkTransport::Io(io_base) => boot_ok_fmt(
+                format_args!("{}: MAC {} (I/O 0x{:04X})", device.driver, mac, io_base),
+                format_args!("{}: MAC {} (I/O 0x{:04X})", device.driver, mac, io_base),
+            ),
+            net::NetworkTransport::Mmio(mmio_base) => boot_ok_fmt(
+                format_args!("{}: MAC {} (MMIO 0x{:08X})", device.driver, mac, mmio_base),
+                format_args!("{}: MAC {} (MMIO 0x{:08X})", device.driver, mac, mmio_base),
+            ),
+        };
     } else {
-        boot_notice("virtio-net: no PCI device detected");
+        boot_notice("No supported NIC detected");
     }
     if let Some(config) = network.network_config {
         boot_ok_fmt(
@@ -249,6 +281,7 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     }
 
     drivers::keyboard::init();
+    hal::input::init();
     boot_ok("Keyboard driver active");
     boot_ok("Quantum subsystem ready (18 qubits max)");
 

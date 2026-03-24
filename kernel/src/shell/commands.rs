@@ -7,12 +7,11 @@ use core::str;
 use crate::auth::{self, UserRole, USER_DB};
 use crate::arch::x86_64::interrupts;
 use crate::arch::x86_64::pit::PIT_FREQUENCY_HZ;
-use crate::arch::x86_64::port;
 use crate::display::branding;
 use crate::display::console::{self, Colors};
 use crate::disk;
-use crate::drivers::keyboard;
 use crate::fs;
+use crate::hal;
 use crate::memory;
 use crate::memory::heap;
 use crate::net;
@@ -53,6 +52,11 @@ pub fn execute_command(command_line: &str) {
         "version" => cmd_version(&parts[1..]),
         "cpu" => cmd_cpu(),
         "mem" => cmd_mem(),
+        "hwinfo" => cmd_hwinfo(),
+        "lsdev" => cmd_lsdev(),
+        "lsusb" => cmd_lsusb(),
+        "usb" => cmd_usb(&parts[1..]),
+        "display" => cmd_display(),
         "time" => cmd_time(),
         "uptime" => cmd_uptime(),
         "date" => cmd_date(),
@@ -137,6 +141,7 @@ fn cmd_help(topic: Option<&str>) {
     kprintln!("  info            cpu             mem             time");
     kprintln!("  date            uptime          version         neofetch");
     kprintln!("  uname           whoami          users           lspci");
+    kprintln!("  hwinfo          lsdev           lsusb           display");
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Quantum\n");
@@ -161,7 +166,7 @@ fn cmd_help(topic: Option<&str>) {
     kprint_colored!(Colors::PURPLE, "Tools\n");
     kprintln!("  echo            hex <addr> [n]  color           history");
     kprintln!("  tasks           spawn <cmd>     kill <id>       banner");
-    kprintln!("  keyboard <us|br>  useradd <name>  userdel <name>  passwd [name]");
+    kprintln!("  keyboard <layout>  useradd <name>  userdel <name>  passwd [name]");
     kprintln!("  su <name>       logout          startx|gui");
     kprintln!();
 
@@ -301,6 +306,82 @@ fn cmd_mem() {
     );
 }
 
+fn cmd_hwinfo() {
+    let stats = memory::stats();
+    let vendor_leaf = __cpuid(0);
+    let feature_leaf = __cpuid(1);
+    let vendor_bytes = vendor_string_bytes(vendor_leaf.ebx, vendor_leaf.edx, vendor_leaf.ecx);
+    let vendor = str::from_utf8(&vendor_bytes).unwrap_or("Unknown");
+    let devices = hal::devices();
+    let display = devices
+        .iter()
+        .find(|device| device.info.category == hal::DeviceCategory::Display);
+    let network = devices
+        .iter()
+        .find(|device| device.info.category == hal::DeviceCategory::Network && device.status == hal::DeviceStatus::Active);
+    let storage = devices
+        .iter()
+        .filter(|device| device.info.category == hal::DeviceCategory::Storage && device.status == hal::DeviceStatus::Active)
+        .count();
+    let usb = devices
+        .iter()
+        .filter(|device| device.info.category == hal::DeviceCategory::UsbController)
+        .count();
+    let usb_devices = devices
+        .iter()
+        .filter(|device| matches!(device.info.bus, hal::BusLocation::Usb { .. }))
+        .count();
+    let input = devices
+        .iter()
+        .filter(|device| device.info.category == hal::DeviceCategory::Input && device.status == hal::DeviceStatus::Active)
+        .count();
+
+    kprintln!("WarOS Hardware Summary:");
+    kprintln!(
+        "  CPU:      {} Family {} Model {}",
+        vendor,
+        cpu_family(feature_leaf.eax),
+        cpu_model(feature_leaf.eax)
+    );
+    kprintln!(
+        "  Memory:   {} MiB ({} frames)",
+        (stats.total_frames * 4) / 1024,
+        stats.total_frames
+    );
+    if let Some(device) = display {
+        if let hal::DeviceCapabilities::Display(cap) = &device.info.capabilities {
+            kprintln!(
+                "  Display:  {}x{} @ {}bpp",
+                cap.width, cap.height, cap.bpp
+            );
+        } else {
+            kprintln!("  Display:  {}", device.info.name);
+        }
+    } else {
+        kprintln!("  Display:  unavailable");
+    }
+    if let Some(device) = network {
+        kprintln!("  Network:  {}", device.info.name);
+    } else {
+        kprintln!("  Network:  unavailable");
+    }
+    kprintln!("  Storage:  {} active device(s)", storage);
+    kprintln!(
+        "  USB:      {} controller(s), {} device(s)",
+        usb, usb_devices
+    );
+    kprintln!("  Input:    {} active device(s)", input);
+    kprintln!(
+        "  ACPI:     {}",
+        if hal::acpi::is_available() {
+            "available"
+        } else {
+            "not available"
+        }
+    );
+    kprintln!("  Quantum:  {} qubits (simulator)", crate::quantum::state::MAX_KERNEL_QUBITS);
+}
+
 fn cmd_time() {
     let ticks = interrupts::tick_count();
     let total_seconds = ticks / u64::from(PIT_FREQUENCY_HZ);
@@ -422,25 +503,50 @@ fn cmd_banner() {
 
 fn cmd_keyboard(args: &[&str]) {
     let Some(layout) = args.first().copied() else {
-        let current = keyboard::current_layout();
-        kprintln!("Keyboard layout: {}", keyboard::layout_name(current));
-        kprintln!("Usage: keyboard <us|br>");
+        let current = hal::input::current_layout();
+        kprintln!("Keyboard layout: {}", current.short_name());
+        kprintln!("Usage: keyboard <layout>");
+        kprintln!("  Try: keyboard list");
         return;
     };
 
     match layout {
+        "list" => {
+            kprintln!("Available keyboard layouts:");
+            for (code, description, available) in hal::input::supported_layouts() {
+                let status = if *available { "ready" } else { "planned" };
+                kprintln!("  {:<4} {:<20} {}", code, description, status);
+            }
+        }
         "us" => {
-            keyboard::set_layout(keyboard::KeyboardLayout::UsQwerty);
+            let _ = hal::input::set_layout_by_name("us");
             kprintln!("[WarOS] INPUT: keyboard layout set to US QWERTY.");
         }
         "br" => {
-            keyboard::set_layout(keyboard::KeyboardLayout::BrazilAbnt2);
+            let _ = hal::input::set_layout_by_name("br");
             kprintln!("[WarOS] INPUT: keyboard layout set to Brazilian ABNT2 mode.");
             kprintln!("               Start QEMU with '-k pt-br' for correct host translation.");
         }
         _ => {
-            kprint_colored!(Colors::RED, "[WarOS] INPUT:");
-            kprintln!(" unknown layout '{}'. Use 'us' or 'br'.", layout);
+            match hal::input::set_layout_by_name(layout) {
+                Ok(selected) => {
+                    kprintln!(
+                        "[WarOS] INPUT: keyboard layout set to {}.",
+                        selected.short_name()
+                    );
+                }
+                Err("layout not implemented yet") => {
+                    kprint_colored!(Colors::YELLOW, "[WarOS] INPUT:");
+                    kprintln!(
+                        " layout '{}' is known but not implemented yet. Use 'keyboard list'.",
+                        layout
+                    );
+                }
+                Err(_) => {
+                    kprint_colored!(Colors::RED, "[WarOS] INPUT:");
+                    kprintln!(" unknown layout '{}'. Use 'keyboard list'.", layout);
+                }
+            }
         }
     }
 }
@@ -1093,6 +1199,95 @@ fn cmd_lspci() {
     }
 }
 
+fn cmd_lsdev() {
+    let devices = hal::devices();
+    kprintln!("WarOS Hardware Devices (WarHAL):");
+    if devices.is_empty() {
+        kprintln!("  No devices registered.");
+        return;
+    }
+    kprintln!("  ID  CATEGORY    STATUS    DRIVER          NAME");
+    for device in devices {
+        kprintln!(
+            "  {:<3} {:<11} {:<9} {:<15} {}",
+            device.id.0,
+            device.info.category.short_name(),
+            device.status.short_name(),
+            device.driver.name(),
+            device.info.name
+        );
+    }
+}
+
+fn cmd_lsusb() {
+    let devices = hal::devices();
+    let mut found = 0usize;
+    kprintln!("USB Devices:");
+    for device in devices {
+        let is_usb_attached = matches!(device.info.bus, hal::BusLocation::Usb { .. })
+            || device.info.category == hal::DeviceCategory::UsbController;
+        if is_usb_attached {
+            found += 1;
+            kprintln!(
+                "  {:<7} {} [{}]",
+                match device.info.bus {
+                    hal::BusLocation::Pci { bus, device, function } => {
+                        alloc::format!("PCI {:02X}:{:02X}.{}", bus, device, function)
+                    }
+                    hal::BusLocation::Usb {
+                        controller: _,
+                        port,
+                        address,
+                    } => alloc::format!("Port {} Addr {}", port, address),
+                    hal::BusLocation::Platform => String::from("Platform"),
+                    hal::BusLocation::Virtual => String::from("Virtual"),
+                },
+                device.info.name,
+                device.driver.name()
+            );
+        }
+    }
+    if found == 0 {
+        kprintln!("  No USB devices/controllers registered.");
+    }
+}
+
+fn cmd_display() {
+    let devices = hal::devices();
+    let Some(device) = devices
+        .into_iter()
+        .find(|device| device.info.category == hal::DeviceCategory::Display)
+    else {
+        kprintln!("No display device registered.");
+        return;
+    };
+
+    kprintln!("Display:");
+    kprintln!("  Name:    {}", device.info.name);
+    kprintln!("  Status:  {}", device.status.short_name());
+    kprintln!("  Driver:  {}", device.driver.name());
+    if let hal::DeviceCapabilities::Display(cap) = device.info.capabilities {
+        kprintln!("  Size:    {}x{}", cap.width, cap.height);
+        kprintln!("  Format:  {} bpp {:?}", cap.bpp, cap.pixel_format);
+    }
+}
+
+fn cmd_usb(args: &[&str]) {
+    match args.first().copied() {
+        Some("reset") => {
+            let controllers = hal::usb::probe_controllers();
+            kprintln!("USB reprobe complete: {} controller(s) initialized.", controllers);
+        }
+        Some("poll") => {
+            hal::usb::poll();
+            kprintln!("USB polled.");
+        }
+        _ => {
+            kprintln!("Usage: usb <reset|poll>");
+        }
+    }
+}
+
 fn cmd_net(command_line: &str) {
     let mut parts = command_line.splitn(3, char::is_whitespace);
     let _ = parts.next();
@@ -1106,10 +1301,21 @@ fn cmd_net(command_line: &str) {
             kprintln!("Network stack: {}", net::status());
             kprintln!("PCI inventory: {} device(s)", net::pci_devices().len());
             if let Some(hardware) = net::hardware_status() {
+                kprintln!("  Driver:    {}", hardware.driver);
                 kprintln!("  MAC:       {}", net::format_mac(&hardware.mac));
+                match hardware.transport {
+                    net::NetworkTransport::Io(io_base) => {
+                        kprintln!("  Transport: I/O 0x{:04X}", io_base);
+                    }
+                    net::NetworkTransport::Mmio(mmio_base) => {
+                        kprintln!("  Transport: MMIO 0x{:08X}", mmio_base);
+                    }
+                }
                 kprintln!("  RX queue:  {}", hardware.rx_queue_size);
                 kprintln!("  TX queue:  {}", hardware.tx_queue_size);
                 kprintln!("  IRQ line:  {}", hardware.interrupt_line);
+                kprintln!("  Link:      {} Mbps", hardware.link_speed_mbps);
+                kprintln!("  Pending:   {}", hardware.pending_frames);
                 kprintln!("  RX/TX:     {}/{}", hardware.rx_frames, hardware.tx_frames);
             }
             if let Some(config) = net::network_config() {
@@ -1127,42 +1333,52 @@ fn cmd_net(command_line: &str) {
         "diag" => {
             let Some(diag) = net::hardware_diagnostics() else {
                 kprint_colored!(Colors::RED, "[WarOS] NET:");
-                kprintln!(" virtio-net is not initialized.");
+                kprintln!(" no NIC is initialized.");
                 return;
             };
 
             let target = net::network_config()
                 .and_then(|config| config.gateway)
                 .unwrap_or(net::ipv4::Ipv4Addr::new(10, 0, 2, 2));
-            let rx_before = diag.rx_frames;
-            let tx_before = diag.tx_frames;
 
             kprintln!("WarOS Network Diagnostics");
-            kprintln!("  Device status: 0x{:02X}", diag.device_status);
-            kprintln!("  PCI command:   0x{:04X}", diag.pci_command);
-            kprintln!(
-                "  RX queue:      size={} avail={} used={} processed={} buffers={}",
-                diag.rx_queue.size,
-                diag.rx_queue.avail_idx,
-                diag.rx_queue.used_idx,
-                diag.rx_queue.last_used_idx,
-                diag.rx_buffers
-            );
-            kprintln!(
-                "  TX queue:      size={} avail={} used={} processed={} free={}/{}",
-                diag.tx_queue.size,
-                diag.tx_queue.avail_idx,
-                diag.tx_queue.used_idx,
-                diag.tx_queue.last_used_idx,
-                diag.tx_free,
-                diag.tx_buffers
-            );
-            kprintln!(
-                "  Frames:        tx={} rx={} pending={}",
-                diag.tx_frames,
-                diag.rx_frames,
-                diag.pending_frames
-            );
+            match diag {
+                net::NetworkDiagnostics::Virtio(diag) => {
+                    kprintln!("  Driver:        virtio-net");
+                    kprintln!("  Device status: 0x{:02X}", diag.device_status);
+                    kprintln!("  PCI command:   0x{:04X}", diag.pci_command);
+                    kprintln!(
+                        "  RX queue:      size={} avail={} used={} processed={} buffers={}",
+                        diag.rx_queue.size,
+                        diag.rx_queue.avail_idx,
+                        diag.rx_queue.used_idx,
+                        diag.rx_queue.last_used_idx,
+                        diag.rx_buffers
+                    );
+                    kprintln!(
+                        "  TX queue:      size={} avail={} used={} processed={} free={}/{}",
+                        diag.tx_queue.size,
+                        diag.tx_queue.avail_idx,
+                        diag.tx_queue.used_idx,
+                        diag.tx_queue.last_used_idx,
+                        diag.tx_free,
+                        diag.tx_buffers
+                    );
+                    kprintln!(
+                        "  Frames:        tx={} rx={} pending={}",
+                        diag.tx_frames,
+                        diag.rx_frames,
+                        diag.pending_frames
+                    );
+                }
+                net::NetworkDiagnostics::E1000(diag) => {
+                    kprintln!("  Driver:        e1000");
+                    kprintln!("  CTRL/STATUS:   0x{:08X} / 0x{:08X}", diag.ctrl, diag.status);
+                    kprintln!("  RX head/tail:  {} / {}", diag.rx_head, diag.rx_tail);
+                    kprintln!("  TX head/tail:  {} / {}", diag.tx_head, diag.tx_tail);
+                    kprintln!("  Frames:        tx={} rx={}", diag.tx_frames, diag.rx_frames);
+                }
+            }
             kprintln!("  ARP probe:     who-has {}", target);
 
             match net::send_arp_probe(target) {
@@ -1181,32 +1397,44 @@ fn cmd_net(command_line: &str) {
             }
 
             if let Some(after) = net::hardware_diagnostics() {
-                kprintln!(
-                    "  After probe:   tx={} rx={} events={}",
-                    after.tx_frames,
-                    after.rx_frames,
-                    events
-                );
-                kprintln!(
-                    "  RX queue now:  avail={} used={} processed={}",
-                    after.rx_queue.avail_idx,
-                    after.rx_queue.used_idx,
-                    after.rx_queue.last_used_idx
-                );
-                kprintln!(
-                    "  TX queue now:  avail={} used={} processed={} free={}/{}",
-                    after.tx_queue.avail_idx,
-                    after.tx_queue.used_idx,
-                    after.tx_queue.last_used_idx,
-                    after.tx_free,
-                    after.tx_buffers
-                );
-                if after.rx_frames > rx_before || after.tx_frames > tx_before {
-                    kprint_colored!(Colors::GREEN, "  Traffic:       ");
-                    kprintln!("frame counters moved after the ARP probe.");
-                } else {
-                    kprint_colored!(Colors::YELLOW, "  Traffic:       ");
-                    kprintln!("no frame counters moved after the ARP probe.");
+                match after {
+                    net::NetworkDiagnostics::Virtio(after) => {
+                        kprintln!(
+                            "  After probe:   tx={} rx={} events={}",
+                            after.tx_frames,
+                            after.rx_frames,
+                            events
+                        );
+                        kprintln!(
+                            "  RX queue now:  avail={} used={} processed={}",
+                            after.rx_queue.avail_idx,
+                            after.rx_queue.used_idx,
+                            after.rx_queue.last_used_idx
+                        );
+                        kprintln!(
+                            "  TX queue now:  avail={} used={} processed={} free={}/{}",
+                            after.tx_queue.avail_idx,
+                            after.tx_queue.used_idx,
+                            after.tx_queue.last_used_idx,
+                            after.tx_free,
+                            after.tx_buffers
+                        );
+                    }
+                    net::NetworkDiagnostics::E1000(after) => {
+                        kprintln!(
+                            "  After probe:   tx={} rx={} events={}",
+                            after.tx_frames,
+                            after.rx_frames,
+                            events
+                        );
+                        kprintln!(
+                            "  Rings now:     RX {} / {} | TX {} / {}",
+                            after.rx_head,
+                            after.rx_tail,
+                            after.tx_head,
+                            after.tx_tail
+                        );
+                    }
                 }
             }
 
@@ -1687,14 +1915,13 @@ fn cmd_panic() {
 fn cmd_reboot() {
     kprintln!("Rebooting system.");
     serial_println!("Rebooting system.");
-    port::outb(0x64, 0xFE);
-    crate::arch::x86_64::hlt_loop();
+    hal::acpi::reboot();
 }
 
 fn cmd_halt() {
-    kprintln!("Halting CPU.");
-    serial_println!("Halting CPU.");
-    crate::arch::x86_64::hlt_loop();
+    kprintln!("Shutting down system.");
+    serial_println!("Shutting down system.");
+    hal::acpi::shutdown();
 }
 
 fn cmd_waros() {

@@ -4,7 +4,7 @@ use x86_64::instructions::hlt;
 
 use crate::auth::session;
 use crate::display::console;
-use crate::drivers::keyboard;
+use crate::hal;
 use crate::net;
 use crate::task;
 
@@ -56,10 +56,21 @@ pub fn start_gui() {
 
     loop {
         task::tick();
+        hal::usb::poll();
         let _ = net::poll();
 
         if !session::is_logged_in() {
             break;
+        }
+
+        while let Some(event) = hal::input::poll_mouse() {
+            mouse::apply_relative_event(
+                event.dx,
+                event.dy,
+                event.left_button,
+                event.right_button,
+                event.middle_button,
+            );
         }
 
         let mouse_snapshot = mouse::take_snapshot();
@@ -83,7 +94,7 @@ pub fn start_gui() {
         previous_left = mouse_snapshot.left;
         previous_right = mouse_snapshot.right;
 
-        while let Some(key) = keyboard::read_char() {
+        while let Some(key) = hal::input::read_char() {
             if key == 0x1B {
                 console::set_rendering_enabled(true);
                 console::clear_screen();

@@ -134,6 +134,16 @@ pub fn handle_byte(byte: u8) {
     MOUSE.lock().handle_byte(byte);
 }
 
+pub fn apply_relative_event(dx: i16, dy: i16, left: bool, right: bool, middle: bool) {
+    let mut mouse = MOUSE.lock();
+    mouse.x = (mouse.x + i32::from(dx)).clamp(0, mouse.screen_width.saturating_sub(1));
+    mouse.y = (mouse.y - i32::from(dy)).clamp(0, mouse.screen_height.saturating_sub(1));
+    mouse.left = left;
+    mouse.right = right;
+    mouse.middle = middle;
+    mouse.dirty = true;
+}
+
 #[must_use]
 pub fn take_snapshot() -> MouseSnapshot {
     MOUSE.lock().snapshot()

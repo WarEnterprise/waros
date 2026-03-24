@@ -4,7 +4,7 @@ use x86_64::instructions::hlt;
 
 use crate::auth::session;
 use crate::display::console::Colors;
-use crate::drivers::keyboard;
+use crate::hal;
 use crate::shell::commands::execute_command;
 use crate::task;
 use crate::{kprint, kprint_colored, kprintln};
@@ -56,9 +56,10 @@ pub fn run() {
         }
 
         task::tick();
+        hal::usb::poll();
         let _ = crate::net::poll();
 
-        if let Some(byte) = keyboard::read_char() {
+        if let Some(byte) = hal::input::read_char() {
             match byte {
                 b'\n' => {
                     kprintln!();

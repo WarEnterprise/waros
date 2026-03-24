@@ -104,14 +104,6 @@ pub fn current_layout() -> KeyboardLayout {
     KEYBOARD.lock().layout()
 }
 
-#[must_use]
-pub fn layout_name(layout: KeyboardLayout) -> &'static str {
-    match layout {
-        KeyboardLayout::UsQwerty => "us",
-        KeyboardLayout::BrazilAbnt2 => "br",
-    }
-}
-
 fn key_to_byte(key: DecodedKey) -> Option<u8> {
     match key {
         DecodedKey::Unicode(character) if character.is_ascii() => Some(character as u8),

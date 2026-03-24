@@ -11,6 +11,8 @@ use smoltcp::wire::{EthernetAddress, HardwareAddress, IpCidr};
 use spin::{Lazy, Mutex};
 
 use crate::arch::x86_64::{interrupts, pit};
+use crate::hal::net::e1000::{E1000Diagnostics, E1000};
+use crate::hal::net::nic_select;
 
 pub mod arp;
 pub mod buffer;
@@ -72,21 +74,71 @@ impl fmt::Display for NetError {
 pub struct NetInitReport {
     pub pci_devices: usize,
     pub serial_status: &'static str,
-    pub hardware: Option<VirtioDeviceInfo>,
+    pub hardware: Option<NetworkDeviceInfo>,
     pub network_config: Option<DhcpConfig>,
 }
 
-/// Read-only summary of the detected virtio-net device.
+#[derive(Debug, Clone, Copy)]
+pub enum NetworkTransport {
+    Io(u16),
+    Mmio(u64),
+}
+
+/// Read-only summary of the active network device.
 #[derive(Debug, Clone)]
-pub struct VirtioDeviceInfo {
+pub struct NetworkDeviceInfo {
+    pub name: &'static str,
+    pub driver: &'static str,
     pub mac: [u8; 6],
-    pub io_base: u16,
+    pub transport: NetworkTransport,
     pub rx_queue_size: u16,
     pub tx_queue_size: u16,
     pub interrupt_line: u8,
     pub pending_frames: usize,
     pub rx_frames: u64,
     pub tx_frames: u64,
+    pub link_speed_mbps: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum NetworkDiagnostics {
+    Virtio(VirtioNetDiagnostics),
+    E1000(E1000Diagnostics),
+}
+
+enum ActiveNic {
+    Virtio(virtio::net::VirtioNet),
+    E1000(E1000),
+}
+
+impl ActiveNic {
+    fn info(&self) -> NetworkDeviceInfo {
+        match self {
+            Self::Virtio(device) => device.info(),
+            Self::E1000(device) => device.info(),
+        }
+    }
+
+    fn send_frame(&mut self, frame: &[u8]) -> Result<(), NetError> {
+        match self {
+            Self::Virtio(device) => device.send_frame(frame),
+            Self::E1000(device) => device.send_frame(frame),
+        }
+    }
+
+    fn recv_frame(&mut self) -> Option<Vec<u8>> {
+        match self {
+            Self::Virtio(device) => device.recv_frame(),
+            Self::E1000(device) => device.recv_frame(),
+        }
+    }
+
+    fn diagnostics(&self) -> NetworkDiagnostics {
+        match self {
+            Self::Virtio(device) => NetworkDiagnostics::Virtio(device.diagnostics()),
+            Self::E1000(device) => NetworkDiagnostics::E1000(device.diagnostics()),
+        }
+    }
 }
 
 enum DhcpEventSnapshot {
@@ -101,7 +153,7 @@ pub static NET: Lazy<Mutex<NetworkSubsystem>> =
 pub struct NetworkSubsystem {
     serial: serial::NetInterface,
     pci_devices: Vec<PciDevice>,
-    hardware: Option<virtio::net::VirtioNet>,
+    hardware: Option<ActiveNic>,
     iface: Option<Interface>,
     sockets: SocketSet<'static>,
     dhcp_handle: Option<SocketHandle>,
@@ -133,8 +185,20 @@ impl NetworkSubsystem {
         self.pci_devices = pci::enumerate_pci();
 
         if self.hardware.is_none() {
-            if let Some(device) = pci::find_virtio_net_in(&self.pci_devices) {
-                self.hardware = Some(virtio::net::VirtioNet::init(device)?);
+            if let Some(device) = self.pci_devices.iter().copied().find(nic_select::is_virtio_net)
+            {
+                if let Ok(driver) = virtio::net::VirtioNet::init(device) {
+                    self.hardware = Some(ActiveNic::Virtio(driver));
+                }
+            }
+
+            if self.hardware.is_none() {
+                if let Some(device) = self.pci_devices.iter().copied().find(nic_select::is_e1000)
+                {
+                    if let Ok(driver) = E1000::init(device) {
+                        self.hardware = Some(ActiveNic::E1000(driver));
+                    }
+                }
             }
         }
 
@@ -151,7 +215,7 @@ impl NetworkSubsystem {
         NetInitReport {
             pci_devices: self.pci_devices.len(),
             serial_status: self.serial.status(),
-            hardware: self.hardware.as_ref().map(virtio::net::VirtioNet::info),
+            hardware: self.hardware.as_ref().map(ActiveNic::info),
             network_config: self.network_config,
         }
     }
@@ -166,15 +230,20 @@ impl NetworkSubsystem {
         match self.hardware.as_ref() {
             Some(device) => {
                 let info = device.info();
+                let location = match info.transport {
+                    NetworkTransport::Io(base) => format!("I/O 0x{base:04X}"),
+                    NetworkTransport::Mmio(base) => format!("MMIO 0x{base:08X}"),
+                };
                 format!(
-                    "serial={} | virtio-net={} @ 0x{:04X} | ipv4={}",
+                    "serial={} | {}={} @ {} | ipv4={}",
                     self.serial.status(),
+                    info.driver,
                     format_mac(&info.mac),
-                    info.io_base,
+                    location,
                     ip
                 )
             }
-            None => format!("serial={} | virtio-net=offline", self.serial.status()),
+            None => format!("serial={} | nic=offline", self.serial.status()),
         }
     }
 
@@ -332,15 +401,11 @@ impl NetworkSubsystem {
     }
 
     pub fn recv_frame(&mut self) -> Option<Vec<u8>> {
-        self.hardware
-            .as_mut()
-            .and_then(virtio::net::VirtioNet::recv_frame)
+        self.hardware.as_mut().and_then(ActiveNic::recv_frame)
     }
 
-    pub fn hardware_diagnostics(&self) -> Option<VirtioNetDiagnostics> {
-        self.hardware
-            .as_ref()
-            .map(virtio::net::VirtioNet::diagnostics)
+    pub fn hardware_diagnostics(&self) -> Option<NetworkDiagnostics> {
+        self.hardware.as_ref().map(ActiveNic::diagnostics)
     }
 
     pub fn send_arp_probe(&mut self, target: ipv4::Ipv4Addr) -> Result<(), NetError> {
@@ -366,7 +431,7 @@ impl NetworkSubsystem {
 }
 
 struct KernelDevice<'a> {
-    nic: &'a mut virtio::net::VirtioNet,
+    nic: &'a mut ActiveNic,
     arp_cache: &'a mut arp::ArpCache,
     now_ms: u64,
 }
@@ -418,7 +483,7 @@ impl smoltcp::phy::RxToken for KernelRxToken {
 }
 
 struct KernelTxToken<'a> {
-    nic: &'a mut virtio::net::VirtioNet,
+    nic: &'a mut ActiveNic,
 }
 
 impl<'a> smoltcp::phy::TxToken for KernelTxToken<'a> {
@@ -461,15 +526,15 @@ pub fn status() -> String {
     NET.lock().status()
 }
 
-/// Return current virtio-net details if the NIC initialized successfully.
+/// Return current active network device details if initialization succeeded.
 #[must_use]
-pub fn hardware_status() -> Option<VirtioDeviceInfo> {
-    NET.lock().hardware.as_ref().map(virtio::net::VirtioNet::info)
+pub fn hardware_status() -> Option<NetworkDeviceInfo> {
+    NET.lock().hardware.as_ref().map(ActiveNic::info)
 }
 
-/// Return low-level virtio queue/status counters for debugging packet flow.
+/// Return low-level network driver counters for debugging packet flow.
 #[must_use]
-pub fn hardware_diagnostics() -> Option<VirtioNetDiagnostics> {
+pub fn hardware_diagnostics() -> Option<NetworkDiagnostics> {
     NET.lock().hardware_diagnostics()
 }
 
