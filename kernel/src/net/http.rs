@@ -52,10 +52,20 @@ pub fn parse_url(url: &str) -> Result<UrlParts, NetError> {
 }
 
 pub fn http_get(stack: &mut NetworkSubsystem, url: &str) -> Result<HttpResponse, NetError> {
+    http_get_with_headers(stack, url, &[])
+}
+
+pub fn http_get_with_headers(
+    stack: &mut NetworkSubsystem,
+    url: &str,
+    extra_headers: &[(&str, &str)],
+) -> Result<HttpResponse, NetError> {
     let parts = parse_url(url)?;
     match parts.scheme.as_str() {
-        "http" => plain_request(stack, "GET", &parts, None),
-        "https" => super::tls::TlsConnection::https_request(stack, "GET", &parts, None),
+        "http" => plain_request(stack, "GET", &parts, extra_headers, None),
+        "https" => {
+            super::tls::TlsConnection::https_request(stack, "GET", &parts, extra_headers, None)
+        }
         _ => Err(NetError::InitializationFailed("unsupported URL scheme")),
     }
 }
@@ -66,12 +76,26 @@ pub fn http_post(
     content_type: &str,
     body: &[u8],
 ) -> Result<HttpResponse, NetError> {
+    http_post_with_headers(stack, url, content_type, body, &[])
+}
+
+pub fn http_post_with_headers(
+    stack: &mut NetworkSubsystem,
+    url: &str,
+    content_type: &str,
+    body: &[u8],
+    extra_headers: &[(&str, &str)],
+) -> Result<HttpResponse, NetError> {
     let parts = parse_url(url)?;
     match parts.scheme.as_str() {
-        "http" => plain_request(stack, "POST", &parts, Some((content_type, body))),
-        "https" => {
-            super::tls::TlsConnection::https_request(stack, "POST", &parts, Some((content_type, body)))
-        }
+        "http" => plain_request(stack, "POST", &parts, extra_headers, Some((content_type, body))),
+        "https" => super::tls::TlsConnection::https_request(
+            stack,
+            "POST",
+            &parts,
+            extra_headers,
+            Some((content_type, body)),
+        ),
         _ => Err(NetError::InitializationFailed("unsupported URL scheme")),
     }
 }
@@ -80,6 +104,7 @@ fn plain_request(
     stack: &mut NetworkSubsystem,
     method: &str,
     parts: &UrlParts,
+    extra_headers: &[(&str, &str)],
     body: Option<(&str, &[u8])>,
 ) -> Result<HttpResponse, NetError> {
     let remote_ip = stack.resolve_host(&parts.host)?;
@@ -94,6 +119,9 @@ fn plain_request(
             "Content-Type: {content_type}\r\nContent-Length: {}\r\n",
             body_bytes.len()
         ));
+    }
+    for &(name, value) in extra_headers {
+        request.push_str(&alloc::format!("{name}: {value}\r\n"));
     }
     request.push_str("\r\n");
 

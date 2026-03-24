@@ -108,6 +108,7 @@ pub fn show_help() {
     kprintln!("  qexport <name>      Export current circuit as QASM");
     kprintln!("  qresult <name>      Save last measurement results");
     kprintln!("  qinfo               Quantum subsystem information");
+    kprintln!("  ibm <subcmd>        Submit the active circuit to IBM Quantum Runtime");
     kprintln!();
     kprint_colored!(Colors::PURPLE, "Available gates for qrun\n");
     kprintln!("  h <q>               Hadamard");
@@ -136,6 +137,12 @@ pub fn show_help() {
     kprintln!("  shor                Shor factoring demo (N = 15)");
     kprintln!("  vqe                 VQE hydrogen energy demo");
     kprintln!("  qaoa                QAOA triangle MaxCut demo");
+    kprintln!();
+    kprint_colored!(Colors::PURPLE, "IBM Runtime\n");
+    kprintln!("  ibm login <api-key> [service-crn]");
+    kprintln!("  ibm instance <service-crn>");
+    kprintln!("  ibm backends");
+    kprintln!("  ibm submit [backend] [shots]");
 }
 
 /// Snapshot the current in-kernel register allocation.
@@ -157,6 +164,26 @@ pub fn gui_snapshot() -> Option<GuiQuantumSnapshot> {
         operations: session.operations().iter().cloned().collect(),
         last_result_text: session.last_result_text().map(ToString::to_string),
     })
+}
+
+#[must_use]
+pub fn current_ibm_qasm() -> Option<(String, usize)> {
+    let guard = QUANTUM_STATE.lock();
+    let session = guard.as_ref()?;
+    let qubits = session.state.num_qubits;
+
+    let mut qasm = format!(
+        "OPENQASM 3.0;\ninclude \"stdgates.inc\";\nqubit[{qubits}] q;\nbit[{qubits}] c;\n"
+    );
+    for operation in session.operations() {
+        qasm.push_str(operation);
+        qasm.push('\n');
+    }
+    for qubit in 0..qubits {
+        qasm.push_str(&format!("c[{qubit}] = measure q[{qubit}];\n"));
+    }
+
+    Some((qasm, qubits))
 }
 
 fn cmd_qalloc(args: &[&str]) -> Result<(), &'static str> {

@@ -18,6 +18,7 @@ pub mod dhcp;
 pub mod dns;
 pub mod ethernet;
 pub mod http;
+pub mod ibm;
 pub mod icmp;
 pub mod ipv4;
 pub mod pci;
@@ -44,6 +45,7 @@ pub enum NetError {
     OutOfMemory,
     QueueFull,
     NoHardware,
+    ProtocolError(String),
 }
 
 impl fmt::Display for NetError {
@@ -60,6 +62,7 @@ impl fmt::Display for NetError {
             Self::OutOfMemory => formatter.write_str("network DMA allocation failed"),
             Self::QueueFull => formatter.write_str("virtqueue has no free descriptors"),
             Self::NoHardware => formatter.write_str("no hardware network interface is available"),
+            Self::ProtocolError(message) => formatter.write_str(message),
         }
     }
 }
@@ -524,9 +527,27 @@ pub fn http_get(url: &str) -> Result<http::HttpResponse, NetError> {
     http::http_get(&mut NET.lock(), url)
 }
 
+/// Perform an HTTP GET with extra request headers.
+pub fn http_get_with_headers(
+    url: &str,
+    headers: &[(&str, &str)],
+) -> Result<http::HttpResponse, NetError> {
+    http::http_get_with_headers(&mut NET.lock(), url, headers)
+}
+
 /// Perform an HTTP POST over the kernel TCP/IP stack.
 pub fn http_post(url: &str, content_type: &str, body: &[u8]) -> Result<http::HttpResponse, NetError> {
     http::http_post(&mut NET.lock(), url, content_type, body)
+}
+
+/// Perform an HTTP POST with extra request headers.
+pub fn http_post_with_headers(
+    url: &str,
+    content_type: &str,
+    body: &[u8],
+    headers: &[(&str, &str)],
+) -> Result<http::HttpResponse, NetError> {
+    http::http_post_with_headers(&mut NET.lock(), url, content_type, body, headers)
 }
 
 /// Snapshot the ARP cache observed by the interface.

@@ -1,3 +1,4 @@
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use core::arch::x86_64::__cpuid;
@@ -76,6 +77,7 @@ pub fn execute_command(command_line: &str) {
         "dns" => cmd_dns(&parts[1..]),
         "wget" => cmd_wget(&parts[1..]),
         "curl" => cmd_curl(&parts[1..]),
+        "ibm" => cmd_ibm(&parts[1..]),
         "useradd" => cmd_useradd(&parts[1..]),
         "userdel" => cmd_userdel(&parts[1..]),
         "passwd" => cmd_passwd(&parts[1..]),
@@ -141,12 +143,12 @@ fn cmd_help(topic: Option<&str>) {
     kprintln!("  quantum         qalloc <n>      qrun <gate>     qstate");
     kprintln!("  qprobs          qmeasure        qcircuit        qinfo");
     kprintln!("  qsave           qexport         qresult         qreset");
-    kprintln!("  qfree           crypto");
+    kprintln!("  qfree           crypto          ibm <subcmd>");
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Network\n");
     kprintln!("  ifconfig        ping <host>     dns <domain>    wget <url>");
-    kprintln!("  curl <url>      net status      net diag        net poll");
+    kprintln!("  curl <url>      ibm backends    net status      net diag");
     kprintln!("  net txprobe     net send <txt>  net qsend <f>   net listen");
     kprintln!();
 
@@ -1410,9 +1412,18 @@ fn cmd_wget(args: &[&str]) {
         return;
     };
 
+    serial_println!("[SHELL] wget {}", url);
     match net::http_get(url) {
-        Ok(response) => print_http_body(&response.body),
+        Ok(response) => {
+            serial_println!(
+                "[SHELL] wget completed: HTTP {} ({} bytes)",
+                response.status_code,
+                response.body.len()
+            );
+            print_http_body(&response.body)
+        }
         Err(error) => {
+            serial_println!("[SHELL] wget failed: {}", error);
             kprint_colored!(Colors::RED, "[ERR]");
             kprintln!(" request failed: {}.", error);
         }
@@ -1425,8 +1436,14 @@ fn cmd_curl(args: &[&str]) {
         return;
     };
 
+    serial_println!("[SHELL] curl {}", url);
     match net::http_get(url) {
         Ok(response) => {
+            serial_println!(
+                "[SHELL] curl completed: HTTP {} ({} bytes)",
+                response.status_code,
+                response.body.len()
+            );
             kprintln!("HTTP {}", response.status_code);
             for (name, value) in response.headers {
                 kprintln!("{}: {}", name, value);
@@ -1435,8 +1452,196 @@ fn cmd_curl(args: &[&str]) {
             print_http_body(&response.body);
         }
         Err(error) => {
+            serial_println!("[SHELL] curl failed: {}", error);
             kprint_colored!(Colors::RED, "[ERR]");
             kprintln!(" request failed: {}.", error);
+        }
+    }
+}
+
+fn cmd_ibm(args: &[&str]) {
+    let Some(subcommand) = args.first().copied() else {
+        kprintln!("Usage: ibm <login|instance|backends|submit>");
+        kprintln!("  login <api-key> [service-crn]");
+        kprintln!("  instance <service-crn>");
+        kprintln!("  backends");
+        kprintln!("  submit [backend] [shots]");
+        return;
+    };
+
+    match subcommand {
+        "login" => cmd_ibm_login(&args[1..]),
+        "instance" => cmd_ibm_instance(&args[1..]),
+        "backends" => cmd_ibm_backends(),
+        "submit" => cmd_ibm_submit(&args[1..]),
+        _ => {
+            kprintln!("Unknown IBM subcommand '{}'.", subcommand);
+            kprintln!("Usage: ibm <login|instance|backends|submit>");
+        }
+    }
+}
+
+fn cmd_ibm_login(args: &[&str]) {
+    let Some(api_key) = args.first().copied() else {
+        kprintln!("Usage: ibm login <api-key> [service-crn]");
+        return;
+    };
+
+    if let Err(error) = net::ibm::save_api_key(api_key) {
+        kprint_colored!(Colors::RED, "[WarOS] ");
+        kprintln!("Failed to save IBM API key: {}.", error);
+        return;
+    }
+
+    if let Some(instance_crn) = args.get(1).copied() {
+        if let Err(error) = net::ibm::save_instance_crn(instance_crn) {
+            kprint_colored!(Colors::RED, "[WarOS] ");
+            kprintln!("Failed to save IBM service CRN: {}.", error);
+            return;
+        }
+        kprint_colored!(Colors::GREEN, "[WarOS] ");
+        kprintln!("IBM Quantum credentials saved.");
+        return;
+    }
+
+    kprint_colored!(Colors::GREEN, "[WarOS] ");
+    kprintln!("IBM Quantum API key saved.");
+    kprintln!("  Current IBM Runtime access also requires a service CRN.");
+    kprintln!("  Set it with: ibm instance <service-crn>");
+}
+
+fn cmd_ibm_instance(args: &[&str]) {
+    let Some(instance_crn) = args.first().copied() else {
+        kprintln!("Usage: ibm instance <service-crn>");
+        return;
+    };
+
+    match net::ibm::save_instance_crn(instance_crn) {
+        Ok(()) => {
+            kprint_colored!(Colors::GREEN, "[WarOS] ");
+            kprintln!("IBM Quantum service CRN saved.");
+        }
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[WarOS] ");
+            kprintln!("Failed to save IBM service CRN: {}.", error);
+        }
+    }
+}
+
+fn cmd_ibm_backends() {
+    kprintln!("Querying IBM Quantum backends...");
+    match net::ibm::list_backends() {
+        Ok(backends) => {
+            if backends.is_empty() {
+                kprintln!("No IBM backends returned.");
+                return;
+            }
+
+            kprintln!("Available IBM Quantum backends:");
+            for backend in backends {
+                let qubits = backend.qubits.unwrap_or_default();
+                kprintln!(
+                    "  {:<16} {:>3} qubits  {:<8} (queue {})",
+                    backend.name,
+                    qubits,
+                    backend.status.message(),
+                    backend.queue_length
+                );
+            }
+        }
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[WarOS] ");
+            kprintln!("Failed to query IBM Runtime: {}.", error);
+        }
+    }
+}
+
+fn cmd_ibm_submit(args: &[&str]) {
+    let backend = args.first().copied().unwrap_or("ibm_brisbane");
+    let shots = args
+        .get(1)
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(1000)
+        .clamp(1, 100_000);
+
+    match net::ibm::submit_current_job(backend, shots) {
+        Ok(job) => {
+            kprintln!(
+                "Submitting circuit to {} ({} qubits, {} shots)...",
+                job.backend, job.backend_qubits, shots
+            );
+            if job.queue_length > 0 {
+                kprintln!(
+                    "Job queued: job_id={} (backend queue depth {})",
+                    job.job_id, job.queue_length
+                );
+            } else {
+                kprintln!("Job queued: job_id={}", job.job_id);
+            }
+            kprintln!("Waiting for results...");
+
+            let mut last_status = String::new();
+            let mut waited_ms = 0u64;
+            loop {
+                match net::ibm::job_status(&job.job_id) {
+                    Ok(status) => {
+                        if status.status != last_status {
+                            if let Some(reason) = status.reason.as_deref() {
+                                kprintln!("Job {}: {} ({})", job.job_id, status.status, reason);
+                            } else {
+                                kprintln!("Job {}: {}", job.job_id, status.status);
+                            }
+                            last_status = status.status.clone();
+                        }
+
+                        match status.status.as_str() {
+                            "Completed" => break,
+                            "Queued" | "Running" => {}
+                            "Cancelled" | "Cancelled - Ran too long" | "Failed" => {
+                                kprint_colored!(Colors::RED, "[WarOS] ");
+                                kprintln!(
+                                    "IBM job {} ended with status '{}'.",
+                                    job.job_id, status.status
+                                );
+                                return;
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(error) => {
+                        kprint_colored!(Colors::RED, "[WarOS] ");
+                        kprintln!("Failed to poll IBM job {}: {}.", job.job_id, error);
+                        return;
+                    }
+                }
+
+                if waited_ms >= 600_000 {
+                    kprint_colored!(Colors::RED, "[WarOS] ");
+                    kprintln!("Timed out waiting for IBM job {}.", job.job_id);
+                    return;
+                }
+
+                wait_ms(2_000);
+                waited_ms = waited_ms.saturating_add(2_000);
+            }
+
+            match net::ibm::job_result(&job.job_id, job.output_bits) {
+                Ok(result) => {
+                    kprintln!();
+                    kprintln!("Results from IBM quantum hardware:");
+                    print_ibm_histogram(&result);
+                    kprintln!();
+                    kprintln!("Note: imperfect results are real quantum noise from a superconducting processor.");
+                }
+                Err(error) => {
+                    kprint_colored!(Colors::RED, "[WarOS] ");
+                    kprintln!("Failed to fetch IBM job results: {}.", error);
+                }
+            }
+        }
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[WarOS] ");
+            kprintln!("IBM submission failed: {}.", error);
         }
     }
 }
@@ -1450,6 +1655,27 @@ fn print_http_body(body: &[u8]) {
     } else {
         kprint_colored!(Colors::RED, "[ERR]");
         kprintln!(" response body is not UTF-8 text.");
+    }
+}
+
+fn print_ibm_histogram(result: &net::ibm::IBMJobResult) {
+    if result.total_shots == 0 || result.counts.is_empty() {
+        kprintln!("  No measurement counts returned.");
+        return;
+    }
+
+    let mut counts = result.counts.clone();
+    counts.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    let peak = counts.iter().map(|(_, count)| *count).max().unwrap_or(1);
+
+    for (state, count) in counts {
+        let percentage = (count as f64 / result.total_shots as f64) * 100.0;
+        let bar_len = ((count as usize) * 24 / peak as usize).max(1);
+        let mut bar = String::new();
+        for _ in 0..bar_len {
+            bar.push('#');
+        }
+        kprintln!("  |{}> : {:>4} ({:>4.1}%) {}", state, count, percentage, bar);
     }
 }
 
@@ -1591,5 +1817,14 @@ fn read_memory_byte(address: u64) -> u8 {
         // SAFETY: `cmd_hex` only calls this helper after validating that the full range lies in
         // the kernel's direct-physical-memory or heap debug mappings.
         *(address as *const u8)
+    }
+}
+
+fn wait_ms(duration_ms: u64) {
+    let ticks = duration_ms.saturating_mul(u64::from(PIT_FREQUENCY_HZ)) / 1_000;
+    let deadline = interrupts::tick_count().saturating_add(ticks.max(1));
+    while interrupts::tick_count() < deadline {
+        let _ = net::poll();
+        x86_64::instructions::hlt();
     }
 }

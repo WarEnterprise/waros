@@ -7,6 +7,8 @@ use smoltcp::socket::tcp;
 use super::ipv4::Ipv4Addr;
 use super::{NetError, NetworkSubsystem};
 
+const TCP_SOCKET_BUFFER_SIZE: usize = 32 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TcpState {
     Closed,
@@ -31,8 +33,8 @@ impl TcpConnection {
         timeout_ms: u64,
     ) -> Result<Self, NetError> {
         let socket = tcp::Socket::new(
-            tcp::SocketBuffer::new(vec![0; 4096]),
-            tcp::SocketBuffer::new(vec![0; 4096]),
+            tcp::SocketBuffer::new(vec![0; TCP_SOCKET_BUFFER_SIZE]),
+            tcp::SocketBuffer::new(vec![0; TCP_SOCKET_BUFFER_SIZE]),
         );
         let handle = stack.sockets.add(socket);
         let local_port = stack.allocate_local_port();
@@ -60,6 +62,10 @@ impl TcpConnection {
                 socket.may_send()
             };
             if established {
+                stack
+                    .sockets
+                    .get_mut::<tcp::Socket>(handle)
+                    .set_nagle_enabled(false);
                 return Ok(Self {
                     handle,
                     remote_ip,
@@ -88,7 +94,7 @@ impl TcpConnection {
             stack.poll_network();
             let sent = {
                 let socket = stack.sockets.get_mut::<tcp::Socket>(self.handle);
-                if socket.may_send() {
+                if socket.can_send() {
                     socket
                         .send_slice(&data[written..])
                         .map_err(|_| NetError::InitializationFailed("TCP send failed"))?
@@ -107,6 +113,27 @@ impl TcpConnection {
         }
 
         Ok(written)
+    }
+
+    pub fn flush(
+        &mut self,
+        stack: &mut NetworkSubsystem,
+        timeout_ms: u64,
+    ) -> Result<(), NetError> {
+        let deadline = stack.now_ms().saturating_add(timeout_ms);
+        loop {
+            stack.poll_network();
+            let pending = {
+                let socket = stack.sockets.get_mut::<tcp::Socket>(self.handle);
+                socket.send_queue()
+            };
+            if pending == 0 {
+                return Ok(());
+            }
+            if stack.now_ms() >= deadline {
+                return Err(NetError::InitializationFailed("TCP flush timed out"));
+            }
+        }
     }
 
     pub fn recv(
