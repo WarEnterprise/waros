@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"C:\\\\War enterprise\\\\waros\\\\kernel\" && cargo +nightly build --release --target x86_64-unknown-none 2>&1 | head -60)",
+      "Bash(cd \"C:\\\\War enterprise\\\\waros\\\\kernel\" && cargo +nightly build --release --target x86_64-unknown-none 2>&1 | grep -E \"^error\" | head -30)",
+      "Bash(cd \"C:\\\\War enterprise\\\\waros\\\\kernel\" && cargo +nightly build --release --target x86_64-unknown-none 2>&1 | tail -5)",
+      "Bash(cd \"C:\\\\War enterprise\\\\waros\\\\kernel\" && cargo +nightly build --release --target x86_64-unknown-none 2>&1 | grep -E \"error\\\\[\" | head -30)",
+      "Bash(cd \"C:\\\\War enterprise\\\\waros\\\\kernel\" && cargo +nightly build --release --target x86_64-unknown-none 2>&1 | grep -A5 \"no method named\" | head -40)",
+      "Bash(cd \"C:\\\\War enterprise\\\\waros\\\\kernel\" && cargo +nightly build --release --target x86_64-unknown-none 2>&1 | grep -E \"^error\" | head -20)",
+      "Bash(cd \"C:\\\\War enterprise\\\\waros\\\\kernel\" && cargo +nightly build --release --target x86_64-unknown-none 2>&1 | tail -3)",
+      "Bash(cd \"C:\\\\War enterprise\\\\waros\\\\kernel\" && cargo +nightly build --release --target x86_64-unknown-none 2>&1 | grep -E \"^error|Finished|Compiling\" | head -10)"
+    ]
+  }
+}

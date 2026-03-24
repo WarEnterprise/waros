@@ -12,12 +12,14 @@ mod boot;
 mod display;
 mod disk;
 mod drivers;
+mod exec;
 mod fs;
 mod gui;
 mod hal;
 mod memory;
 mod net;
 mod panic;
+mod pkg;
 mod quantum;
 mod shell;
 mod task;
@@ -93,6 +95,9 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
 
     arch::x86_64::gdt::init();
     boot_ok("GDT loaded");
+
+    exec::syscall::init();
+    boot_ok("WarSyscall initialized");
 
     arch::x86_64::idt::init();
     boot_ok("IDT loaded (exceptions + timer + keyboard)");
@@ -216,6 +221,8 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
 
     task::init();
     boot_ok("Task scheduler: cooperative background tasks ready");
+    exec::init();
+    boot_ok("WarExec core ready");
 
     let network = net::init().map_err(|_| "network initialization failed")?;
     let pci_inventory = net::pci_devices();
@@ -288,6 +295,7 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     let boot_complete_ms = boot_elapsed_ms();
     BOOT_COMPLETE_MS.store(boot_complete_ms, Ordering::Relaxed);
     fs::seed_system_files().map_err(|_| "failed to seed filesystem system files")?;
+    pkg::init().map_err(|_| "failed to seed package repository")?;
 
     display::branding::boot_complete_animation();
     display::branding::show_separator();

@@ -136,6 +136,21 @@ pub fn current_prompt_path() -> String {
 }
 
 #[must_use]
+pub fn current_cwd() -> String {
+    CURRENT_SESSION
+        .lock()
+        .as_ref()
+        .map(|session| session.cwd.clone())
+        .unwrap_or_else(|| String::from("/"))
+}
+
+pub fn set_cwd(path: &str) {
+    if let Some(session) = CURRENT_SESSION.lock().as_mut() {
+        session.cwd = path.to_string();
+    }
+}
+
+#[must_use]
 pub fn resolve_path(input: &str) -> String {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -150,8 +165,14 @@ pub fn resolve_path(input: &str) -> String {
     if trimmed == "~" {
         return session.home().to_string();
     }
+    if trimmed == "." {
+        return session.cwd.clone();
+    }
     if let Some(rest) = trimmed.strip_prefix("~/") {
         return alloc::format!("{}/{}", session.home(), rest);
+    }
+    if let Some(rest) = trimmed.strip_prefix("./") {
+        return alloc::format!("{}/{}", session.cwd, rest);
     }
     if trimmed.starts_with('/') {
         return trimmed.to_string();

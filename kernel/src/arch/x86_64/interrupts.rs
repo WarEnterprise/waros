@@ -71,6 +71,7 @@ pub extern "x86-interrupt" fn page_fault_handler(
 /// Timer interrupt handler (IRQ0 -> vector 32).
 pub extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
     TICKS.fetch_add(1, Ordering::Relaxed);
+    crate::exec::tick();
     pic::end_of_interrupt(InterruptIndex::Timer);
 }
 

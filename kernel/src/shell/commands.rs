@@ -1,8 +1,11 @@
-use alloc::string::String;
+use alloc::collections::BTreeMap;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use core::arch::x86_64::__cpuid;
 use core::str;
+
+use spin::Lazy;
 
 use crate::auth::{self, UserRole, USER_DB};
 use crate::arch::x86_64::interrupts;
@@ -10,11 +13,13 @@ use crate::arch::x86_64::pit::PIT_FREQUENCY_HZ;
 use crate::display::branding;
 use crate::display::console::{self, Colors};
 use crate::disk;
+use crate::exec;
 use crate::fs;
 use crate::hal;
 use crate::memory;
 use crate::memory::heap;
 use crate::net;
+use crate::pkg;
 use crate::quantum;
 use crate::shell::history;
 use crate::task;
@@ -23,13 +28,148 @@ use crate::{
     KERNEL_VERSION,
 };
 
+static ENV: Lazy<spin::Mutex<BTreeMap<String, String>>> = Lazy::new(|| {
+    let mut map = BTreeMap::new();
+    map.insert(String::from("PATH"), String::from("/usr/bin:/bin"));
+    map.insert(String::from("HOME"), String::from("/root"));
+    map.insert(String::from("USER"), String::from("root"));
+    map.insert(String::from("SHELL"), String::from("/bin/warsh"));
+    map.insert(String::from("WAROS_VERSION"), KERNEL_VERSION.to_string());
+    spin::Mutex::new(map)
+});
+
+static ALIASES: Lazy<spin::Mutex<BTreeMap<String, String>>> = Lazy::new(|| {
+    spin::Mutex::new(BTreeMap::new())
+});
+
+fn expand_vars(input: &str) -> String {
+    if !input.contains('$') {
+        return input.to_string();
+    }
+    let mut result = String::new();
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '$' {
+            let mut var_name = String::new();
+            while let Some(&c) = chars.peek() {
+                if c.is_alphanumeric() || c == '_' {
+                    var_name.push(c);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            if var_name.is_empty() {
+                result.push('$');
+            } else {
+                let value = ENV.lock().get(&var_name).cloned().unwrap_or_default();
+                result.push_str(&value);
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+fn capture_command_output(command_line: &str) -> String {
+    console::begin_capture();
+    execute_command(command_line);
+    console::end_capture()
+}
+
+fn execute_piped(left: &str, right: &str) {
+    let output = capture_command_output(left);
+    let tmp_path = "/tmp/.pipe_buf";
+    let _ = fs::write_current(tmp_path, output.as_bytes());
+
+    // For 'grep pattern' without a file, append the temp file path.
+    let right_parts: Vec<&str> = right.split_whitespace().collect();
+    let right_expanded = if right.starts_with("grep ") && right_parts.len() == 2 {
+        alloc::format!("{} {}", right, tmp_path)
+    } else {
+        right.to_string()
+    };
+    execute_command(&right_expanded);
+    let _ = fs::delete_current(tmp_path);
+}
+
+fn find_redirect(command_line: &str, op: &str) -> Option<usize> {
+    command_line.find(op)
+}
+
+fn execute_redirected(command_line: &str) {
+    if let Some(pos) = find_redirect(command_line, " >> ") {
+        let cmd = command_line[..pos].trim();
+        let file = command_line[pos + 4..].trim();
+        let output = capture_command_output(cmd);
+        match fs::read_current(file) {
+            Ok((_, mut existing)) => {
+                existing.extend_from_slice(output.as_bytes());
+                let _ = fs::write_current(file, &existing);
+            }
+            Err(_) => {
+                let _ = fs::write_current(file, output.as_bytes());
+            }
+        }
+    } else if let Some(pos) = find_redirect(command_line, " > ") {
+        let cmd = command_line[..pos].trim();
+        let file = command_line[pos + 3..].trim();
+        let output = capture_command_output(cmd);
+        match fs::write_current(file, output.as_bytes()) {
+            Ok(_) => {}
+            Err(e) => report_fs_error(file, e),
+        }
+    } else if let Some(pos) = find_redirect(command_line, " < ") {
+        let file = command_line[pos + 3..].trim();
+        match fs::read_current(file) {
+            Ok((_, data)) => {
+                if let Ok(text) = core::str::from_utf8(&data) {
+                    kprint!("{text}");
+                }
+            }
+            Err(e) => report_fs_error(file, e),
+        }
+    }
+}
+
 /// Execute a built-in shell command.
 pub fn execute_command(command_line: &str) {
     let command_line = command_line.trim();
+
+    // $VAR expansion
+    let expanded = expand_vars(command_line);
+    let command_line = expanded.as_str();
+
+    // Handle pipe: cmd1 | cmd2
+    if let Some(pipe_pos) = command_line.find(" | ") {
+        let left = &command_line[..pipe_pos];
+        let right = &command_line[pipe_pos + 3..];
+        execute_piped(left.trim(), right.trim());
+        return;
+    }
+
+    // Handle redirect: cmd > file, cmd >> file, cmd < file
+    if command_line.contains(" > ") || command_line.contains(" >> ") || command_line.contains(" < ") {
+        execute_redirected(command_line);
+        return;
+    }
+
     let parts: Vec<&str> = command_line.split_whitespace().collect();
     let Some(command) = parts.first().copied() else {
         return;
     };
+
+    // Alias lookup
+    let alias_expansion = ALIASES.lock().get(command).cloned();
+    if let Some(alias_cmd) = alias_expansion {
+        let expanded_cmd = if parts.len() > 1 {
+            alloc::format!("{} {}", alias_cmd, parts[1..].join(" "))
+        } else {
+            alias_cmd
+        };
+        return execute_command(&expanded_cmd);
+    }
 
     match command {
         "help" => cmd_help(parts.get(1).copied()),
@@ -37,12 +177,26 @@ pub fn execute_command(command_line: &str) {
             console::clear_screen();
         }
         "startx" | "gui" => cmd_startx(),
+        "cd" => cmd_cd(&parts[1..]),
+        "pwd" => cmd_pwd(),
+        "mkdir" => cmd_mkdir(&parts[1..]),
+        "rmdir" => cmd_rmdir(&parts[1..]),
         "ls" => cmd_ls(&parts[1..]),
         "cat" => cmd_cat(&parts[1..]),
         "write" => cmd_write(command_line),
         "rm" => cmd_rm(&parts[1..]),
         "touch" => cmd_touch(&parts[1..]),
         "stat" => cmd_stat(&parts[1..]),
+        "cp" => cmd_cp(&parts[1..]),
+        "mv" => cmd_mv(&parts[1..]),
+        "find" => cmd_find(&parts[1..]),
+        "grep" => cmd_grep(command_line),
+        "head" => cmd_head(&parts[1..]),
+        "tail" => cmd_tail(&parts[1..]),
+        "wc" => cmd_wc(&parts[1..]),
+        "diff" => cmd_diff(&parts[1..]),
+        "sort" => cmd_sort(&parts[1..]),
+        "source" => cmd_source(&parts[1..]),
         "df" => cmd_df(),
         "disk" => cmd_disk(),
         "sync" => cmd_sync(),
@@ -70,7 +224,14 @@ pub fn execute_command(command_line: &str) {
         "history" => cmd_history(),
         "tasks" => cmd_tasks(),
         "spawn" => cmd_spawn(command_line),
+        "exec" => cmd_exec(&parts[1..]),
+        "ps" => cmd_ps(),
+        "top" => cmd_top(),
+        "jobs" => cmd_jobs(),
+        "wait" => cmd_wait(&parts[1..]),
+        "nice" => cmd_nice(command_line),
         "kill" => cmd_kill(&parts[1..]),
+        "warpkg" => pkg::commands::handle(&parts[1..]),
         "banner" => cmd_banner(),
         "keyboard" => cmd_keyboard(&parts[1..]),
         "quantum" => cmd_quantum(),
@@ -96,6 +257,11 @@ pub fn execute_command(command_line: &str) {
                 kprintln!("{}", error);
             }
         }
+        "env" => cmd_env(),
+        "export" => cmd_export(command_line),
+        "unset" => cmd_unset(&parts[1..]),
+        "alias" => cmd_alias(command_line),
+        "unalias" => cmd_unalias(&parts[1..]),
         "panic" => cmd_panic(),
         "reboot" => cmd_reboot(),
         "halt" => cmd_halt(),
@@ -111,12 +277,25 @@ fn cmd_help(topic: Option<&str>) {
     }
     if matches!(topic, Some("fs")) {
         kprint_colored!(Colors::CYAN, "WarFS Commands\n");
+        kprintln!("  cd <dir>       Change directory");
+        kprintln!("  pwd            Show current directory");
+        kprintln!("  mkdir <dir>    Create directory marker");
+        kprintln!("  rmdir <dir>    Remove empty directory");
         kprintln!("  ls             List files");
         kprintln!("  cat <file>     Show file contents");
         kprintln!("  write <f> <t>  Create or overwrite a text file");
         kprintln!("  rm <file>      Delete a file");
         kprintln!("  touch <file>   Create an empty file");
         kprintln!("  stat <file>    Show file metadata");
+        kprintln!("  cp <a> <b>     Copy file");
+        kprintln!("  mv <a> <b>     Move file");
+        kprintln!("  find <pat>     Search filesystem paths");
+        kprintln!("  grep <p> <f>   Search text in file");
+        kprintln!("  head <f> [n]   First N lines");
+        kprintln!("  tail <f> [n]   Last N lines");
+        kprintln!("  wc <file>      Count lines/words/bytes");
+        kprintln!("  diff <a> <b>   Compare files");
+        kprintln!("  sort <file>    Sort file lines");
         kprintln!("  df             Filesystem usage");
         kprintln!("  disk           Show persistent disk status");
         kprintln!("  sync           Force sync RAM files to disk");
@@ -158,9 +337,18 @@ fn cmd_help(topic: Option<&str>) {
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Filesystem\n");
-    kprintln!("  ls              cat <file>      write <f> <t>   rm <file>");
-    kprintln!("  touch <file>    stat <file>     chmod <mode> <file>  df");
-    kprintln!("  disk            sync            mount               format");
+    kprintln!("  cd <dir>        pwd             mkdir <dir>      rmdir <dir>");
+    kprintln!("  ls              cat <file>      write <f> <t>    rm <file>");
+    kprintln!("  touch <file>    stat <file>     cp <a> <b>       mv <a> <b>");
+    kprintln!("  find <pat>      grep <p> <f>    head <f> [n]     tail <f> [n]");
+    kprintln!("  wc <file>       diff <a> <b>    sort <file>      chmod <mode> <file>");
+    kprintln!("  source <file>   df              disk             sync");
+    kprintln!("  mount           format");
+    kprintln!();
+
+    kprint_colored!(Colors::PURPLE, "Execution\n");
+    kprintln!("  exec <path>      ps              top             nice <pri> <cmd>");
+    kprintln!("  jobs             wait <pid>      kill <pid>      warpkg <subcmd>");
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Tools\n");
@@ -792,24 +980,65 @@ fn cmd_crypto() {
     kprintln!("  All algorithms are quantum-resistant against quantum attacks.");
 }
 
+fn cmd_cd(args: &[&str]) {
+    let target = args.first().copied().unwrap_or("~");
+    match fs::change_directory(target) {
+        Ok(path) => kprintln!("{}", fs::display_path(&path)),
+        Err(error) => report_fs_error(target, error),
+    }
+}
+
+fn cmd_pwd() {
+    kprintln!("{}", fs::display_path(&auth::session::current_cwd()));
+}
+
+fn cmd_mkdir(args: &[&str]) {
+    let Some(path) = args.first().copied() else {
+        kprintln!("Usage: mkdir <dir>");
+        return;
+    };
+    match fs::mkdir_current(path) {
+        Ok(path) => {
+            kprint_colored!(Colors::GREEN, "Created ");
+            kprintln!("directory '{}'.", fs::display_path(&path));
+        }
+        Err(error) => report_fs_error(path, error),
+    }
+}
+
+fn cmd_rmdir(args: &[&str]) {
+    let Some(path) = args.first().copied() else {
+        kprintln!("Usage: rmdir <dir>");
+        return;
+    };
+    match fs::rmdir_current(path) {
+        Ok(path) => {
+            kprint_colored!(Colors::GREEN, "Removed ");
+            kprintln!("directory '{}'.", fs::display_path(&path));
+        }
+        Err(error) => report_fs_error(path, error),
+    }
+}
+
 fn cmd_ls(args: &[&str]) {
     let target = args.first().copied();
-    match fs::list_current(target) {
+    match fs::list_entries_current(target) {
         Ok((directory, entries)) => {
             if entries.is_empty() {
-                kprintln!("No files in {}.", fs::display_path(&directory));
+                kprintln!("No entries in {}.", fs::display_path(&directory));
                 return;
             }
 
             kprintln!("  OWNER      MODE  SIZE     MODIFIED   NAME");
             for entry in entries {
                 kprintln!(
-                    "  {:<10} {:<4} {:>6} B  {:<8} {}{}",
+                    "  {:<10} {:<4} {:>6} {}  {:<8} {}{}",
                     auth::username_for_uid(entry.owner_uid),
                     entry.permissions.mode_string(),
-                    entry.data.len(),
+                    entry.size,
+                    if entry.is_dir { "D" } else { "B" },
                     fs::format_timestamp(entry.modified_at),
-                    fs::basename(&entry.name),
+                    entry.name,
                     if entry.readonly { "  [ro]" } else { "" }
                 );
             }
@@ -919,6 +1148,190 @@ fn cmd_stat(args: &[&str]) {
     kprintln!("  Owner:     {}", auth::username_for_uid(entry.owner_uid));
     kprintln!("  Perms:     {}", entry.permissions.mode_string());
     kprintln!("  Read-only: {}", if entry.readonly { "yes" } else { "no" });
+}
+
+fn cmd_cp(args: &[&str]) {
+    let Some(source) = args.first().copied() else {
+        kprintln!("Usage: cp <source> <destination>");
+        return;
+    };
+    let Some(destination) = args.get(1).copied() else {
+        kprintln!("Usage: cp <source> <destination>");
+        return;
+    };
+    match fs::copy_current(source, destination) {
+        Ok(path) => {
+            kprint_colored!(Colors::GREEN, "Copied ");
+            kprintln!("to '{}'.", fs::display_path(&path));
+        }
+        Err(error) => report_fs_error(source, error),
+    }
+}
+
+fn cmd_mv(args: &[&str]) {
+    let Some(source) = args.first().copied() else {
+        kprintln!("Usage: mv <source> <destination>");
+        return;
+    };
+    let Some(destination) = args.get(1).copied() else {
+        kprintln!("Usage: mv <source> <destination>");
+        return;
+    };
+    match fs::move_current(source, destination) {
+        Ok(path) => {
+            kprint_colored!(Colors::GREEN, "Moved ");
+            kprintln!("to '{}'.", fs::display_path(&path));
+        }
+        Err(error) => report_fs_error(source, error),
+    }
+}
+
+fn cmd_find(args: &[&str]) {
+    let Some(pattern) = args.first().copied() else {
+        kprintln!("Usage: find <pattern>");
+        return;
+    };
+    match fs::find_current(pattern) {
+        Ok(matches) if matches.is_empty() => kprintln!("No matches for '{}'.", pattern),
+        Ok(matches) => {
+            for path in matches {
+                kprintln!("{}", fs::display_path(&path));
+            }
+        }
+        Err(error) => report_fs_error(pattern, error),
+    }
+}
+
+fn cmd_grep(command_line: &str) {
+    let mut parts = command_line.splitn(3, char::is_whitespace);
+    let _ = parts.next();
+    let Some(pattern) = parts.next() else {
+        kprintln!("Usage: grep <pattern> <file>");
+        return;
+    };
+    let Some(path) = parts.next() else {
+        kprintln!("Usage: grep <pattern> <file>");
+        return;
+    };
+
+    match fs::grep_current(pattern, path) {
+        Ok(matches) if matches.is_empty() => kprintln!("No matches."),
+        Ok(matches) => {
+            for hit in matches {
+                kprintln!("{:>4}: {}", hit.line_number, hit.line);
+            }
+        }
+        Err(error) => report_fs_error(path, error),
+    }
+}
+
+fn cmd_head(args: &[&str]) {
+    let Some(path) = args.first().copied() else {
+        kprintln!("Usage: head <file> [n]");
+        return;
+    };
+    let lines = args.get(1).and_then(|value| value.parse::<usize>().ok()).unwrap_or(10);
+    match fs::head_current(path, lines) {
+        Ok(lines) => {
+            for line in lines {
+                kprintln!("{}", line);
+            }
+        }
+        Err(error) => report_fs_error(path, error),
+    }
+}
+
+fn cmd_tail(args: &[&str]) {
+    let Some(path) = args.first().copied() else {
+        kprintln!("Usage: tail <file> [n]");
+        return;
+    };
+    let lines = args.get(1).and_then(|value| value.parse::<usize>().ok()).unwrap_or(10);
+    match fs::tail_current(path, lines) {
+        Ok(lines) => {
+            for line in lines {
+                kprintln!("{}", line);
+            }
+        }
+        Err(error) => report_fs_error(path, error),
+    }
+}
+
+fn cmd_wc(args: &[&str]) {
+    let Some(path) = args.first().copied() else {
+        kprintln!("Usage: wc <file>");
+        return;
+    };
+    match fs::wc_current(path) {
+        Ok(counts) => {
+            kprintln!(
+                "{} {} {} {}",
+                counts.lines, counts.words, counts.bytes, path
+            );
+        }
+        Err(error) => report_fs_error(path, error),
+    }
+}
+
+fn cmd_diff(args: &[&str]) {
+    let Some(left) = args.first().copied() else {
+        kprintln!("Usage: diff <file-a> <file-b>");
+        return;
+    };
+    let Some(right) = args.get(1).copied() else {
+        kprintln!("Usage: diff <file-a> <file-b>");
+        return;
+    };
+    match fs::diff_current(left, right) {
+        Ok(lines) if lines.is_empty() => kprintln!("Files are identical."),
+        Ok(lines) => {
+            for line in lines {
+                kprintln!("{}", line);
+            }
+        }
+        Err(error) => report_fs_error(left, error),
+    }
+}
+
+fn cmd_sort(args: &[&str]) {
+    let Some(path) = args.first().copied() else {
+        kprintln!("Usage: sort <file>");
+        return;
+    };
+    match fs::sort_current(path) {
+        Ok(lines) => {
+            for line in lines {
+                kprintln!("{}", line);
+            }
+        }
+        Err(error) => report_fs_error(path, error),
+    }
+}
+
+fn cmd_source(args: &[&str]) {
+    let Some(path) = args.first().copied() else {
+        kprintln!("Usage: source <file>");
+        return;
+    };
+    let (_, data) = match fs::read_current(path) {
+        Ok(result) => result,
+        Err(error) => {
+            report_fs_error(path, error);
+            return;
+        }
+    };
+    let Ok(text) = str::from_utf8(&data) else {
+        kprint_colored!(Colors::RED, "[ERR]");
+        kprintln!(" '{}' is not valid UTF-8 text.", path);
+        return;
+    };
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        execute_command(trimmed);
+    }
 }
 
 fn cmd_df() {
@@ -1064,23 +1477,34 @@ fn cmd_spawn(command_line: &str) {
         return;
     };
 
-    match task::spawn_command(remainder.trim()) {
-        Ok(id) => {
-            kprint_colored!(Colors::GREEN, "[Task {}]", id);
+    match exec::spawn_shell_command(remainder.trim(), exec::process::Priority::Batch) {
+        Ok(pid) => {
+            kprint_colored!(Colors::GREEN, "[PID {}]", pid);
             kprintln!(" Started: {}", remainder.trim());
         }
         Err(error) => {
             kprint_colored!(Colors::RED, "[ERR]");
-            kprintln!(" {}", error);
+            kprintln!(" {:?}", error);
         }
     }
 }
 
 fn cmd_kill(args: &[&str]) {
-    let Some(id) = args.first().and_then(|value| value.parse::<u64>().ok()) else {
-        kprintln!("Usage: kill <id>");
+    let (signal, pid_arg) = if matches!(args.first(), Some(&"-9")) {
+        (9, args.get(1).copied())
+    } else {
+        (15, args.first().copied())
+    };
+    let Some(id) = pid_arg.and_then(|value| value.parse::<u64>().ok()) else {
+        kprintln!("Usage: kill [-9] <pid>");
         return;
     };
+
+    if let Ok(()) = exec::kill_process(id as u32, -signal) {
+        kprint_colored!(Colors::GREEN, "Killed ");
+        kprintln!("process {}.", id);
+        return;
+    }
 
     match task::kill(id) {
         Ok(()) => {
@@ -1090,6 +1514,202 @@ fn cmd_kill(args: &[&str]) {
         Err(error) => {
             kprint_colored!(Colors::RED, "[ERR]");
             kprintln!(" {}", error);
+        }
+    }
+}
+
+fn cmd_exec(args: &[&str]) {
+    let Some(path) = args.first().copied() else {
+        kprintln!("Usage: exec <path> [args]");
+        return;
+    };
+
+    let (resolved, data) = match fs::read_current(path) {
+        Ok(result) => result,
+        Err(error) => {
+            report_fs_error(path, error);
+            return;
+        }
+    };
+
+    if exec::elf::parse_elf(&data).is_ok() {
+        let mut process_args = Vec::with_capacity(args.len());
+        process_args.push(resolved.as_str());
+        process_args.extend_from_slice(&args[1..]);
+        let env = Vec::<(String, String)>::new();
+        match exec::loader::spawn_process(
+            &resolved,
+            &process_args,
+            &env,
+            auth::session::current_uid(),
+            exec::ensure_shell_process(),
+            exec::process::Priority::Normal,
+        ) {
+            Ok(pid) => {
+                match exec::run_user_process(pid) {
+                    Ok(exit_code) => {
+                        kprint_colored!(Colors::GREEN, "[WarExec] ");
+                        kprintln!(
+                            "'{}' exited with code {}.",
+                            fs::display_path(&resolved),
+                            exit_code
+                        );
+                    }
+                    Err(error) => {
+                        kprint_colored!(Colors::RED, "[WarExec] ");
+                        kprintln!(
+                            "failed to run '{}' as PID {}: {:?}.",
+                            fs::display_path(&resolved),
+                            pid,
+                            error
+                        );
+                    }
+                }
+            }
+            Err(error) => {
+                kprint_colored!(Colors::RED, "[WarExec] ");
+                kprintln!("failed to load ELF: {:?}.", error);
+            }
+        }
+        return;
+    }
+
+    let Ok(text) = str::from_utf8(&data) else {
+        kprint_colored!(Colors::RED, "[WarExec] ");
+        kprintln!("'{}' is neither ELF nor UTF-8 script.", fs::display_path(&resolved));
+        return;
+    };
+
+    let command = if text.starts_with("#!warsh") {
+        alloc::format!("source {}", fs::display_path(&resolved))
+    } else {
+        text.lines().next().unwrap_or("").trim().to_string()
+    };
+    if command.is_empty() {
+        kprint_colored!(Colors::RED, "[WarExec] ");
+        kprintln!("'{}' is empty.", fs::display_path(&resolved));
+        return;
+    }
+
+    match exec::spawn_shell_command(&command, exec::process::Priority::Normal) {
+        Ok(pid) => {
+            kprint_colored!(Colors::GREEN, "[WarExec] ");
+            kprintln!("spawned PID {} from '{}'.", pid, fs::display_path(&resolved));
+        }
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[WarExec] ");
+            kprintln!("failed to execute '{}': {:?}.", fs::display_path(&resolved), error);
+        }
+    }
+}
+
+fn cmd_ps() {
+    let processes = exec::snapshot();
+    if processes.is_empty() {
+        kprintln!("No processes registered.");
+        return;
+    }
+    kprintln!(" PID  PPID USER       PRI    STATE    MEM    QUBITS IMAGE    NAME");
+    for process in processes {
+        kprintln!(
+            " {:>3}  {:>4} {:<10} {:<6} {:<8} {:>4}p {:>6} {:<8} {}",
+            process.pid,
+            process.parent_pid,
+            auth::username_for_uid(process.uid),
+            priority_name(process.priority),
+            process_state_name(process.state),
+            process.memory_pages,
+            process.qubits,
+            image_kind_name(process.image_kind),
+            process.name
+        );
+    }
+}
+
+fn cmd_top() {
+    let processes = exec::snapshot();
+    let stats = memory::stats();
+    kprintln!("WarOS Process Monitor - WarSched bootstrap");
+    kprintln!(
+        "Uptime: {} | Processes: {} | Memory: {}/{} MiB",
+        fs::format_timestamp(interrupts::tick_count()),
+        processes.len(),
+        ((stats.total_frames - stats.free_frames) * 4) / 1024,
+        (stats.total_frames * 4) / 1024
+    );
+    kprintln!(
+        "Context switches: {} | Quantum ops: {}",
+        exec::context_switch_count(),
+        quantum::active_register().map(|(qubits, _)| qubits).unwrap_or(0)
+    );
+    kprintln!();
+    cmd_ps();
+}
+
+fn cmd_jobs() {
+    let shell_pid = exec::ensure_shell_process();
+    let jobs: Vec<_> = exec::snapshot()
+        .into_iter()
+        .filter(|process| process.pid != shell_pid && process.state != exec::process::ProcessState::Zombie)
+        .collect();
+    if jobs.is_empty() {
+        kprintln!("No background jobs.");
+        return;
+    }
+    kprintln!("Jobs:");
+    for process in jobs {
+        kprintln!(
+            "  [{:>3}] {:<8} {}",
+            process.pid,
+            process_state_name(process.state),
+            process.name
+        );
+    }
+}
+
+fn cmd_wait(args: &[&str]) {
+    let Some(pid) = args.first().and_then(|value| value.parse::<u32>().ok()) else {
+        kprintln!("Usage: wait <pid>");
+        return;
+    };
+    loop {
+        if let Some(process) = exec::snapshot().into_iter().find(|process| process.pid == pid) {
+            if process.state == exec::process::ProcessState::Zombie {
+                kprintln!("Process {} exited with {:?}.", pid, process.exit_code);
+                return;
+            }
+        } else {
+            kprintln!("Process {} not found.", pid);
+            return;
+        }
+        let _ = net::poll();
+        x86_64::instructions::hlt();
+    }
+}
+
+fn cmd_nice(command_line: &str) {
+    let mut parts = command_line.splitn(3, char::is_whitespace);
+    let _ = parts.next();
+    let Some(priority_text) = parts.next() else {
+        kprintln!("Usage: nice <priority> <command>");
+        return;
+    };
+    let Some(command) = parts.next() else {
+        kprintln!("Usage: nice <priority> <command>");
+        return;
+    };
+    let Some(priority) = parse_priority(priority_text) else {
+        kprintln!("Priority must be one of: rt sys quant int norm batch idle");
+        return;
+    };
+    match exec::spawn_shell_command(command, priority) {
+        Ok(pid) => {
+            kprint_colored!(Colors::GREEN, "[PID {}]", pid);
+            kprintln!(" Started with {} priority.", priority_name(priority));
+        }
+        Err(error) => {
+            kprint_colored!(Colors::RED, "[ERR]");
+            kprintln!(" {:?}", error);
         }
     }
 }
@@ -1972,6 +2592,50 @@ fn task_state_name(state: task::TaskState) -> &'static str {
     }
 }
 
+fn process_state_name(state: exec::process::ProcessState) -> &'static str {
+    match state {
+        exec::process::ProcessState::Ready => "ready",
+        exec::process::ProcessState::Running => "running",
+        exec::process::ProcessState::Blocked => "blocked",
+        exec::process::ProcessState::Stopped => "stopped",
+        exec::process::ProcessState::Zombie => "zombie",
+    }
+}
+
+fn priority_name(priority: exec::process::Priority) -> &'static str {
+    match priority {
+        exec::process::Priority::RealTime => "rt",
+        exec::process::Priority::System => "sys",
+        exec::process::Priority::Quantum => "quant",
+        exec::process::Priority::Interactive => "int",
+        exec::process::Priority::Normal => "norm",
+        exec::process::Priority::Batch => "batch",
+        exec::process::Priority::Idle => "idle",
+    }
+}
+
+fn image_kind_name(kind: exec::process::ProcessImageKind) -> &'static str {
+    match kind {
+        exec::process::ProcessImageKind::KernelShell => "shell",
+        exec::process::ProcessImageKind::ShellCommand => "cmd",
+        exec::process::ProcessImageKind::ShellScript => "script",
+        exec::process::ProcessImageKind::Elf => "elf",
+    }
+}
+
+fn parse_priority(text: &str) -> Option<exec::process::Priority> {
+    match text {
+        "rt" | "realtime" => Some(exec::process::Priority::RealTime),
+        "sys" | "system" => Some(exec::process::Priority::System),
+        "quant" | "quantum" => Some(exec::process::Priority::Quantum),
+        "int" | "interactive" => Some(exec::process::Priority::Interactive),
+        "norm" | "normal" => Some(exec::process::Priority::Normal),
+        "batch" => Some(exec::process::Priority::Batch),
+        "idle" => Some(exec::process::Priority::Idle),
+        _ => None,
+    }
+}
+
 fn vendor_string_bytes(ebx: u32, edx: u32, ecx: u32) -> [u8; 12] {
     let ebx = ebx.to_le_bytes();
     let edx = edx.to_le_bytes();
@@ -2055,3 +2719,59 @@ fn wait_ms(duration_ms: u64) {
         x86_64::instructions::hlt();
     }
 }
+
+fn cmd_env() {
+    let env = ENV.lock();
+    for (key, value) in env.iter() {
+        kprintln!("{}={}", key, value);
+    }
+}
+
+fn cmd_export(command_line: &str) {
+    let rest = command_line
+        .split_once(char::is_whitespace)
+        .map_or("", |(_, r)| r)
+        .trim();
+    if rest.is_empty() {
+        cmd_env();
+        return;
+    }
+    if let Some((key, value)) = rest.split_once('=') {
+        ENV.lock().insert(key.trim().to_string(), value.to_string());
+    } else {
+        kprintln!("Usage: export KEY=VALUE");
+    }
+}
+
+fn cmd_unset(args: &[&str]) {
+    for &key in args {
+        ENV.lock().remove(key);
+    }
+}
+
+fn cmd_alias(command_line: &str) {
+    let rest = command_line
+        .split_once(char::is_whitespace)
+        .map_or("", |(_, r)| r)
+        .trim();
+    if rest.is_empty() {
+        let aliases = ALIASES.lock();
+        for (name, value) in aliases.iter() {
+            kprintln!("alias {}='{}'", name, value);
+        }
+        return;
+    }
+    if let Some((name, value)) = rest.split_once('=') {
+        let value = value.trim_matches('\'').trim_matches('"');
+        ALIASES.lock().insert(name.trim().to_string(), value.to_string());
+    } else {
+        kprintln!("Usage: alias name=command");
+    }
+}
+
+fn cmd_unalias(args: &[&str]) {
+    for &name in args {
+        ALIASES.lock().remove(name);
+    }
+}
+

@@ -1,21 +1,113 @@
+use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
 
 use core::f64::consts::PI;
+use core::sync::atomic::AtomicU32;
 
 use spin::Mutex;
 
 use crate::display::console::Colors;
 use crate::fs;
 use crate::quantum::circuits::run_builtin;
-use crate::quantum::display::{display_probabilities, display_results, display_state};
+use crate::quantum::display::{display_probabilities, display_results, display_state, format_basis_state};
 use crate::quantum::gates::{
     cnot, cz, hadamard, pauli_x, pauli_y, pauli_z, rx, ry, rz, s_gate, swap, t_gate,
 };
 use crate::quantum::session::QuantumSession;
 use crate::quantum::simulator::{apply_1q, apply_2q, apply_toffoli, measure_all, Xorshift64};
-use crate::quantum::state::{QuantumState, MAX_KERNEL_QUBITS};
+use crate::quantum::state::{norm_sq, QuantumState, MAX_KERNEL_QUBITS};
 use crate::{kprint_colored, kprintln};
+
+/// Per-process quantum register pool (handle -> session).
+static PROCESS_REGISTERS: Mutex<BTreeMap<u32, QuantumSession>> = Mutex::new(BTreeMap::new());
+static NEXT_HANDLE: AtomicU32 = AtomicU32::new(1);
+
+pub fn alloc_process_register(state: QuantumState) -> u32 {
+    let handle = NEXT_HANDLE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    PROCESS_REGISTERS.lock().insert(handle, QuantumSession::new(state));
+    handle
+}
+
+pub fn free_process_register(handle: u32) {
+    PROCESS_REGISTERS.lock().remove(&handle);
+}
+
+pub fn apply_gate_to_register(handle: u32, gate: u32, target: usize, control: usize, param: u64) -> Result<(), &'static str> {
+    use crate::quantum::gates::{hadamard, pauli_x, pauli_y, pauli_z, s_gate, t_gate, rx, ry, rz, cnot, cz};
+    use crate::quantum::simulator::{apply_1q, apply_2q};
+    use core::f64::consts::PI;
+
+    let mut registers = PROCESS_REGISTERS.lock();
+    let session = registers.get_mut(&handle).ok_or("invalid handle")?;
+    let nq = session.state.num_qubits;
+    if target >= nq {
+        return Err("target qubit out of range");
+    }
+
+    match gate {
+        0 => apply_1q(&mut session.state, target, &hadamard())?,
+        1 => apply_1q(&mut session.state, target, &pauli_x())?,
+        2 => apply_1q(&mut session.state, target, &pauli_y())?,
+        3 => apply_1q(&mut session.state, target, &pauli_z())?,
+        4 => apply_1q(&mut session.state, target, &s_gate())?,
+        5 => apply_1q(&mut session.state, target, &t_gate())?,
+        10 => {
+            if control >= nq { return Err("control qubit out of range"); }
+            apply_2q(&mut session.state, control, target, &cnot())?;
+        }
+        11 => {
+            if control >= nq { return Err("control qubit out of range"); }
+            apply_2q(&mut session.state, control, target, &cz())?;
+        }
+        20 => {
+            let angle = f64::from_bits(param) * PI / 180.0;
+            apply_1q(&mut session.state, target, &rx(angle))?;
+        }
+        21 => {
+            let angle = f64::from_bits(param) * PI / 180.0;
+            apply_1q(&mut session.state, target, &ry(angle))?;
+        }
+        22 => {
+            let angle = f64::from_bits(param) * PI / 180.0;
+            apply_1q(&mut session.state, target, &rz(angle))?;
+        }
+        _ => return Err("unknown gate"),
+    }
+    Ok(())
+}
+
+pub fn measure_register(handle: u32, shots: usize) -> Result<alloc::string::String, &'static str> {
+    let mut registers = PROCESS_REGISTERS.lock();
+    let session = registers.get_mut(&handle).ok_or("invalid handle")?;
+    let seed = crate::arch::x86_64::interrupts::tick_count();
+    let mut rng = Xorshift64::new(seed | 1);
+    let results = measure_all(&session.state, shots, &mut rng);
+    let mut text = alloc::string::String::new();
+    for (basis, count) in &results {
+        let prob = (*count as f64 / shots as f64) * 100.0;
+        text.push_str(&alloc::format!("|{}> {} ({:.1}%)\n",
+            format_basis_state(*basis, session.state.num_qubits), count, prob));
+    }
+    Ok(text)
+}
+
+pub fn state_vector_text(handle: u32, max_len: usize) -> Result<alloc::string::String, &'static str> {
+    let registers = PROCESS_REGISTERS.lock();
+    let session = registers.get(&handle).ok_or("invalid handle")?;
+    let mut text = alloc::string::String::new();
+    for (i, amp) in session.state.amplitudes.iter().enumerate() {
+        let p = norm_sq(*amp);
+        if p > 1e-6 {
+            text.push_str(&alloc::format!("|{}> ({:.4}+{:.4}i) p={:.4}\n",
+                format_basis_state(i, session.state.num_qubits), amp.0, amp.1, p));
+        }
+        if text.len() >= max_len.saturating_sub(64) {
+            break;
+        }
+    }
+    Ok(text)
+}
 
 pub mod circuits;
 pub mod display;

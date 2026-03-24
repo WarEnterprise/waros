@@ -35,6 +35,31 @@ pub struct FileEntry {
     pub permissions: FilePermissions,
 }
 
+#[derive(Clone)]
+pub struct DirEntryView {
+    pub path: String,
+    pub name: String,
+    pub is_dir: bool,
+    pub size: usize,
+    pub modified_at: u64,
+    pub readonly: bool,
+    pub owner_uid: u16,
+    pub permissions: FilePermissions,
+}
+
+#[derive(Clone)]
+pub struct GrepMatch {
+    pub line_number: usize,
+    pub line: String,
+}
+
+#[derive(Clone, Copy)]
+pub struct WordCount {
+    pub lines: usize,
+    pub words: usize,
+    pub bytes: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsError {
     FileNotFound,
@@ -517,6 +542,245 @@ pub fn list_current(path: Option<&str>) -> Result<(String, Vec<FileEntry>), FsEr
     Ok((directory, entries))
 }
 
+pub fn list_entries_current(path: Option<&str>) -> Result<(String, Vec<DirEntryView>), FsError> {
+    let directory = path
+        .map(session::resolve_path)
+        .unwrap_or_else(session::current_cwd);
+    if !session::can_access_path(&directory, false) {
+        return Err(FsError::PermissionDenied);
+    }
+    if !directory_exists(&directory) {
+        return Err(FsError::FileNotFound);
+    }
+
+    let uid = session::current_uid();
+    let role = session::current_role();
+    let filesystem = FILESYSTEM.lock();
+    let mut entries = Vec::new();
+    let mut seen_directories = Vec::<String>::new();
+
+    for entry in filesystem.list() {
+        if !entry.permissions.can_read(uid, role) {
+            continue;
+        }
+        let Some(relative) = relative_child_path(&directory, &entry.name) else {
+            continue;
+        };
+        if relative.is_empty() {
+            continue;
+        }
+
+        let mut components = relative.split('/');
+        let Some(first_component) = components.next() else {
+            continue;
+        };
+        if first_component == DIRECTORY_MARKER_NAME {
+            continue;
+        }
+
+        if components.next().is_some() {
+            if seen_directories.iter().any(|name| name == first_component) {
+                continue;
+            }
+            seen_directories.push(first_component.into());
+            let child_path = if directory == "/" {
+                alloc::format!("/{first_component}")
+            } else {
+                alloc::format!("{directory}/{first_component}")
+            };
+            entries.push(DirEntryView {
+                path: child_path,
+                name: first_component.into(),
+                is_dir: true,
+                size: 0,
+                modified_at: entry.modified_at,
+                readonly: false,
+                owner_uid: entry.owner_uid,
+                permissions: entry.permissions,
+            });
+        } else {
+            entries.push(DirEntryView {
+                path: entry.name.clone(),
+                name: first_component.into(),
+                is_dir: false,
+                size: entry.data.len(),
+                modified_at: entry.modified_at,
+                readonly: entry.readonly,
+                owner_uid: entry.owner_uid,
+                permissions: entry.permissions,
+            });
+        }
+    }
+
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok((directory, entries))
+}
+
+#[must_use]
+pub fn directory_exists(path: &str) -> bool {
+    let resolved = session::resolve_path(path);
+    if resolved == "/" {
+        return true;
+    }
+
+    let marker_path = directory_marker_path(&resolved);
+    let filesystem = FILESYSTEM.lock();
+    filesystem.list().iter().any(|entry| {
+        entry.name == marker_path || entry.name.starts_with(&(resolved.clone() + "/"))
+    })
+}
+
+pub fn change_directory(path: &str) -> Result<String, FsError> {
+    let resolved = session::resolve_path(path);
+    if !session::can_access_path(&resolved, false) {
+        return Err(FsError::PermissionDenied);
+    }
+    if !directory_exists(&resolved) {
+        return Err(FsError::FileNotFound);
+    }
+    session::set_cwd(&resolved);
+    Ok(resolved)
+}
+
+pub fn mkdir_current(path: &str) -> Result<String, FsError> {
+    let resolved = session::resolve_path(path);
+    if !session::can_access_path(&resolved, true) {
+        return Err(FsError::PermissionDenied);
+    }
+
+    let parent = parent_directory(&resolved);
+    if !directory_exists(&parent) {
+        return Err(FsError::FileNotFound);
+    }
+
+    let uid = session::current_uid();
+    let role = session::current_role();
+    let permissions = default_permissions_for(&resolved, uid);
+    FILESYSTEM.lock().write_as(
+        &directory_marker_path(&resolved),
+        &[],
+        uid,
+        role,
+        permissions,
+    )?;
+    Ok(resolved)
+}
+
+pub fn rmdir_current(path: &str) -> Result<String, FsError> {
+    let resolved = session::resolve_path(path);
+    if !session::can_access_path(&resolved, true) {
+        return Err(FsError::PermissionDenied);
+    }
+    let marker = directory_marker_path(&resolved);
+    let mut filesystem = FILESYSTEM.lock();
+    let has_children = filesystem
+        .list()
+        .iter()
+        .any(|entry| entry.name.starts_with(&(resolved.clone() + "/")) && entry.name != marker);
+    if has_children {
+        return Err(FsError::ReadOnly);
+    }
+    filesystem.delete_as(&marker, session::current_uid(), session::current_role())?;
+    Ok(resolved)
+}
+
+pub fn copy_current(source: &str, destination: &str) -> Result<String, FsError> {
+    let (_, data) = read_current(source)?;
+    write_current(destination, &data)
+}
+
+pub fn move_current(source: &str, destination: &str) -> Result<String, FsError> {
+    let (_, data) = read_current(source)?;
+    let path = write_current(destination, &data)?;
+    delete_current(source)?;
+    Ok(path)
+}
+
+pub fn find_current(pattern: &str) -> Result<Vec<String>, FsError> {
+    let query = pattern.trim();
+    if query.is_empty() {
+        return Err(FsError::InvalidFilename);
+    }
+    let filesystem = FILESYSTEM.lock();
+    Ok(filesystem
+        .list()
+        .iter()
+        .filter(|entry| !is_directory_marker(&entry.name))
+        .filter(|entry| entry.name.contains(query) || basename(&entry.name).contains(query))
+        .map(|entry| entry.name.clone())
+        .collect())
+}
+
+pub fn grep_current(pattern: &str, path: &str) -> Result<Vec<GrepMatch>, FsError> {
+    let (_, data) = read_current(path)?;
+    let text = core::str::from_utf8(&data).map_err(|_| FsError::InvalidFilename)?;
+    Ok(text
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.contains(pattern))
+        .map(|(index, line)| GrepMatch {
+            line_number: index + 1,
+            line: line.into(),
+        })
+        .collect())
+}
+
+pub fn head_current(path: &str, lines: usize) -> Result<Vec<String>, FsError> {
+    let (_, data) = read_current(path)?;
+    let text = core::str::from_utf8(&data).map_err(|_| FsError::InvalidFilename)?;
+    Ok(text.lines().take(lines).map(String::from).collect())
+}
+
+pub fn tail_current(path: &str, lines: usize) -> Result<Vec<String>, FsError> {
+    let (_, data) = read_current(path)?;
+    let text = core::str::from_utf8(&data).map_err(|_| FsError::InvalidFilename)?;
+    let collected: Vec<String> = text.lines().map(String::from).collect();
+    let keep = lines.min(collected.len());
+    Ok(collected[collected.len().saturating_sub(keep)..].to_vec())
+}
+
+pub fn wc_current(path: &str) -> Result<WordCount, FsError> {
+    let (_, data) = read_current(path)?;
+    let text = core::str::from_utf8(&data).map_err(|_| FsError::InvalidFilename)?;
+    Ok(WordCount {
+        lines: text.lines().count(),
+        words: text.split_whitespace().count(),
+        bytes: data.len(),
+    })
+}
+
+pub fn diff_current(left: &str, right: &str) -> Result<Vec<String>, FsError> {
+    let left_binding = read_current(left)?;
+    let right_binding = read_current(right)?;
+    let left_text = core::str::from_utf8(&left_binding.1).map_err(|_| FsError::InvalidFilename)?;
+    let right_text = core::str::from_utf8(&right_binding.1).map_err(|_| FsError::InvalidFilename)?;
+    let left_lines: Vec<&str> = left_text.lines().collect();
+    let right_lines: Vec<&str> = right_text.lines().collect();
+    let max = left_lines.len().max(right_lines.len());
+    let mut output = Vec::new();
+    for index in 0..max {
+        match (left_lines.get(index), right_lines.get(index)) {
+            (Some(left), Some(right)) if left == right => {}
+            (Some(left), Some(right)) => {
+                output.push(alloc::format!("- {}", left));
+                output.push(alloc::format!("+ {}", right));
+            }
+            (Some(left), None) => output.push(alloc::format!("- {}", left)),
+            (None, Some(right)) => output.push(alloc::format!("+ {}", right)),
+            (None, None) => {}
+        }
+    }
+    Ok(output)
+}
+
+pub fn sort_current(path: &str) -> Result<Vec<String>, FsError> {
+    let (_, data) = read_current(path)?;
+    let text = core::str::from_utf8(&data).map_err(|_| FsError::InvalidFilename)?;
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    lines.sort();
+    Ok(lines)
+}
+
 #[must_use]
 pub fn display_path(path: &str) -> String {
     let home = session::current_home();
@@ -627,4 +891,27 @@ fn parent_directory(path: &str) -> String {
     } else {
         String::from("/")
     }
+}
+
+const DIRECTORY_MARKER_NAME: &str = ".wardir";
+
+fn directory_marker_path(path: &str) -> String {
+    if path == "/" {
+        String::from("/.wardir")
+    } else {
+        alloc::format!("{path}/{DIRECTORY_MARKER_NAME}")
+    }
+}
+
+fn is_directory_marker(path: &str) -> bool {
+    basename(path) == DIRECTORY_MARKER_NAME
+}
+
+fn relative_child_path<'a>(directory: &str, path: &'a str) -> Option<&'a str> {
+    if directory == "/" {
+        return path.strip_prefix('/');
+    }
+
+    let prefix = alloc::format!("{directory}/");
+    path.strip_prefix(&prefix)
 }

@@ -48,6 +48,7 @@ pub fn reprompt() {
 pub fn run() {
     let mut input = String::new();
     let mut truncated = false;
+    crate::exec::ensure_shell_process();
     prompt();
 
     loop {
@@ -56,6 +57,7 @@ pub fn run() {
         }
 
         task::tick();
+        crate::exec::ensure_shell_process();
         hal::usb::poll();
         let _ = crate::net::poll();
 
