@@ -139,7 +139,7 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
     };
 
     let saved_cr3 = loader::kernel_cr3();
-    // SAFETY: new_cr3 has valid kernel upper-half entries.
+    // SAFETY: new_cr3 preserves the non-user kernel/runtime mappings required after the CR3 switch.
     unsafe {
         use x86_64::registers::control::{Cr3, Cr3Flags};
         use x86_64::structures::paging::PhysFrame;
@@ -147,7 +147,7 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
         Cr3::write(PhysFrame::containing_address(PhysAddr::new(new_cr3)), Cr3Flags::empty());
     }
 
-    let map_result = loader::map_process_image_pub(new_cr3, &elf, &elf_data, &arg_refs, &[]);
+    let map_result = loader::map_process_image_pub(&path_str, new_cr3, &elf, &elf_data, &arg_refs, &[]);
 
     unsafe {
         use x86_64::registers::control::{Cr3, Cr3Flags};

@@ -6,7 +6,8 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use x86_64::registers::control::{Cr3, Cr3Flags};
 use x86_64::structures::paging::mapper::MapToError;
 use x86_64::structures::paging::{
-    FrameAllocator, Mapper, OffsetPageTable, Page, PageTableFlags, PhysFrame, Size4KiB,
+    FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame,
+    Size4KiB,
 };
 use x86_64::{PhysAddr, VirtAddr};
 
@@ -23,6 +24,8 @@ use super::scheduler::DEFAULT_TIME_SLICE;
 use super::{ExecError, PROCESS_TABLE, SCHEDULER};
 
 static KERNEL_CR3: AtomicU64 = AtomicU64::new(0);
+// WarExec currently reserves the low canonical PML4 slot for user code, heap, and stack.
+const USER_PML4_SLOT: usize = 0;
 
 pub fn save_kernel_cr3() {
     let (frame, _) = Cr3::read();
@@ -35,7 +38,8 @@ pub fn kernel_cr3() -> u64 {
 
 /// Switch the active CR3 to any physical address.
 /// # Safety
-/// Caller must ensure the target page table has valid kernel mappings in the upper half.
+/// Caller must ensure the target page table preserves the non-user kernel/runtime mappings
+/// required for the current boot layout.
 unsafe fn switch_cr3(phys: u64) {
     let frame = PhysFrame::containing_address(PhysAddr::new(phys));
     // SAFETY: Upheld by caller contract.
@@ -69,16 +73,26 @@ fn create_user_page_table() -> Result<u64, ExecError> {
         core::ptr::write_bytes((offset + new_phys).as_mut_ptr::<u8>(), 0, 4096);
     }
 
-    // Copy every non-user entry from the active PML4. Slot 0 stays empty so WarExec can
-    // build a clean userspace address space for the smoke ELF at low virtual addresses.
+    // Copy every present non-user top-level entry except the low canonical user slot.
+    // WarExec currently places the smoke ELF, stack, and heap in PML4 slot 0, so that slot
+    // must stay empty in the child page table. Every other present non-user entry is a
+    // kernel/runtime-owned mapping that must survive CR3 switches regardless of whether the
+    // bootloader placed it in the canonical upper half.
     let (current_frame, _) = Cr3::read();
     let current_phys = current_frame.start_address().as_u64();
     // SAFETY: Both PML4s are within the physical-memory direct map.
     unsafe {
-        let src = (offset + current_phys).as_ptr::<u64>();
-        let dst = (offset + new_phys).as_mut_ptr::<u64>();
-        for i in 1..512usize {
-            dst.add(i).write(src.add(i).read());
+        let src = &*((offset + current_phys).as_ptr::<PageTable>());
+        let dst = &mut *((offset + new_phys).as_mut_ptr::<PageTable>());
+        for (index, entry) in src.iter().enumerate() {
+            let flags = entry.flags();
+            if index == USER_PML4_SLOT
+                || !flags.contains(PageTableFlags::PRESENT)
+                || flags.contains(PageTableFlags::USER_ACCESSIBLE)
+            {
+                continue;
+            }
+            dst[index] = entry.clone();
         }
     }
 
@@ -87,13 +101,14 @@ fn create_user_page_table() -> Result<u64, ExecError> {
 
 /// Public wrapper for map_process_image, used by syscalls/process.rs.
 pub fn map_process_image_pub(
+    path: &str,
     page_table_phys: u64,
     elf: &ElfInfo,
     elf_data: &[u8],
     args: &[&str],
     env: &[(String, String)],
 ) -> Result<(AddressSpace, CpuContext, usize), ExecError> {
-    map_process_image(page_table_phys, elf, elf_data, args, env)
+    map_process_image(path, page_table_phys, elf, elf_data, args, env)
 }
 
 pub fn spawn_process(
@@ -120,9 +135,9 @@ pub fn spawn_process(
     let new_cr3 = create_user_page_table()?;
 
     // Temporarily switch to the new page table while mapping the process image.
-    // The kernel remains accessible because we copied the upper-half PML4 entries.
+    // The kernel remains accessible because we copied the required non-user PML4 entries.
     let saved_cr3 = kernel_cr3();
-    // SAFETY: `new_cr3` has valid kernel mappings in the upper half.
+    // SAFETY: `new_cr3` preserves the non-user mappings the kernel needs after the CR3 switch.
     unsafe { switch_cr3(new_cr3); }
 
     let result = build_process(path, args, env, uid, parent_pid, priority, &elf, &elf_data, new_cr3);
@@ -160,7 +175,8 @@ pub fn teardown_process(pid: u32) -> Result<(), ExecError> {
         .ok_or(ExecError::ProcessNotFound)?;
 
     // Switch to the process's page table so active_mapper operates on it.
-    // SAFETY: process.page_table_phys has kernel upper-half entries copied in.
+    // SAFETY: process.page_table_phys preserves the non-user kernel/runtime mappings needed
+    // after the CR3 switch.
     if process.page_table_phys != 0 && process.page_table_phys != kernel_cr3() {
         unsafe { switch_cr3(process.page_table_phys); }
     }
@@ -213,7 +229,7 @@ fn build_process(
     page_table_phys: u64,
 ) -> Result<Process, ExecError> {
     let (address_space, context, memory_pages) =
-        map_process_image(page_table_phys, elf, elf_data, args, env)?;
+        map_process_image(path, page_table_phys, elf, elf_data, args, env)?;
 
     let kernel_stack = vec![0u8; 16 * 1024];
     let kernel_stack_top = kernel_stack.as_ptr() as u64 + kernel_stack.len() as u64;
@@ -250,6 +266,7 @@ fn build_process(
 }
 
 fn map_process_image(
+    path: &str,
     page_table_phys: u64,
     elf: &ElfInfo,
     elf_data: &[u8],
@@ -264,11 +281,30 @@ fn map_process_image(
 
     let mut address_space = AddressSpace::new(page_table_phys);
     let mut memory_pages = 0usize;
+    let trace_loader = should_trace_loader(path);
+
+    if trace_loader {
+        crate::serial_println!("[INFO] WarExec loader: mapping {}", path);
+    }
 
     for segment in &elf.segments {
-        map_segment(&mut mapper, allocator, segment, elf_data)?;
+        map_segment_pages(&mut mapper, allocator, segment)?;
         address_space.register_segment(segment.vaddr, segment.memsz, segment.flags);
         memory_pages = memory_pages.saturating_add(aligned_page_count(segment.memsz));
+    }
+
+    if trace_loader {
+        crate::serial_println!("[INFO] WarExec loader: populating PT_LOAD segments");
+    }
+    for segment in &elf.segments {
+        populate_segment(segment, elf_data)?;
+    }
+
+    if trace_loader {
+        crate::serial_println!("[INFO] WarExec loader: applying final segment permissions");
+    }
+    for segment in &elf.segments {
+        apply_segment_permissions(&mut mapper, segment)?;
     }
 
     map_stack(&mut mapper, allocator, &mut address_space)?;
@@ -280,29 +316,26 @@ fn map_process_image(
     let mut context = CpuContext::for_user(elf.entry_point, stack_top, page_table_phys);
     context.cs = u64::from(selectors.user_code.0);
     context.ss = u64::from(selectors.user_data.0);
+
+    if trace_loader {
+        crate::serial_println!("[OK] WarExec loader: ready to enter userspace");
+    }
+
     Ok((address_space, context, memory_pages))
 }
 
-fn map_segment(
+fn map_segment_pages(
     mapper: &mut OffsetPageTable<'static>,
     allocator: &mut impl FrameAllocator<Size4KiB>,
     segment: &ElfSegment,
-    elf_data: &[u8],
 ) -> Result<(), ExecError> {
-    let start = segment.vaddr & !0xFFF;
-    let end = (segment.vaddr.saturating_add(segment.memsz).saturating_add(0xFFF)) & !0xFFF;
+    let (start, end) = segment_page_range(segment);
+    let temporary_flags = temporary_segment_page_flags(segment)?;
     for address in (start..end).step_by(4096) {
         let page: Page<Size4KiB> = Page::containing_address(VirtAddr::new(address));
         let frame = FrameAllocator::<Size4KiB>::allocate_frame(allocator)
             .ok_or(ExecError::MemoryAllocationFailed)?;
-        // Keep the initial mapping writable so the kernel can populate the segment contents
-        // before handing control to the minimal bootstrap ELF. Final W^X tightening is future work.
-        let mut flags =
-            PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE | PageTableFlags::WRITABLE;
-        if !segment.flags.contains(SegmentFlags::EXECUTE) {
-            flags |= PageTableFlags::NO_EXECUTE;
-        }
-        match memory::paging::map_page(mapper, page, frame, flags, allocator) {
+        match memory::paging::map_page(mapper, page, frame, temporary_flags, allocator) {
             Ok(()) => {
                 // SAFETY: The page was just mapped in the current address space.
                 unsafe {
@@ -313,7 +346,10 @@ fn map_segment(
             Err(_) => return Err(ExecError::PageTableError),
         }
     }
+    Ok(())
+}
 
+fn populate_segment(segment: &ElfSegment, elf_data: &[u8]) -> Result<(), ExecError> {
     let source = &elf_data[segment.offset as usize..(segment.offset + segment.filesz) as usize];
     // SAFETY: Destination pages were mapped above and sized according to the ELF segment.
     unsafe {
@@ -325,6 +361,23 @@ fn map_segment(
                 (segment.memsz - segment.filesz) as usize,
             );
         }
+    }
+    Ok(())
+}
+
+fn apply_segment_permissions(
+    mapper: &mut OffsetPageTable<'static>,
+    segment: &ElfSegment,
+) -> Result<(), ExecError> {
+    let final_flags = final_segment_page_flags(segment)?;
+    let (start, end) = segment_page_range(segment);
+    for address in (start..end).step_by(4096) {
+        let page: Page<Size4KiB> = Page::containing_address(VirtAddr::new(address));
+        // SAFETY: The page was mapped into the active process address space above and remains
+        // owned by this address space while the loader is tightening final protections.
+        unsafe { mapper.update_flags(page, final_flags) }
+            .map_err(|_| ExecError::PageTableError)?
+            .flush();
     }
     Ok(())
 }
@@ -448,6 +501,51 @@ fn unmap_range(
 
 fn aligned_page_count(size: u64) -> usize {
     size.div_ceil(4096) as usize
+}
+
+fn segment_page_range(segment: &ElfSegment) -> (u64, u64) {
+    let start = segment.vaddr & !0xFFF;
+    let end = (segment
+        .vaddr
+        .saturating_add(segment.memsz)
+        .saturating_add(0xFFF))
+        & !0xFFF;
+    (start, end)
+}
+
+// PT_LOAD segments are writable only while the loader copies file bytes and zero-fills BSS.
+// They remain NX during population so the loader never creates a temporary RWX window.
+fn temporary_segment_page_flags(_segment: &ElfSegment) -> Result<PageTableFlags, ExecError> {
+    Ok(
+        PageTableFlags::PRESENT
+            | PageTableFlags::USER_ACCESSIBLE
+            | PageTableFlags::WRITABLE
+            | PageTableFlags::NO_EXECUTE,
+    )
+}
+
+// Final page permissions follow the ELF segment flags while enforcing W^X for the current
+// narrow userspace model: executable segments are read/execute, writable segments are NX.
+fn final_segment_page_flags(segment: &ElfSegment) -> Result<PageTableFlags, ExecError> {
+    let writable = segment.flags.contains(SegmentFlags::WRITE);
+    let executable = segment.flags.contains(SegmentFlags::EXECUTE);
+
+    if writable && executable {
+        return Err(ExecError::LoadFailed);
+    }
+
+    let mut flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE;
+    if writable {
+        flags |= PageTableFlags::WRITABLE;
+    }
+    if !executable {
+        flags |= PageTableFlags::NO_EXECUTE;
+    }
+    Ok(flags)
+}
+
+fn should_trace_loader(path: &str) -> bool {
+    path == super::smoke::SMOKE_ELF_PATH
 }
 
 fn role_for_uid(uid: u16) -> UserRole {
