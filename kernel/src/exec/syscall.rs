@@ -208,14 +208,19 @@ pub extern "C" fn syscall_dispatch(
         }
     }
 
-    // WarOS currently exposes a narrow experimental userspace ABI. The numeric values below
-    // intentionally mirror selected x86_64 Linux syscall numbers for convenience only; this is
-    // not a Linux compatibility layer, and unsupported or partial paths still return ENOSYS.
+    // WarOS currently exposes a narrow experimental userspace ABI. These numeric values reuse
+    // selected x86_64 Linux syscall numbers for convenience only; they do not imply Linux ABI
+    // compatibility. The dispatch is intentionally split between the minimal ABI proved in CI,
+    // broader experimental code paths, and explicitly unsupported numbers that return ENOSYS.
     match syscall_num {
+        // Minimal WarExec ABI: proven today by headless boot smoke.
         0 => syscalls::file::sys_read(arg1 as u32, arg2 as *mut u8, arg3 as usize),
         1 => syscalls::file::sys_write(arg1 as u32, arg2 as *const u8, arg3 as usize),
         2 => syscalls::file::sys_open(arg1 as *const u8, arg2 as u32, arg3 as u32),
         3 => syscalls::file::sys_close(arg1 as u32),
+        60 => syscalls::process::sys_exit(arg1 as i32),
+
+        // Implemented but still experimental or not boot-smoke-proven as a stable ABI.
         4 => syscalls::file::sys_stat(arg1 as *const u8, arg2 as *mut u8),
         8 => syscalls::file::sys_seek(arg1 as u32, arg2 as i64, arg3 as u32),
         9 => syscalls::memory::sys_mmap(arg1, arg2, arg3 as u32, arg4 as u32, arg5 as u32, arg6 as i64),
@@ -223,9 +228,7 @@ pub extern "C" fn syscall_dispatch(
         12 => syscalls::memory::sys_brk(arg1),
         20 => syscalls::process::sys_getpid(),
         39 => syscalls::process::sys_getppid(),
-        57 => syscalls::process::sys_fork(), // experimental and not Linux-compatible fork semantics
         59 => syscalls::process::sys_execve(arg1 as *const u8, arg2 as *const *const u8, arg3 as *const *const u8), // experimental minimal ELF replacement path
-        60 => syscalls::process::sys_exit(arg1 as i32),
         61 => syscalls::process::sys_wait4(arg1 as i32, arg2 as *mut i32, arg3 as u32),
         79 => syscalls::file::sys_getcwd(arg1 as *mut u8, arg2 as usize),
         80 => syscalls::file::sys_chdir(arg1 as *const u8),
@@ -261,6 +264,9 @@ pub extern "C" fn syscall_dispatch(
         501 => syscalls::ai::sys_ai_inference(arg1, arg2 as *const u8, arg3 as *mut u8), // currently stubbed
         600 => syscalls::io::sys_ioctl(arg1 as u32, arg2, arg3),
         601 => syscalls::io::sys_lsdev(arg1 as *mut u8, arg2 as usize),
+
+        // Reserved but intentionally unsupported today.
+        57 => syscalls::ENOSYS, // no fork ABI until address-space/process semantics are real
         _ => syscalls::ENOSYS,
     }
 }

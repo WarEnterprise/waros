@@ -349,8 +349,9 @@ fn cmd_help(topic: Option<&str>) {
     kprint_colored!(Colors::PURPLE, "Execution\n");
     kprintln!("  exec <path>      ps              top             nice <pri> <cmd>");
     kprintln!("  jobs             wait <pid>      kill <pid>      warpkg <subcmd>");
-    kprint_colored!(Colors::DIM, "  WarExec is experimental: one smoke-tested static ELF path, partial syscalls,\n");
-    kprint_colored!(Colors::DIM, "  and no broad libc, fork/exec, or dynamic-linking compatibility.\n");
+    kprint_colored!(Colors::DIM, "  WarExec is experimental: static ELF entry, stdout/stderr write, exit, and one\n");
+    kprint_colored!(Colors::DIM, "  narrow read-only open/read/close path are smoke-tested; broader libc, fork, execve,\n");
+    kprint_colored!(Colors::DIM, "  and dynamic-linking compatibility are not claimed.\n");
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Tools\n");
@@ -1523,7 +1524,8 @@ fn cmd_kill(args: &[&str]) {
 fn cmd_exec(args: &[&str]) {
     let Some(path) = args.first().copied() else {
         kprintln!("Usage: exec <path> [args]");
-        kprintln!("  Supports a minimal ELF path only: partial syscalls, no libc, no dynamic linking.");
+        kprintln!("  Supports the current minimal WarExec ABI only: static ELF entry, stdout/stderr");
+        kprintln!("  write, exit, and one narrow read-only open/read/close file path.");
         return;
     };
 
