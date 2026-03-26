@@ -295,8 +295,15 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     let boot_complete_ms = boot_elapsed_ms();
     BOOT_COMPLETE_MS.store(boot_complete_ms, Ordering::Relaxed);
     fs::seed_system_files().map_err(|_| "failed to seed filesystem system files")?;
+    boot_ok("WarFS system files seeded");
     pkg::init().map_err(|_| "failed to seed package repository")?;
-    match exec::smoke::run() {
+    boot_ok("WarPkg bootstrap repository ready");
+    boot_notice("WarExec smoke: launching /bin/warexec-smoke.elf");
+
+    // Keep the one-shot bootstrap ELF proof non-preemptible while it manipulates the
+    // single-CPU scheduler/process state, otherwise timer IRQ re-entry can deadlock the
+    // narrow synchronous smoke path before the shell-ready marker is emitted.
+    match cpu_interrupts::without_interrupts(|| exec::smoke::run()) {
         Ok(exit_code) if exit_code == exec::smoke::SMOKE_ELF_EXIT_CODE => boot_ok_fmt(
             format_args!(
                 "WarExec smoke: {} exited with code {}",
