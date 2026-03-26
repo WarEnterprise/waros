@@ -448,6 +448,8 @@ Filesystem: {} files max, {} KiB max per file\n",
     let mut filesystem = FILESYSTEM.lock();
     filesystem.write_system("/readme.txt", readme.as_bytes(), true)?;
     filesystem.write_system("/sysinfo.txt", sysinfo.as_bytes(), true)?;
+    let smoke_elf = crate::exec::smoke::elf_bytes();
+    filesystem.write_system(crate::exec::smoke::SMOKE_ELF_PATH, &smoke_elf, true)?;
     Ok(())
 }
 

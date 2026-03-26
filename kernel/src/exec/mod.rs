@@ -16,6 +16,7 @@ pub mod pipe;
 pub mod process;
 pub mod scheduler;
 pub mod signal;
+pub mod smoke;
 pub mod syscall;
 pub mod syscalls;
 

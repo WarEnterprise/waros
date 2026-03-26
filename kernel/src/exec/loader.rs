@@ -42,8 +42,12 @@ unsafe fn switch_cr3(phys: u64) {
     unsafe { Cr3::write(frame, Cr3Flags::empty()); }
 }
 
-/// Allocate a new PML4 frame, zero it, copy kernel-half entries (indices 256-511)
+/// Allocate a new PML4 frame, zero it, copy the non-user kernel/runtime entries
 /// from the currently active page table, and return the new PML4 physical address.
+///
+/// WarOS currently boots with the kernel/runtime mappings outside the user slot, but not
+/// necessarily in the canonical upper half only. Preserve every non-user PML4 entry so the
+/// kernel stays executable after switching CR3 for the minimal userspace smoke path.
 pub fn create_user_page_table_pub() -> Result<u64, ExecError> {
     create_user_page_table()
 }
@@ -65,14 +69,15 @@ fn create_user_page_table() -> Result<u64, ExecError> {
         core::ptr::write_bytes((offset + new_phys).as_mut_ptr::<u8>(), 0, 4096);
     }
 
-    // Copy kernel-half entries from the active PML4.
+    // Copy every non-user entry from the active PML4. Slot 0 stays empty so WarExec can
+    // build a clean userspace address space for the smoke ELF at low virtual addresses.
     let (current_frame, _) = Cr3::read();
     let current_phys = current_frame.start_address().as_u64();
     // SAFETY: Both PML4s are within the physical-memory direct map.
     unsafe {
         let src = (offset + current_phys).as_ptr::<u64>();
         let dst = (offset + new_phys).as_mut_ptr::<u64>();
-        for i in 256..512usize {
+        for i in 1..512usize {
             dst.add(i).write(src.add(i).read());
         }
     }
@@ -290,10 +295,10 @@ fn map_segment(
         let page: Page<Size4KiB> = Page::containing_address(VirtAddr::new(address));
         let frame = FrameAllocator::<Size4KiB>::allocate_frame(allocator)
             .ok_or(ExecError::MemoryAllocationFailed)?;
-        let mut flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE;
-        if segment.flags.contains(SegmentFlags::WRITE) {
-            flags |= PageTableFlags::WRITABLE;
-        }
+        // Keep the initial mapping writable so the kernel can populate the segment contents
+        // before handing control to the minimal bootstrap ELF. Final W^X tightening is future work.
+        let mut flags =
+            PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE | PageTableFlags::WRITABLE;
         if !segment.flags.contains(SegmentFlags::EXECUTE) {
             flags |= PageTableFlags::NO_EXECUTE;
         }

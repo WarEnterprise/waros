@@ -42,10 +42,13 @@ pub fn sys_write(fd: u32, buffer: *const u8, len: usize) -> i64 {
     match fd {
         1 | 2 => {
             if let Ok(text) = core::str::from_utf8(bytes) {
-                crate::kprint!("{}", text);
+                // Mirror user stdout/stderr to serial so headless QEMU smoke tests can
+                // assert one real userspace-visible message without interactive input.
+                crate::log_print!("{}", text);
             } else {
                 for &byte in bytes {
                     crate::kprint!("{}", char::from(byte));
+                    crate::serial_print!("{}", char::from(byte));
                 }
             }
             len as i64

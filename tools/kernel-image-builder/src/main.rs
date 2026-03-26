@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use bootloader::{BiosBoot, UefiBoot};
 
 fn main() -> Result<()> {
@@ -16,11 +16,26 @@ fn main() -> Result<()> {
 
     let kernel = PathBuf::from(kernel);
     let output_dir = PathBuf::from(output_dir);
+    let kernel_metadata = fs::metadata(&kernel)
+        .with_context(|| format!("kernel binary does not exist: {}", kernel.display()))?;
+    ensure!(
+        kernel_metadata.is_file(),
+        "kernel path is not a file: {}",
+        kernel.display()
+    );
+
     fs::create_dir_all(&output_dir)
         .with_context(|| format!("failed to create {}", output_dir.display()))?;
 
     let uefi_image = output_dir.join("waros.img");
     let bios_image = output_dir.join("waros-bios.img");
+
+    println!(
+        "Creating kernel images from {} ({} bytes) into {}",
+        kernel.display(),
+        kernel_metadata.len(),
+        output_dir.display()
+    );
 
     create_uefi_image(&kernel, &uefi_image)?;
     create_bios_image(&kernel, &bios_image)?;
