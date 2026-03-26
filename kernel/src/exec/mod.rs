@@ -224,7 +224,8 @@ pub fn run_user_process(pid: u32) -> Result<i32, ExecError> {
         use x86_64::structures::paging::PhysFrame;
         use x86_64::PhysAddr;
         let frame = PhysFrame::containing_address(PhysAddr::new(process.page_table_phys));
-        // SAFETY: process.page_table_phys has valid kernel upper-half entries.
+        // SAFETY: process.page_table_phys preserves the non-user kernel/runtime mappings needed
+        // after the CR3 switch.
         unsafe { Cr3::write(frame, Cr3Flags::empty()); }
     }
 
