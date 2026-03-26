@@ -244,8 +244,10 @@ pub extern "C" fn syscall_dispatch(
 
     // WarOS currently exposes a narrow experimental userspace ABI. These numeric values reuse
     // selected x86_64 Linux syscall numbers for convenience only; they do not imply Linux ABI
-    // compatibility. The dispatch is intentionally split between the minimal ABI proved in CI,
-    // broader experimental code paths, and explicitly unsupported numbers that return ENOSYS.
+    // compatibility. The current proven ABI uses a small deterministic negative error subset
+    // (`-2`, `-9`, `-14`, `-22`, `-38`) instead of claiming broad errno compatibility. The
+    // dispatch is intentionally split between the minimal ABI proved in CI, broader experimental
+    // code paths, and explicitly unsupported numbers that return ENOSYS.
     match syscall_num {
         // Minimal WarExec ABI: proven today by headless boot smoke.
         0 => syscalls::file::sys_read(arg1 as u32, arg2 as *mut u8, arg3 as usize),
