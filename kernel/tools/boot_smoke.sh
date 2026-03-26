@@ -30,6 +30,11 @@ ABI_EXEC_ARGC_MARKER="argc=3"
 ABI_EXEC_ARGV1_MARKER="argv1=gamma"
 ABI_EXEC_ARGV2_MARKER="argv2=delta"
 ABI_EXEC_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-exec-child.elf exited with code 46"
+ABI_HEAP_LAUNCH_MARKER="[INFO] WarExec ABI proof: launching /bin/warexec-heap-smoke.elf"
+ABI_HEAP_START_MARKER="heap-proof-start"
+ABI_HEAP_BYTES_OK_MARKER="heap-bytes-ok"
+ABI_HEAP_STRING_MARKER="heap-string=waros-heap-proof"
+ABI_HEAP_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-heap-smoke.elf exited with code 47"
 SHELL_MARKER="[INFO] WarOS shell online. Type 'help' for available commands."
 
 QEMU_PID=""
@@ -99,7 +104,12 @@ ls -lh "${IMAGE_PATH}" || true
 # 19. exec child argv1 output
 # 20. exec child argv2 output
 # 21. exec child exit marker
-# 22. shell-ready banner
+# 22. heap proof launch marker
+# 23. heap proof start marker
+# 24. heap proof byte-copy marker
+# 25. heap proof stdout marker
+# 26. heap proof exit marker
+# 27. shell-ready banner
 #
 # This keeps CI deterministic without introducing timing-sensitive interaction or GUI automation.
 "${QEMU_BIN}" \
@@ -137,6 +147,11 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         && grep -Fq "${ABI_EXEC_ARGV1_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${ABI_EXEC_ARGV2_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${ABI_EXEC_PROOF_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_HEAP_LAUNCH_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_HEAP_START_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_HEAP_BYTES_OK_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_HEAP_STRING_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_HEAP_PROOF_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${SHELL_MARKER}" "${LOG_PATH}"; then
         echo "Kernel boot smoke passed."
         echo "  Log: ${LOG_PATH}"
@@ -161,6 +176,11 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         echo "  Found: ${ABI_EXEC_ARGV1_MARKER}"
         echo "  Found: ${ABI_EXEC_ARGV2_MARKER}"
         echo "  Found: ${ABI_EXEC_PROOF_MARKER}"
+        echo "  Found: ${ABI_HEAP_LAUNCH_MARKER}"
+        echo "  Found: ${ABI_HEAP_START_MARKER}"
+        echo "  Found: ${ABI_HEAP_BYTES_OK_MARKER}"
+        echo "  Found: ${ABI_HEAP_STRING_MARKER}"
+        echo "  Found: ${ABI_HEAP_PROOF_MARKER}"
         echo "  Found: ${SHELL_MARKER}"
         exit 0
     fi

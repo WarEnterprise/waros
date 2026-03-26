@@ -2,7 +2,7 @@
 
 WarOS does not currently provide a Linux userspace ABI.
 The kernel reuses selected x86_64 Linux syscall numbers for convenience only.
-Today, WarExec is an experimental minimal ABI with five CI-proven static ELF paths:
+Today, WarExec is an experimental minimal ABI with six CI-proven static ELF paths:
 
 - `/bin/warexec-smoke.elf`
   proves ELF load, stdout write, and exit
@@ -14,6 +14,8 @@ Today, WarExec is an experimental minimal ABI with five CI-proven static ELF pat
   proves the current process-entry ABI: stack-based `argc`/`argv`, deterministic argument strings, and exit
 - `/bin/warexec-exec-parent.elf` -> `/bin/warexec-exec-child.elf`
   proves one narrow userspace-triggered `execve` transition: in-place image replacement, reused stack-based `argc`/`argv`, deterministic child output, and exit
+- `/bin/warexec-heap-smoke.elf`
+  proves one narrow per-process heap-growth path: current-break query, monotonic growth, writable+NX heap memory, heap-backed stdout, and exit
 
 ## CI-Proven ABI Contract
 
@@ -36,6 +38,12 @@ The following behavior is part of the currently proven minimal ABI:
   a successful `execve` does not return to the caller; the current image is replaced and entered through the same stack-based `argc`/`argv` ABI
   `envp` is currently ignored and the replacement image receives no envp array at entry
   no fork, interpreter handoff, dynamic loader, or Linux-compatible `execve` semantics are claimed
+- Minimal heap growth
+  `brk(0)` queries the current heap break
+  `brk(new_end)` grows the current process heap monotonically if `new_end` stays inside the reserved heap window
+  newly mapped heap pages are writable, user-accessible, and NX
+  shrinking is intentionally unsupported for now; requests below the current break return the current break unchanged
+  no broad Linux `brk`/`sbrk`/`mmap` compatibility is claimed
 - Standard file descriptors
   fd `1` and fd `2` support `write`
   fd `0` exists but no interactive stdin ABI is proven yet
@@ -46,6 +54,9 @@ The following behavior is part of the currently proven minimal ABI:
   each successful `open` creates an independent WarFS-backed descriptor with offset `0`
   `read(fd, buf, len)` copies bytes from the descriptor's current offset, advances it by the bytes read, and returns `0` at EOF
   `close(fd)` closes the descriptor
+- Heap growth
+  each process has one heap base, current break, and heap limit tracked by WarExec
+  the current heap proof grows by one page and writes a deterministic string into the newly mapped region
 
 ## Current Limitations
 
@@ -53,6 +64,8 @@ These limitations are intentional and should be treated as part of the ABI contr
 
 - `open` is currently a narrow read-only path only
 - `read` maintains only a narrow per-FD forward offset
+- `brk` is currently monotonic growth only
+- shrinking the heap is unsupported
 - `lseek` is unsupported
 - no shared-offset, dup-like, or pipe semantics are claimed
 - process entry is currently stack-based only; no broad SysV or libc startup contract is claimed
@@ -72,7 +85,8 @@ These limitations are intentional and should be treated as part of the ABI contr
 | 3 | `close` | implemented and proven | closes a descriptor |
 | 60 | `exit` | implemented and proven | deterministic exit code |
 | 4 | `stat` | implemented but experimental | basic metadata struct only |
-| 9 / 11 / 12 | `mmap` / `munmap` / `brk` | implemented but experimental | narrow anonymous memory management only |
+| 12 | `brk` | implemented and proven | narrow monotonic heap growth only; `brk(0)` queries current break, growth is bounded and NX |
+| 9 / 11 | `mmap` / `munmap` | implemented but experimental | narrow anonymous memory management only |
 | 20 / 39 / 102 | `getpid` / `getppid` / `getuid` | implemented but experimental | basic identity queries |
 | 59 | `execve` | implemented and proven | narrow in-place image replacement only; reuses stack-based `argc`/`argv`, envp omitted |
 | 61 | `wait4` | implemented but experimental | not part of the current minimal WarExec ABI |
@@ -98,6 +112,7 @@ These limitations are intentional and should be treated as part of the ABI contr
 - ELF proof binary: `/bin/warexec-argv-smoke.elf`
 - ELF proof binary: `/bin/warexec-exec-parent.elf`
 - ELF proof binary: `/bin/warexec-exec-child.elf`
+- ELF proof binary: `/bin/warexec-heap-smoke.elf`
 
 This document is intentionally narrow.
 If a behavior is not listed above as proven or implemented, WarOS should not claim it as current userspace ABI support.

@@ -350,7 +350,8 @@ fn cmd_help(topic: Option<&str>) {
     kprintln!("  exec <path>      ps              top             nice <pri> <cmd>");
     kprintln!("  jobs             wait <pid>      kill <pid>      warpkg <subcmd>");
     kprint_colored!(Colors::DIM, "  WarExec is experimental: static ELF entry, stack-based argc/argv, stdout/stderr write,\n");
-    kprint_colored!(Colors::DIM, "  narrow read-only per-FD open/read/close and in-place exec replacement paths are smoke-tested;\n");
+    kprint_colored!(Colors::DIM, "  narrow read-only per-FD open/read/close, monotonic heap growth, and in-place exec replacement\n");
+    kprint_colored!(Colors::DIM, "  paths are smoke-tested;\n");
     kprint_colored!(Colors::DIM, "  broader libc, fork, Linux-like exec semantics,\n");
     kprint_colored!(Colors::DIM, "  and dynamic-linking compatibility are not claimed.\n");
     kprintln!();
@@ -1526,7 +1527,8 @@ fn cmd_exec(args: &[&str]) {
     let Some(path) = args.first().copied() else {
         kprintln!("Usage: exec <path> [args]");
         kprintln!("  Supports the current minimal WarExec ABI only: static ELF entry, stack-based argc/argv,");
-        kprintln!("  stdout/stderr write, exit, one narrow read-only open/read/close file path, and");
+        kprintln!("  stdout/stderr write, exit, one narrow read-only open/read/close file path,");
+        kprintln!("  monotonic heap growth through brk(0)/brk(new_end), and");
         kprintln!("  a minimal in-place exec replacement path with empty envp.");
         return;
     };
