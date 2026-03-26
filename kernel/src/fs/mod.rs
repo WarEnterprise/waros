@@ -502,6 +502,8 @@ Filesystem: {} files max, {} KiB max per file\n",
         &abi_wait_child_elf,
         true,
     )?;
+    let abi_stat_elf = crate::exec::smoke::abi_stat_elf_bytes();
+    filesystem.write_system(crate::exec::smoke::ABI_STAT_SMOKE_ELF_PATH, &abi_stat_elf, true)?;
     Ok(())
 }
 

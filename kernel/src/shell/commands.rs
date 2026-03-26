@@ -350,7 +350,8 @@ fn cmd_help(topic: Option<&str>) {
     kprintln!("  exec <path>      ps              top             nice <pri> <cmd>");
     kprintln!("  jobs             wait <pid>      kill <pid>      warpkg <subcmd>");
     kprint_colored!(Colors::DIM, "  WarExec is experimental: static ELF entry, stack-based argc/argv, stdout/stderr write,\n");
-    kprint_colored!(Colors::DIM, "  narrow read-only per-FD open/read/close, monotonic heap growth, and in-place exec replacement\n");
+    kprint_colored!(Colors::DIM, "  narrow read-only per-FD open/read/close, regular-file stat/fstat metadata,\n");
+    kprint_colored!(Colors::DIM, "  monotonic heap growth, and in-place exec replacement\n");
     kprint_colored!(Colors::DIM, "  paths are smoke-tested, with deterministic bad-pointer rejection on the current ABI surface;\n");
     kprint_colored!(Colors::DIM, "  broader libc, fork, Linux-like exec semantics,\n");
     kprint_colored!(Colors::DIM, "  and dynamic-linking compatibility are not claimed.\n");

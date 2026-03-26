@@ -2,12 +2,31 @@ use crate::auth::session;
 use crate::exec::fd_table::{DescriptorTarget, FileHandle};
 use crate::exec::PROCESS_TABLE;
 use crate::fs;
+use crate::fs::FsError;
 
 use super::{
     copy_from_user_ptr_checked, copy_to_user_ptr_checked, read_user_string_checked,
-    write_struct_to_user_checked, FileStat, EBADF, EINVAL, ENOENT, ENOSYS, EPERM,
-    MAX_USER_STRING_LEN,
+    write_struct_to_user_checked, WarExecStat, WAREXEC_FILE_TYPE_REGULAR, EBADF, EINVAL, ENOENT,
+    ENOSYS, EPERM, MAX_USER_STRING_LEN,
 };
+
+fn map_fs_error(error: FsError) -> i64 {
+    match error {
+        FsError::FileNotFound => ENOENT,
+        FsError::PermissionDenied | FsError::ReadOnly => EPERM,
+        FsError::InvalidFilename | FsError::FilenameTooLong | FsError::FileTooLarge => EINVAL,
+        FsError::FilesystemFull => ENOSYS,
+    }
+}
+
+fn warexec_stat_from_entry(entry: &fs::FileEntry) -> WarExecStat {
+    WarExecStat {
+        size: entry.data.len() as u64,
+        file_type: WAREXEC_FILE_TYPE_REGULAR,
+        readonly: u8::from(entry.readonly),
+        _reserved: [0; 6],
+    }
+}
 
 pub fn sys_read(fd: u32, buffer: *mut u8, len: usize) -> i64 {
     // The current minimal ABI only supports plain WarFS file descriptors. Each
@@ -141,18 +160,40 @@ pub fn sys_stat(path: *const u8, stat_out: *mut u8) -> i64 {
         Err(error) => return error,
     };
     let resolved = session::resolve_path(&path);
-    let Ok(entry) = fs::stat_current(&resolved) else {
-        return ENOENT;
+    let entry = match fs::stat_current(&resolved) {
+        Ok(entry) => entry,
+        Err(error) => return map_fs_error(error),
     };
-    let stat = FileStat {
-        size: entry.data.len() as u64,
-        created_at: entry.created_at,
-        modified_at: entry.modified_at,
-        owner_uid: entry.owner_uid,
-        readonly: u8::from(entry.readonly),
-        _reserved: [0; 5],
+    let stat = warexec_stat_from_entry(&entry);
+    match write_struct_to_user_checked(stat_out.cast::<WarExecStat>(), &stat) {
+        Ok(()) => 0,
+        Err(error) => error,
+    }
+}
+
+pub fn sys_fstat(fd: u32, stat_out: *mut u8) -> i64 {
+    let descriptor_target = {
+        let process_table = PROCESS_TABLE.lock();
+        let Some(process) = super::current_pid().and_then(|pid| process_table.get(pid)) else {
+            return EPERM;
+        };
+        let Some(descriptor) = process.fd_table.get(fd) else {
+            return EBADF;
+        };
+        descriptor.target.clone()
     };
-    match write_struct_to_user_checked(stat_out.cast::<FileStat>(), &stat) {
+
+    let path = match descriptor_target {
+        DescriptorTarget::File(handle) => handle.path,
+        _ => return ENOSYS,
+    };
+
+    let entry = match fs::stat_current(&path) {
+        Ok(entry) => entry,
+        Err(error) => return map_fs_error(error),
+    };
+    let stat = warexec_stat_from_entry(&entry);
+    match write_struct_to_user_checked(stat_out.cast::<WarExecStat>(), &stat) {
         Ok(()) => 0,
         Err(error) => error,
     }
