@@ -27,6 +27,8 @@ pub const ABI_EXEC_SMOKE_ARG1: &str = "gamma";
 pub const ABI_EXEC_SMOKE_ARG2: &str = "delta";
 pub const ABI_HEAP_SMOKE_ELF_PATH: &str = "/bin/warexec-heap-smoke.elf";
 pub const ABI_HEAP_SMOKE_ELF_EXIT_CODE: i32 = 47;
+pub const ABI_FAULT_SMOKE_ELF_PATH: &str = "/bin/warexec-fault-smoke.elf";
+pub const ABI_FAULT_SMOKE_ELF_EXIT_CODE: i32 = 48;
 
 const ELF_BASE_VADDR: u64 = 0x0000_0000_0040_0000;
 const ELF_HEADER_SIZE: usize = 64;
@@ -49,6 +51,11 @@ const ABI_HEAP_BYTES_OK_STDOUT: &str = "heap-bytes-ok\n";
 const ABI_HEAP_PREFIX_STDOUT: &str = "heap-string=";
 const ABI_HEAP_VALUE: &str = "waros-heap-proof";
 const ABI_HEAP_GROWTH_SIZE: u32 = 4096;
+const ABI_FAULT_START_STDOUT: &str = "fault-proof-start\n";
+const ABI_FAULT_ERR_STDOUT: &str = "fault-err=-14\n";
+const ABI_FAULT_BAD_PTR: u32 = 0x7000_0000;
+const ABI_FAULT_BAD_WRITE_LEN: u32 = 4;
+const ABI_FAULT_EXPECTED_ERR: i8 = -14;
 
 const ET_EXEC: u16 = 2;
 const EM_X86_64: u16 = 0x3E;
@@ -96,6 +103,11 @@ pub fn abi_exec_child_elf_bytes() -> Vec<u8> {
 #[must_use]
 pub fn abi_heap_elf_bytes() -> Vec<u8> {
     build_heap_abi_smoke_elf()
+}
+
+#[must_use]
+pub fn abi_fault_elf_bytes() -> Vec<u8> {
+    build_fault_abi_smoke_elf()
 }
 
 fn build_write_exit_smoke_elf() -> Vec<u8> {
@@ -156,6 +168,11 @@ pub fn run_abi_exec_smoke() -> Result<i32, ExecError> {
 pub fn run_abi_heap_smoke() -> Result<i32, ExecError> {
     let args = [ABI_HEAP_SMOKE_ELF_PATH];
     run_program_with_args(ABI_HEAP_SMOKE_ELF_PATH, &args)
+}
+
+pub fn run_abi_fault_smoke() -> Result<i32, ExecError> {
+    let args = [ABI_FAULT_SMOKE_ELF_PATH];
+    run_program_with_args(ABI_FAULT_SMOKE_ELF_PATH, &args)
 }
 
 fn run_program(path: &str) -> Result<i32, ExecError> {
@@ -630,6 +647,70 @@ fn build_heap_abi_smoke_elf() -> Vec<u8> {
     patch_rel32(&mut payload, bytes_ok_disp_offset, bytes_ok_line_offset);
     patch_rel32(&mut payload, prefix_disp_offset, prefix_offset);
     patch_rel32(&mut payload, newline_disp_offset, newline_offset);
+
+    build_single_segment_rx_elf(&payload)
+}
+
+fn build_fault_abi_smoke_elf() -> Vec<u8> {
+    let start_line = ABI_FAULT_START_STDOUT.as_bytes();
+    let err_line = ABI_FAULT_ERR_STDOUT.as_bytes();
+    let mut payload = Vec::with_capacity(192);
+
+    // write("fault-proof-start\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let start_line_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(start_line.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write(1, BAD_PTR, 4) must fail with the current narrow EFAULT contract.
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBE]);
+    payload.extend_from_slice(&ABI_FAULT_BAD_PTR.to_le_bytes());
+    payload.push(0xBA);
+    payload.extend_from_slice(&ABI_FAULT_BAD_WRITE_LEN.to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // cmp eax, -14
+    payload.extend_from_slice(&[0x83, 0xF8, ABI_FAULT_EXPECTED_ERR as u8]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let fault_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // write("fault-err=-14\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let err_line_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(err_line.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // exit(48)
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_FAULT_SMOKE_ELF_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    let fail_offset = payload.len();
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_SMOKE_FAILURE_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    payload.extend_from_slice(&[0x0F, 0x0B]);
+
+    let start_line_offset = payload.len();
+    payload.extend_from_slice(start_line);
+    let err_line_offset = payload.len();
+    payload.extend_from_slice(err_line);
+
+    patch_rel32(&mut payload, start_line_disp_offset, start_line_offset);
+    patch_rel32(&mut payload, fault_fail_jump, fail_offset);
+    patch_rel32(&mut payload, err_line_disp_offset, err_line_offset);
 
     build_single_segment_rx_elf(&payload)
 }

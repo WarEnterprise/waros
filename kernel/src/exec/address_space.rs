@@ -54,4 +54,35 @@ impl AddressSpace {
         self.brk = self.initial_brk;
         self.heap_limit = self.mmap_top.min(self.stack_bottom);
     }
+
+    #[must_use]
+    pub fn contains_user_range(&self, start: u64, len: usize) -> bool {
+        if len == 0 {
+            return true;
+        }
+
+        let Ok(len_u64) = u64::try_from(len) else {
+            return false;
+        };
+        let Some(end) = start.checked_add(len_u64) else {
+            return false;
+        };
+        if start == 0 || end <= start {
+            return false;
+        }
+
+        self.range_within_region(start, end, self.stack_bottom, self.stack_top)
+            || self.range_within_region(start, end, self.initial_brk, self.brk)
+            || self.segments.iter().any(|segment| {
+                let Some(segment_end) = segment.vaddr.checked_add(segment.size) else {
+                    return false;
+                };
+                self.range_within_region(start, end, segment.vaddr, segment_end)
+            })
+    }
+
+    #[must_use]
+    fn range_within_region(&self, start: u64, end: u64, region_start: u64, region_end: u64) -> bool {
+        region_end > region_start && start >= region_start && end <= region_end
+    }
 }

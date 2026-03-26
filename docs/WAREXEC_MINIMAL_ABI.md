@@ -2,7 +2,7 @@
 
 WarOS does not currently provide a Linux userspace ABI.
 The kernel reuses selected x86_64 Linux syscall numbers for convenience only.
-Today, WarExec is an experimental minimal ABI with six CI-proven static ELF paths:
+Today, WarExec is an experimental minimal ABI with seven CI-proven static ELF paths:
 
 - `/bin/warexec-smoke.elf`
   proves ELF load, stdout write, and exit
@@ -16,6 +16,8 @@ Today, WarExec is an experimental minimal ABI with six CI-proven static ELF path
   proves one narrow userspace-triggered `execve` transition: in-place image replacement, reused stack-based `argc`/`argv`, deterministic child output, and exit
 - `/bin/warexec-heap-smoke.elf`
   proves one narrow per-process heap-growth path: current-break query, monotonic growth, writable+NX heap memory, heap-backed stdout, and exit
+- `/bin/warexec-fault-smoke.elf`
+  proves one narrow pointer/error contract path: deterministic bad-pointer rejection on `write`, explicit negative error return, and exit
 
 ## CI-Proven ABI Contract
 
@@ -44,6 +46,18 @@ The following behavior is part of the currently proven minimal ABI:
   newly mapped heap pages are writable, user-accessible, and NX
   shrinking is intentionally unsupported for now; requests below the current break return the current break unchanged
   no broad Linux `brk`/`sbrk`/`mmap` compatibility is claimed
+- Pointer and error contract
+  the current proven ABI validates userspace buffers and strings against the current process image, stack, and live heap before dereferencing them
+  `write(fd, buf, len)` requires `buf..buf+len` to stay inside currently mapped user memory when `len > 0`
+  `read(fd, buf, len)` requires `buf..buf+len` to stay inside currently mapped user memory when `len > 0`
+  `open(path, 0, 0)` and `execve(path, argv, envp)` require `path` to be a NUL-terminated userspace string within a bounded maximum length
+  `execve(path, argv, envp)` requires each non-NULL `argv[i]` to point to a bounded NUL-terminated userspace string
+  `envp` is intentionally ignored today and is not dereferenced
+  bad userspace ranges or unterminated bounded strings fail with `-14`
+  invalid file descriptors fail with `-9`
+  missing files fail with `-2`
+  unsupported operations fail with `-38`
+  this is a narrow experimental WarExec error subset only; it is not a claim of broad Linux errno compatibility
 - Standard file descriptors
   fd `1` and fd `2` support `write`
   fd `0` exists but no interactive stdin ABI is proven yet
@@ -66,6 +80,7 @@ These limitations are intentional and should be treated as part of the ABI contr
 - `read` maintains only a narrow per-FD forward offset
 - `brk` is currently monotonic growth only
 - shrinking the heap is unsupported
+- no userspace signal or page-fault delivery is exposed for bad pointers; the current ABI returns a deterministic negative error instead
 - `lseek` is unsupported
 - no shared-offset, dup-like, or pipe semantics are claimed
 - process entry is currently stack-based only; no broad SysV or libc startup contract is claimed
@@ -79,16 +94,16 @@ These limitations are intentional and should be treated as part of the ABI contr
 
 | Number | Syscall | Status | Notes |
 | --- | --- | --- | --- |
-| 0 | `read` | implemented and proven | WarFS file descriptors only; per-FD forward read offset, EOF returns 0 |
-| 1 | `write` | implemented and proven | fd `1`/`2` only |
-| 2 | `open` | implemented and proven | existing WarFS file only; `flags=0`, `mode=0` |
+| 0 | `read` | implemented and proven | WarFS file descriptors only; per-FD forward read offset, EOF returns 0, bad buffers return `-14` |
+| 1 | `write` | implemented and proven | fd `1`/`2` only; bad buffers return `-14`, bad FDs return `-9` |
+| 2 | `open` | implemented and proven | existing WarFS file only; `flags=0`, `mode=0`, bad path pointers return `-14` |
 | 3 | `close` | implemented and proven | closes a descriptor |
 | 60 | `exit` | implemented and proven | deterministic exit code |
 | 4 | `stat` | implemented but experimental | basic metadata struct only |
 | 12 | `brk` | implemented and proven | narrow monotonic heap growth only; `brk(0)` queries current break, growth is bounded and NX |
 | 9 / 11 | `mmap` / `munmap` | implemented but experimental | narrow anonymous memory management only |
 | 20 / 39 / 102 | `getpid` / `getppid` / `getuid` | implemented but experimental | basic identity queries |
-| 59 | `execve` | implemented and proven | narrow in-place image replacement only; reuses stack-based `argc`/`argv`, envp omitted |
+| 59 | `execve` | implemented and proven | narrow in-place image replacement only; reuses stack-based `argc`/`argv`, envp omitted, bad path/argv pointers return `-14` |
 | 61 | `wait4` | implemented but experimental | not part of the current minimal WarExec ABI |
 | 79 / 80 | `getcwd` / `chdir` | implemented but experimental | not CI-proven as ABI |
 | 228 / 230 | `clock_gettime` / `nanosleep` | implemented but experimental | simple time support |
@@ -113,6 +128,7 @@ These limitations are intentional and should be treated as part of the ABI contr
 - ELF proof binary: `/bin/warexec-exec-parent.elf`
 - ELF proof binary: `/bin/warexec-exec-child.elf`
 - ELF proof binary: `/bin/warexec-heap-smoke.elf`
+- ELF proof binary: `/bin/warexec-fault-smoke.elf`
 
 This document is intentionally narrow.
 If a behavior is not listed above as proven or implemented, WarOS should not claim it as current userspace ABI support.

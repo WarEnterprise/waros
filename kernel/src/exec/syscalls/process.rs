@@ -5,7 +5,10 @@ use crate::auth::UserRole;
 use crate::auth::USER_DB;
 use crate::fs;
 
-use super::{read_user_string, ENOSYS};
+use super::{
+    read_user_pointer_array_checked, read_user_string_checked, write_struct_to_user_checked,
+    ENOENT, ENOEXEC, ENOMEM, ENOSYS, EPERM, MAX_USER_STRING_LEN,
+};
 
 pub fn sys_getpid() -> i64 {
     current_pid().map_or(-1, i64::from)
@@ -32,47 +35,46 @@ pub fn sys_fork() -> i64 {
 }
 
 pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const u8) -> i64 {
-    let Some(path_str) = (unsafe { read_user_string(path, 256) }) else {
-        return -22; // EINVAL
+    let path_str = match read_user_string_checked(path, MAX_USER_STRING_LEN) {
+        Ok(path) => path,
+        Err(error) => return error,
     };
 
     // Collect argv strings for the current narrow WarExec entry ABI. `envp` is
     // intentionally ignored for now; the replacement image receives an empty environment.
     let mut args: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
-    if !argv.is_null() {
-        for i in 0..64usize {
-            // SAFETY: argv is a null-terminated array of pointers provided by userspace.
-            let arg_ptr = unsafe { argv.add(i).read() };
-            if arg_ptr.is_null() {
-                break;
-            }
-            if let Some(arg) = unsafe { read_user_string(arg_ptr, 256) } {
-                args.push(arg);
-            }
+    let arg_ptrs = match read_user_pointer_array_checked(argv, 64) {
+        Ok(arg_ptrs) => arg_ptrs,
+        Err(error) => return error,
+    };
+    for arg_ptr in arg_ptrs {
+        match read_user_string_checked(arg_ptr, MAX_USER_STRING_LEN) {
+            Ok(arg) => args.push(arg),
+            Err(error) => return error,
         }
     }
     let arg_refs: alloc::vec::Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-    let Some(pid) = current_pid() else { return -1; };
+    let Some(pid) = current_pid() else { return EPERM; };
     let (uid, old_page_table_phys, old_address_space) = {
         let process_table = PROCESS_TABLE.lock();
-        let Some(proc) = process_table.get(pid) else { return -1; };
+        let Some(proc) = process_table.get(pid) else { return EPERM; };
         (proc.uid, proc.page_table_phys, proc.address_space.clone())
     };
 
     let role = role_for_uid(uid);
     let elf_data = match fs::FILESYSTEM.lock().read_as(&path_str, uid, role) {
         Ok(data) => data.to_vec(),
-        Err(_) => return -2, // ENOENT
+        Err(_) => return ENOENT,
     };
     let elf = match parse_elf(&elf_data) {
         Ok(e) => e,
-        Err(_) => return -8, // ENOEXEC
+        Err(_) => return ENOEXEC,
     };
 
     let new_cr3 = match loader::create_user_page_table_pub() {
         Ok(cr3) => cr3,
-        Err(_) => return -12,
+        Err(_) => return ENOMEM,
     };
 
     let saved_cr3 = {
@@ -99,14 +101,14 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
 
     let (address_space, context, memory_pages) = match map_result {
         Ok(r) => r,
-        Err(_) => return -8,
+        Err(_) => return ENOEXEC,
     };
 
     // Commit the replacement image in place. WarExec intentionally keeps this narrow:
     // one process identity, one replacement ELF, same minimal argc/argv ABI, empty env.
     let mut process_table = PROCESS_TABLE.lock();
     let Some(process) = process_table.get_mut(pid) else {
-        return -1;
+        return EPERM;
     };
     process.context = context;
     process.page_table_phys = new_cr3;
@@ -157,8 +159,9 @@ pub fn sys_wait4(pid: i32, status_ptr: *mut i32, _options: u32) -> i64 {
     // Write exit status to user pointer.
     if !status_ptr.is_null() {
         let status = (exit_code & 0xFF) << 8;
-        // SAFETY: status_ptr is a userspace pointer provided by the caller.
-        unsafe { status_ptr.write(status); }
+        if let Err(error) = write_struct_to_user_checked(status_ptr, &status) {
+            return error;
+        }
     }
 
     PROCESS_TABLE.lock().remove(child_pid);

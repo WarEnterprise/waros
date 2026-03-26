@@ -484,6 +484,12 @@ Filesystem: {} files max, {} KiB max per file\n",
     )?;
     let abi_heap_elf = crate::exec::smoke::abi_heap_elf_bytes();
     filesystem.write_system(crate::exec::smoke::ABI_HEAP_SMOKE_ELF_PATH, &abi_heap_elf, true)?;
+    let abi_fault_elf = crate::exec::smoke::abi_fault_elf_bytes();
+    filesystem.write_system(
+        crate::exec::smoke::ABI_FAULT_SMOKE_ELF_PATH,
+        &abi_fault_elf,
+        true,
+    )?;
     Ok(())
 }
 

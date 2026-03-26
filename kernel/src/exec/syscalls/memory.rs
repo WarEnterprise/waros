@@ -5,7 +5,7 @@ use crate::exec::PROCESS_TABLE;
 use crate::memory;
 use crate::memory::paging::map_page;
 
-use super::ENOSYS;
+use super::{EINVAL, ENOMEM, ENOSYS, EPERM};
 
 const PROT_WRITE: u32 = 0x2;
 const MAP_ANONYMOUS: u32 = 0x20;
@@ -24,21 +24,21 @@ pub fn sys_mmap(
         return ENOSYS;
     }
     if len == 0 {
-        return -22; // EINVAL
+        return EINVAL;
     }
     let aligned_len = len.div_ceil(4096) * 4096;
 
     let base = {
         let mut process_table = PROCESS_TABLE.lock();
         let Some(process) = super::current_pid().and_then(|pid| process_table.get_mut(pid)) else {
-            return -1;
+            return EPERM;
         };
         let base = match process.address_space.mmap_top.checked_sub(aligned_len) {
             Some(base) => base,
-            None => return -12,
+            None => return ENOMEM,
         };
         if base < process.address_space.brk {
-            return -12; // ENOMEM: narrow mmap path cannot overlap the WarExec heap.
+            return ENOMEM; // narrow mmap path cannot overlap the WarExec heap.
         }
         process.address_space.mmap_top = base;
         process.address_space.heap_limit = base;
@@ -48,14 +48,14 @@ pub fn sys_mmap(
     // Map the pages into the active page table.
     let offset = match memory::physical_memory_offset() {
         Some(o) => o,
-        None => return -1,
+        None => return EPERM,
     };
     // SAFETY: physical_memory_offset is valid for the kernel lifetime.
     let mut mapper = unsafe { memory::paging::init(offset) };
     let mut allocator_guard = memory::FRAME_ALLOCATOR.lock();
     let allocator = match allocator_guard.as_mut() {
         Some(a) => a,
-        None => return -1,
+        None => return EPERM,
     };
 
     let mut flags_pt = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE | PageTableFlags::NO_EXECUTE;
@@ -67,7 +67,7 @@ pub fn sys_mmap(
         let page = Page::<Size4KiB>::containing_address(VirtAddr::new(page_base));
         let frame = match FrameAllocator::<Size4KiB>::allocate_frame(allocator) {
             Some(f) => f,
-            None => return -12, // ENOMEM
+            None => return ENOMEM,
         };
         match map_page(&mut mapper, page, frame, flags_pt, allocator) {
             Ok(()) => {
@@ -76,7 +76,7 @@ pub fn sys_mmap(
             }
             Err(_) => {
                 allocator.free_frame(frame.start_address());
-                return -1;
+                return EPERM;
             }
         }
     }
@@ -86,19 +86,19 @@ pub fn sys_mmap(
 
 pub fn sys_munmap(addr: u64, len: u64) -> i64 {
     if addr == 0 || len == 0 {
-        return -22;
+        return EINVAL;
     }
     let aligned_len = len.div_ceil(4096) * 4096;
     let offset = match memory::physical_memory_offset() {
         Some(o) => o,
-        None => return -1,
+        None => return EPERM,
     };
     // SAFETY: physical_memory_offset is valid for the kernel lifetime.
     let mut mapper = unsafe { memory::paging::init(offset) };
     let mut allocator_guard = memory::FRAME_ALLOCATOR.lock();
     let allocator = match allocator_guard.as_mut() {
         Some(a) => a,
-        None => return -1,
+        None => return EPERM,
     };
 
     for page_base in (addr..addr + aligned_len).step_by(4096) {
@@ -115,7 +115,7 @@ pub fn sys_brk(address: u64) -> i64 {
     let (initial_brk, old_brk, heap_limit) = {
         let mut process_table = PROCESS_TABLE.lock();
         let Some(process) = super::current_pid().and_then(|pid| process_table.get_mut(pid)) else {
-            return -1;
+            return EPERM;
         };
         (
             process.address_space.initial_brk,
@@ -141,14 +141,14 @@ pub fn sys_brk(address: u64) -> i64 {
 
     let offset = match memory::physical_memory_offset() {
         Some(o) => o,
-        None => return -1,
+        None => return EPERM,
     };
     // SAFETY: physical_memory_offset is valid for the kernel lifetime.
     let mut mapper = unsafe { memory::paging::init(offset) };
     let mut allocator_guard = memory::FRAME_ALLOCATOR.lock();
     let allocator = match allocator_guard.as_mut() {
         Some(a) => a,
-        None => return -1,
+        None => return EPERM,
     };
 
     let start_page = align_up(old_brk);
