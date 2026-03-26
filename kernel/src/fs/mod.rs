@@ -450,6 +450,13 @@ Filesystem: {} files max, {} KiB max per file\n",
     filesystem.write_system("/sysinfo.txt", sysinfo.as_bytes(), true)?;
     let smoke_elf = crate::exec::smoke::elf_bytes();
     filesystem.write_system(crate::exec::smoke::SMOKE_ELF_PATH, &smoke_elf, true)?;
+    filesystem.write_system(
+        crate::exec::smoke::ABI_READ_SMOKE_FILE_PATH,
+        crate::exec::smoke::ABI_READ_SMOKE_FILE_CONTENT.as_bytes(),
+        true,
+    )?;
+    let abi_read_elf = crate::exec::smoke::abi_read_elf_bytes();
+    filesystem.write_system(crate::exec::smoke::ABI_READ_SMOKE_ELF_PATH, &abi_read_elf, true)?;
     Ok(())
 }
 

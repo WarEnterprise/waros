@@ -1,13 +1,6 @@
-use alloc::string::ToString;
-use alloc::vec;
-
-use crate::exec::{current_pid, loader, mark_exit, PROCESS_TABLE, SCHEDULER};
-use crate::exec::process::{CpuContext, Priority, ProcessImageKind, ProcessState};
-use crate::exec::address_space::AddressSpace;
-use crate::exec::fd_table::FileDescriptorTable;
-use crate::exec::scheduler::DEFAULT_TIME_SLICE;
 use crate::exec::elf::parse_elf;
-use crate::auth::session;
+use crate::exec::process::ProcessImageKind;
+use crate::exec::{current_pid, loader, mark_exit, PROCESS_TABLE};
 use crate::auth::UserRole;
 use crate::auth::USER_DB;
 use crate::fs;
@@ -33,63 +26,9 @@ pub fn sys_getuid() -> i64 {
 }
 
 pub fn sys_fork() -> i64 {
-    // Clone the current process into a new process entry.
-    let parent = {
-        let process_table = PROCESS_TABLE.lock();
-        let Some(pid) = current_pid() else { return -1; };
-        process_table.get(pid).cloned()
-    };
-    let Some(parent) = parent else { return -1; };
-
-    // Create a new page table for the child.
-    let new_cr3 = match loader::create_user_page_table_pub() {
-        Ok(cr3) => cr3,
-        Err(_) => return -12, // ENOMEM
-    };
-
-    let child_kernel_stack = vec![0u8; 16 * 1024];
-    let child_kernel_stack_top = child_kernel_stack.as_ptr() as u64 + child_kernel_stack.len() as u64;
-
-    let mut child_context = parent.context.clone();
-    child_context.rax = 0; // fork() returns 0 in child
-    child_context.cr3 = new_cr3;
-
-    let child = crate::exec::process::Process {
-        pid: 0,
-        parent_pid: parent.pid,
-        name: parent.name.clone(),
-        uid: parent.uid,
-        state: ProcessState::Ready,
-        context: child_context,
-        exit_code: None,
-        page_table_phys: new_cr3,
-        address_space: AddressSpace::new(new_cr3),
-        kernel_stack: child_kernel_stack,
-        kernel_stack_top: child_kernel_stack_top,
-        fd_table: parent.fd_table.clone(),
-        cwd: parent.cwd.clone(),
-        env: parent.env.clone(),
-        quantum_registers: alloc::vec::Vec::new(),
-        crypto_keys: alloc::vec::Vec::new(),
-        priority: parent.priority,
-        cpu_ticks: 0,
-        time_slice: DEFAULT_TIME_SLICE,
-        created_at: crate::arch::x86_64::interrupts::tick_count(),
-        blocked_on: None,
-        syscall_count: 0,
-        page_fault_count: 0,
-        memory_pages: 0,
-        task_id: None,
-        image_kind: ProcessImageKind::Elf,
-        image_path: parent.image_path.clone(),
-    };
-
-    let child_pid = match PROCESS_TABLE.lock().create_process(child) {
-        Ok(pid) => pid,
-        Err(_) => return -12,
-    };
-    SCHEDULER.lock().enqueue(child_pid, parent.priority);
-    i64::from(child_pid)
+    // WarOS does not currently expose a fork ABI. Keep the number reserved but fail
+    // explicitly until address-space cloning, descriptor offsets, and wait semantics are real.
+    ENOSYS
 }
 
 pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const u8) -> i64 {
@@ -114,7 +53,7 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
     let arg_refs: alloc::vec::Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
     let Some(pid) = current_pid() else { return -1; };
-    let (uid, _parent_pid, priority, _cwd) = {
+    let (uid, _parent_pid, _priority, _cwd) = {
         let process_table = PROCESS_TABLE.lock();
         let Some(proc) = process_table.get(pid) else { return -1; };
         (proc.uid, proc.parent_pid, proc.priority, proc.cwd.clone())

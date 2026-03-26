@@ -10,6 +10,9 @@ pub fn sys_read(fd: u32, buffer: *mut u8, len: usize) -> i64 {
         return -1;
     }
 
+    // The current minimal ABI only supports plain WarFS file descriptors. Reads are
+    // intentionally stateless for now: each call returns bytes from offset 0, truncated
+    // to the caller's buffer length.
     let path = {
         let process_table = PROCESS_TABLE.lock();
         let Some(process) = super::current_pid().and_then(|pid| process_table.get(pid)) else {
@@ -62,6 +65,12 @@ pub fn sys_open(path: *const u8, _flags: u32, _mode: u32) -> i64 {
         return -1;
     };
     let resolved = session::resolve_path(&path);
+    if _flags != 0 || _mode != 0 {
+        return ENOSYS;
+    }
+    if fs::read_current(&resolved).is_err() {
+        return -1;
+    }
     let mut process_table = PROCESS_TABLE.lock();
     let Some(process) = super::current_pid().and_then(|pid| process_table.get_mut(pid)) else {
         return -1;

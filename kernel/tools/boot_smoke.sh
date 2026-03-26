@@ -13,6 +13,8 @@ BOOT_MARKER="WarOS: entering kernel bootstrap"
 FS_MARKER="[OK] WarFS: filesystem core ready"
 EXEC_STDOUT_MARKER="warexec smoke user program"
 EXEC_MARKER="[OK] WarExec smoke: /bin/warexec-smoke.elf exited with code 42"
+ABI_PROOF_STDOUT_MARKER="warexec abi file proof"
+ABI_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-read-smoke.elf exited with code 43"
 SHELL_MARKER="[INFO] WarOS shell online. Type 'help' for available commands."
 
 QEMU_PID=""
@@ -65,7 +67,9 @@ ls -lh "${IMAGE_PATH}" || true
 # 2. WarFS core initialization
 # 3. userspace stdout observed on serial
 # 4. minimal WarExec user-ELF exit marker
-# 5. shell-ready banner
+# 5. read-only WarFS ABI proof stdout
+# 6. read-only WarFS ABI proof exit marker
+# 7. shell-ready banner
 #
 # This keeps CI deterministic without introducing timing-sensitive interaction or GUI automation.
 "${QEMU_BIN}" \
@@ -86,6 +90,8 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         && grep -Fq "${FS_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${EXEC_STDOUT_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${EXEC_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_PROOF_STDOUT_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_PROOF_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${SHELL_MARKER}" "${LOG_PATH}"; then
         echo "Kernel boot smoke passed."
         echo "  Log: ${LOG_PATH}"
@@ -93,6 +99,8 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         echo "  Found: ${FS_MARKER}"
         echo "  Found: ${EXEC_STDOUT_MARKER}"
         echo "  Found: ${EXEC_MARKER}"
+        echo "  Found: ${ABI_PROOF_STDOUT_MARKER}"
+        echo "  Found: ${ABI_PROOF_MARKER}"
         echo "  Found: ${SHELL_MARKER}"
         exit 0
     fi
