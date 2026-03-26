@@ -252,6 +252,7 @@ pub extern "C" fn syscall_dispatch(
         1 => syscalls::file::sys_write(arg1 as u32, arg2 as *const u8, arg3 as usize),
         2 => syscalls::file::sys_open(arg1 as *const u8, arg2 as u32, arg3 as u32),
         3 => syscalls::file::sys_close(arg1 as u32),
+        12 => syscalls::memory::sys_brk(arg1),
         60 => syscalls::process::sys_exit(arg1 as i32),
 
         // Implemented but still experimental or not boot-smoke-proven as a stable ABI.
@@ -259,7 +260,6 @@ pub extern "C" fn syscall_dispatch(
         8 => syscalls::file::sys_seek(arg1 as u32, arg2 as i64, arg3 as u32),
         9 => syscalls::memory::sys_mmap(arg1, arg2, arg3 as u32, arg4 as u32, arg5 as u32, arg6 as i64),
         11 => syscalls::memory::sys_munmap(arg1, arg2),
-        12 => syscalls::memory::sys_brk(arg1),
         20 => syscalls::process::sys_getpid(),
         39 => syscalls::process::sys_getppid(),
         59 => syscalls::process::sys_execve(arg1 as *const u8, arg2 as *const *const u8, arg3 as *const *const u8), // experimental narrow in-place ELF replacement path

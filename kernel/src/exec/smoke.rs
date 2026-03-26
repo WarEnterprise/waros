@@ -25,6 +25,8 @@ pub const ABI_EXEC_CHILD_ELF_PATH: &str = "/bin/warexec-exec-child.elf";
 pub const ABI_EXEC_CHILD_ELF_EXIT_CODE: i32 = 46;
 pub const ABI_EXEC_SMOKE_ARG1: &str = "gamma";
 pub const ABI_EXEC_SMOKE_ARG2: &str = "delta";
+pub const ABI_HEAP_SMOKE_ELF_PATH: &str = "/bin/warexec-heap-smoke.elf";
+pub const ABI_HEAP_SMOKE_ELF_EXIT_CODE: i32 = 47;
 
 const ELF_BASE_VADDR: u64 = 0x0000_0000_0040_0000;
 const ELF_HEADER_SIZE: usize = 64;
@@ -42,6 +44,11 @@ const ABI_ARGV_SMOKE_ARGV2_PREFIX: &str = "argv2=";
 const ABI_ARGV_SMOKE_NEWLINE: &str = "\n";
 const ABI_EXEC_PARENT_STDOUT: &str = "exec-parent-start\n";
 const ABI_EXEC_CHILD_STDOUT: &str = "exec-child\n";
+const ABI_HEAP_START_STDOUT: &str = "heap-proof-start\n";
+const ABI_HEAP_BYTES_OK_STDOUT: &str = "heap-bytes-ok\n";
+const ABI_HEAP_PREFIX_STDOUT: &str = "heap-string=";
+const ABI_HEAP_VALUE: &str = "waros-heap-proof";
+const ABI_HEAP_GROWTH_SIZE: u32 = 4096;
 
 const ET_EXEC: u16 = 2;
 const EM_X86_64: u16 = 0x3E;
@@ -84,6 +91,11 @@ pub fn abi_exec_parent_elf_bytes() -> Vec<u8> {
 #[must_use]
 pub fn abi_exec_child_elf_bytes() -> Vec<u8> {
     build_exec_child_abi_smoke_elf()
+}
+
+#[must_use]
+pub fn abi_heap_elf_bytes() -> Vec<u8> {
+    build_heap_abi_smoke_elf()
 }
 
 fn build_write_exit_smoke_elf() -> Vec<u8> {
@@ -139,6 +151,11 @@ pub fn run_abi_argv_smoke() -> Result<i32, ExecError> {
 pub fn run_abi_exec_smoke() -> Result<i32, ExecError> {
     let args = [ABI_EXEC_PARENT_ELF_PATH];
     run_program_with_args(ABI_EXEC_PARENT_ELF_PATH, &args)
+}
+
+pub fn run_abi_heap_smoke() -> Result<i32, ExecError> {
+    let args = [ABI_HEAP_SMOKE_ELF_PATH];
+    run_program_with_args(ABI_HEAP_SMOKE_ELF_PATH, &args)
 }
 
 fn run_program(path: &str) -> Result<i32, ExecError> {
@@ -488,6 +505,133 @@ fn build_exec_child_abi_smoke_elf() -> Vec<u8> {
         ABI_EXEC_SMOKE_ARG2,
         ABI_EXEC_CHILD_ELF_EXIT_CODE,
     )
+}
+
+fn build_heap_abi_smoke_elf() -> Vec<u8> {
+    let start_line = ABI_HEAP_START_STDOUT.as_bytes();
+    let bytes_ok_line = ABI_HEAP_BYTES_OK_STDOUT.as_bytes();
+    let prefix = ABI_HEAP_PREFIX_STDOUT.as_bytes();
+    let heap_value = ABI_HEAP_VALUE.as_bytes();
+    let newline = ABI_ARGV_SMOKE_NEWLINE.as_bytes();
+    let mut payload = Vec::with_capacity(320);
+
+    // write("heap-proof-start\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let start_line_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(start_line.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // current = brk(0)
+    payload.extend_from_slice(&[0xB8, 0x0C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x31, 0xFF]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // test rax, rax
+    payload.extend_from_slice(&[0x48, 0x85, 0xC0]);
+    // je fail
+    payload.extend_from_slice(&[0x0F, 0x84]);
+    let brk_query_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // r12 = old_break
+    payload.extend_from_slice(&[0x49, 0x89, 0xC4]);
+    // rdi = old_break
+    payload.extend_from_slice(&[0x48, 0x89, 0xC7]);
+    // rdi += 4096
+    payload.extend_from_slice(&[0x48, 0x81, 0xC7]);
+    payload.extend_from_slice(&ABI_HEAP_GROWTH_SIZE.to_le_bytes());
+
+    // new = brk(old + 4096)
+    payload.extend_from_slice(&[0xB8, 0x0C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // cmp rax, rdi
+    payload.extend_from_slice(&[0x48, 0x39, 0xF8]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let brk_grow_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // Copy "waros-heap-proof" into the newly allocated heap at old_break.
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let heap_value_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.extend_from_slice(&[0x4C, 0x89, 0xE7]);
+    payload.extend_from_slice(&[0xB9]);
+    payload.extend_from_slice(&(heap_value.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0xF3, 0xA4]);
+
+    // write("heap-bytes-ok\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let bytes_ok_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(bytes_ok_line.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write("heap-string=")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let prefix_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(prefix.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write(heap_ptr, heap_value.len())
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x4C, 0x89, 0xE6]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(heap_value.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write("\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let newline_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(newline.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // exit(47)
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_HEAP_SMOKE_ELF_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    let fail_offset = payload.len();
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_SMOKE_FAILURE_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    payload.extend_from_slice(&[0x0F, 0x0B]);
+
+    let start_line_offset = payload.len();
+    payload.extend_from_slice(start_line);
+    let bytes_ok_line_offset = payload.len();
+    payload.extend_from_slice(bytes_ok_line);
+    let prefix_offset = payload.len();
+    payload.extend_from_slice(prefix);
+    let heap_value_offset = payload.len();
+    payload.extend_from_slice(heap_value);
+    let newline_offset = payload.len();
+    payload.extend_from_slice(newline);
+
+    patch_rel32(&mut payload, start_line_disp_offset, start_line_offset);
+    patch_rel32(&mut payload, brk_query_fail_jump, fail_offset);
+    patch_rel32(&mut payload, brk_grow_fail_jump, fail_offset);
+    patch_rel32(&mut payload, heap_value_disp_offset, heap_value_offset);
+    patch_rel32(&mut payload, bytes_ok_disp_offset, bytes_ok_line_offset);
+    patch_rel32(&mut payload, prefix_disp_offset, prefix_offset);
+    patch_rel32(&mut payload, newline_disp_offset, newline_offset);
+
+    build_single_segment_rx_elf(&payload)
 }
 
 fn build_arg_report_smoke_elf(
