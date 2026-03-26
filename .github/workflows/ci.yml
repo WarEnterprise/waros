@@ -20,7 +20,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@nightly
         with:
-          components: rust-src, clippy, rustfmt
+          components: rust-src, llvm-tools-preview, clippy, rustfmt
 
       - name: Build workspace
         run: cargo +stable build --workspace
@@ -45,8 +45,28 @@ jobs:
       - name: Build kernel
         run: cd kernel && cargo +nightly build --release --target x86_64-unknown-none
 
+      - name: Kernel toolchain diagnostics
+        run: |
+          cargo +nightly -V
+          rustc +nightly -Vv
+          rustup show active-toolchain
+          rustup component list --installed --toolchain nightly
+          qemu-system-x86_64 --version | sed -n '1p'
+
       - name: Create kernel images
-        run: bash ./kernel/tools/create_image.sh
+        env:
+          RUST_BACKTRACE: "1"
+        run: |
+          set -o pipefail
+          bash ./kernel/tools/create_image.sh 2>&1 | tee kernel/target/create-image.log
+
+      - name: Upload kernel image creation log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-image-create-log
+          path: kernel/target/create-image.log
+          if-no-files-found: warn
 
       - name: Smoke test kernel boot
         run: sh ./kernel/tools/boot_smoke.sh

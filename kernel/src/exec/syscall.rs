@@ -208,6 +208,9 @@ pub extern "C" fn syscall_dispatch(
         }
     }
 
+    // WarOS currently exposes a narrow experimental userspace ABI. The numeric values below
+    // intentionally mirror selected x86_64 Linux syscall numbers for convenience only; this is
+    // not a Linux compatibility layer, and unsupported or partial paths still return ENOSYS.
     match syscall_num {
         0 => syscalls::file::sys_read(arg1 as u32, arg2 as *mut u8, arg3 as usize),
         1 => syscalls::file::sys_write(arg1 as u32, arg2 as *const u8, arg3 as usize),
@@ -220,8 +223,8 @@ pub extern "C" fn syscall_dispatch(
         12 => syscalls::memory::sys_brk(arg1),
         20 => syscalls::process::sys_getpid(),
         39 => syscalls::process::sys_getppid(),
-        57 => syscalls::process::sys_fork(),
-        59 => syscalls::process::sys_execve(arg1 as *const u8, arg2 as *const *const u8, arg3 as *const *const u8),
+        57 => syscalls::process::sys_fork(), // experimental and not Linux-compatible fork semantics
+        59 => syscalls::process::sys_execve(arg1 as *const u8, arg2 as *const *const u8, arg3 as *const *const u8), // experimental minimal ELF replacement path
         60 => syscalls::process::sys_exit(arg1 as i32),
         61 => syscalls::process::sys_wait4(arg1 as i32, arg2 as *mut i32, arg3 as u32),
         79 => syscalls::file::sys_getcwd(arg1 as *mut u8, arg2 as usize),
@@ -254,8 +257,8 @@ pub extern "C" fn syscall_dispatch(
         411 => syscalls::crypto::sys_verify(arg1 as *const u8, arg2 as *const u8, arg3 as usize, arg4 as *const u8),
         420 => syscalls::crypto::sys_sha3_256(arg1 as *const u8, arg2 as usize, arg3 as *mut u8),
         421 => syscalls::crypto::sys_random_bytes(arg1 as *mut u8, arg2 as usize),
-        500 => syscalls::ai::sys_ai_load_model(arg1 as *const u8),
-        501 => syscalls::ai::sys_ai_inference(arg1, arg2 as *const u8, arg3 as *mut u8),
+        500 => syscalls::ai::sys_ai_load_model(arg1 as *const u8), // currently stubbed
+        501 => syscalls::ai::sys_ai_inference(arg1, arg2 as *const u8, arg3 as *mut u8), // currently stubbed
         600 => syscalls::io::sys_ioctl(arg1 as u32, arg2, arg3),
         601 => syscalls::io::sys_lsdev(arg1 as *mut u8, arg2 as usize),
         _ => syscalls::ENOSYS,

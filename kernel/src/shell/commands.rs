@@ -30,7 +30,7 @@ use crate::{
 
 static ENV: Lazy<spin::Mutex<BTreeMap<String, String>>> = Lazy::new(|| {
     let mut map = BTreeMap::new();
-    map.insert(String::from("PATH"), String::from("/usr/bin:/bin"));
+    map.insert(String::from("PATH"), String::from("/bin"));
     map.insert(String::from("HOME"), String::from("/root"));
     map.insert(String::from("USER"), String::from("root"));
     map.insert(String::from("SHELL"), String::from("/bin/warsh"));
@@ -349,6 +349,8 @@ fn cmd_help(topic: Option<&str>) {
     kprint_colored!(Colors::PURPLE, "Execution\n");
     kprintln!("  exec <path>      ps              top             nice <pri> <cmd>");
     kprintln!("  jobs             wait <pid>      kill <pid>      warpkg <subcmd>");
+    kprint_colored!(Colors::DIM, "  WarExec is experimental: one smoke-tested static ELF path, partial syscalls,\n");
+    kprint_colored!(Colors::DIM, "  and no broad libc, fork/exec, or dynamic-linking compatibility.\n");
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Tools\n");
@@ -1521,6 +1523,7 @@ fn cmd_kill(args: &[&str]) {
 fn cmd_exec(args: &[&str]) {
     let Some(path) = args.first().copied() else {
         kprintln!("Usage: exec <path> [args]");
+        kprintln!("  Supports a minimal ELF path only: partial syscalls, no libc, no dynamic linking.");
         return;
     };
 
@@ -2774,4 +2777,3 @@ fn cmd_unalias(args: &[&str]) {
         ALIASES.lock().remove(name);
     }
 }
-

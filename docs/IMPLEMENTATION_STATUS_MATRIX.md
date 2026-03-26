@@ -8,7 +8,7 @@
 | PQ crypto crate | IMPLEMENTED | `crates/waros-crypto/src/{kem,sign,hash,qrng}.rs`; `tests/crypto.rs` | Add more negative/fuzz-style serialization tests |
 | CLI | IMPLEMENTED | `crates/waros-cli/src/*`; verified `qstat` and `run examples/qasm/bell.qasm --shots 128` | Add snapshot tests for command output |
 | Python SDK | IMPLEMENTED | `crates/waros-python/src/*`; `pytest` passed with 46 tests | Add wheel-build smoke test for import on clean env |
-| Kernel boot | IMPLEMENTED | `kernel/src/main.rs`; kernel build succeeded; QEMU logs reach shell | Put boot verification into CI |
+| Kernel boot | IMPLEMENTED | `kernel/src/main.rs`; `kernel/tools/boot_smoke.sh`; CI boots the BIOS image headlessly and asserts serial markers | Keep Linux image creation + QEMU smoke reliable and preserve failure artifacts |
 | Kernel shell | IMPLEMENTED | `kernel/src/shell/*`; QEMU logs show shell ready | Add serial-driven shell smoke harness |
 | Interrupts/PIT | IMPLEMENTED | `kernel/src/arch/x86_64/{idt,interrupts,pit}.rs` | Add boot/runtime assertions in smoke tests |
 | Memory allocator + heap | IMPLEMENTED | `kernel/src/memory/{physical,heap,paging}.rs`; boot logs show init | Fix README heap-size drift and add allocator tests where practical |
@@ -19,9 +19,9 @@
 | Kernel TLS/HTTPS | PARTIALLY IMPLEMENTED | `kernel/src/net/tls/mod.rs`; explicit warning says no cert validation | Implement verification or disable by default |
 | Kernel IBM Runtime path | PARTIALLY IMPLEMENTED | `kernel/src/net/ibm.rs`; shell `ibm` commands | Decide whether kernel-side IBM support is intentional and testable |
 | Kernel quantum simulator | IMPLEMENTED | `kernel/src/quantum/*`; shell quantum commands; boot log says subsystem ready | Cross-validate outputs with `waros-quantum` fixtures |
-| WarExec / ELF loading | PARTIALLY IMPLEMENTED | `kernel/src/exec/{loader,elf,syscall}.rs` | Add one proven end-to-end user ELF execution path |
-| Linux compatibility layer | SCAFFOLDED / STUBBED | `kernel/src/exec/compat.rs`; many `kernel/src/exec/syscalls/*` return `ENOSYS` | Narrow claims and implement only a tested subset |
-| Syscall surface | SCAFFOLDED / STUBBED | `kernel/src/exec/syscall.rs` plus many `ENOSYS` handlers | Gate unsupported calls and document status explicitly |
+| WarExec / ELF loading | PARTIALLY IMPLEMENTED | `kernel/src/exec/{loader,elf,syscall,smoke}.rs`; boot smoke asserts one ELF stdout + exit-code path | Keep the ABI narrow and document exactly which user paths are smoke-tested |
+| Linux compatibility layer | SCAFFOLDED / STUBBED | `kernel/src/exec/compat.rs` explicitly marks itself placeholder; shell help labels WarExec experimental; many `kernel/src/exec/syscalls/*` return `ENOSYS` | Keep claims narrow and do not imply libc/fork/exec compatibility beyond tested behavior |
+| Syscall surface | SCAFFOLDED / STUBBED | `kernel/src/exec/syscall.rs` documents an experimental Linux-numbered subset; many handlers still return `ENOSYS` | Replace placeholders only with tested handlers, otherwise keep the unsupported status explicit |
 | Package manager | PARTIALLY IMPLEMENTED | `kernel/src/pkg/*`; built-in bootstrap packages are seeded into WarFS | Replace placeholder signing and add remote/index tests |
 | Secure boot / PQ boot chain | PLANNED ONLY | No verifying boot stage in `kernel/` tooling | Do not market this until a real chain exists |
 | QRM | PLANNED ONLY | No dedicated module; only simple quantum register allocation | Define a narrow first milestone or drop the term from near-term docs |

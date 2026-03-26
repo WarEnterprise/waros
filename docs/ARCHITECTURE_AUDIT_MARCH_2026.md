@@ -91,7 +91,7 @@ WarOS fits best today as a `quantum SDK platform plus bootable research kernel p
   Purpose: convenience wrappers for kernel build/image/QEMU execution.
 - `.github/workflows/ci.yml`
   Purpose: workspace build/test/clippy/doc, kernel build, Python wheel/test pipeline.
-  Important limitation: CI builds the kernel but does not boot it headlessly and assert a successful shell prompt.
+  Important limitation: CI now boots the BIOS image headlessly, asserts shell plus minimal ELF smoke markers, and uploads logs, but the most fragile path is still host-side `bootloader` image creation.
 
 ### Docs / blueprint / README
 - `README.md`
@@ -107,7 +107,7 @@ WarOS fits best today as a `quantum SDK platform plus bootable research kernel p
 | Kernel console/shell | IMPLEMENTED | `kernel/src/display/console.rs`, `kernel/src/shell/mod.rs`, `kernel/src/shell/commands.rs`, boot logs reach `WarOS shell online` | Real shell with commands for FS, tasks, networking, quantum, auth, and package management. |
 | Interrupts/timers | IMPLEMENTED | `kernel/src/arch/x86_64/idt.rs`, `kernel/src/arch/x86_64/interrupts.rs`, `kernel/src/arch/x86_64/pit.rs` | Timer IRQ increments ticks and calls `exec::tick`; keyboard IRQ reads PS/2 scancodes. |
 | Memory/heap/frame allocation | IMPLEMENTED | `kernel/src/memory/physical.rs`, `kernel/src/memory/heap.rs`, `kernel/src/memory/paging.rs`, boot log reports physical memory and heap init | Bitmap frame allocator and 8 MiB heap are real. README still says 4 MiB, which is stale. |
-| Tasking/scheduler | PARTIALLY IMPLEMENTED | `kernel/src/task/mod.rs`, `kernel/src/exec/scheduler.rs`, `kernel/src/exec/mod.rs`, shell commands `spawn`, `jobs`, `wait`, `kill`, `nice` | Cooperative shell tasks are real. Process scheduling and time slices exist, but end-to-end userspace execution proof is thin and many blocked states/features are unused. |
+| Tasking/scheduler | PARTIALLY IMPLEMENTED | `kernel/src/task/mod.rs`, `kernel/src/exec/scheduler.rs`, `kernel/src/exec/mod.rs`, `kernel/src/exec/smoke.rs`, shell commands `spawn`, `jobs`, `wait`, `kill`, `nice` | Cooperative shell tasks are real. One minimal synchronous ELF load/run/exit path is now proved, but broader process semantics and many blocked states/features remain unused. |
 | Filesystem | PARTIALLY IMPLEMENTED | `kernel/src/fs/mod.rs`, `kernel/src/disk/mod.rs`, shell commands `ls/cat/write/rm/touch/stat/df`, QEMU logs show WarFS format/load | Real custom WarFS exists in RAM and can persist to virtio-blk. This is not the blueprint WarFS with quantum object types or signed metadata. |
 | Device drivers | PARTIALLY IMPLEMENTED | Serial: `kernel/src/drivers/serial.rs`; keyboard: `kernel/src/drivers/keyboard.rs`; framebuffer: `kernel/src/display/framebuffer.rs`; disk: `kernel/src/disk/virtio_blk.rs`; NICs: `kernel/src/net/virtio/*`, `kernel/src/hal/net/e1000.rs`; USB/xHCI code under `kernel/src/hal/usb/*` | Several concrete drivers/probes exist, but device coverage is narrow and validation is limited. |
 | Networking | PARTIALLY IMPLEMENTED | `kernel/src/net/mod.rs`, `kernel/src/net/http.rs`, `kernel/src/net/tls/mod.rs`, `kernel/src/net/ibm.rs`, QEMU logs show PCI scan, NIC, DHCP, DNS | Kernel networking is real enough for boot-time DHCP/DNS and HTTP/TLS code paths. It is not a general-purpose socket API; syscall networking is still `ENOSYS`. TLS explicitly lacks certificate validation. |
@@ -116,9 +116,9 @@ WarOS fits best today as a `quantum SDK platform plus bootable research kernel p
 | Crypto / PQC | IMPLEMENTED | `crates/waros-crypto/src/{kem,sign,hash,qrng}.rs`, `crates/waros-crypto/tests/crypto.rs` | Real userspace PQC wrappers and hashing exist. Kernel package-signature flow is still placeholder-grade. |
 | CLI tools | IMPLEMENTED | `crates/waros-cli/src/main.rs`, `crates/waros-cli/src/commands/*`, verified `qstat` and QASM run commands | CLI is a working front-end for the userspace SDK and IBM backend. |
 | Python SDK | IMPLEMENTED | `crates/waros-python/src/*`, `crates/waros-python/waros/compat.py`, `crates/waros-python/tests/test_waros.py`, verified `pytest` with 46 passing tests | Good packaging surface via PyO3 + maturin. |
-| Build/release tooling | IMPLEMENTED | `.github/workflows/ci.yml`, `tools/kernel-image-builder`, `kernel/tools/*.ps1`, `crates/waros-python/pyproject.toml` | Rust workspace CI and Python wheel build exist. Kernel boot smoke is not automated in CI. |
+| Build/release tooling | IMPLEMENTED | `.github/workflows/ci.yml`, `tools/kernel-image-builder`, `kernel/tools/*.ps1`, `kernel/tools/*.sh`, `crates/waros-python/pyproject.toml` | Rust workspace CI, kernel image creation, headless boot smoke, and Python wheel build exist. The weakest part remains diagnosability of host-side bootloader tooling on Linux. |
 | Documentation | PARTIALLY IMPLEMENTED | `README.md`, `BLUEPRINT.md`, this audit | Docs are extensive, but some statements drift from code: README still says 4 MiB heap and says the kernel does not perform HTTPS, while kernel HTTPS/IBM code exists. |
-| Linux compatibility | SCAFFOLDED / STUBBED | `kernel/src/exec/compat.rs` returns identity mapping; `kernel/src/exec/syscall.rs` exposes Linux-like numbers; many handlers in `kernel/src/exec/syscalls/*` return `ENOSYS` | There is a partial ELF/syscall/process skeleton, but not a usable Linux compatibility layer. |
+| Linux compatibility | SCAFFOLDED / STUBBED | `kernel/src/exec/compat.rs` explicitly marks itself as a placeholder; `kernel/src/exec/syscall.rs` exposes an experimental Linux-numbered subset; many handlers in `kernel/src/exec/syscalls/*` return `ENOSYS` | There is a partial ELF/syscall/process skeleton, but not a usable Linux compatibility layer or libc environment. |
 | Security hardening | PARTIALLY IMPLEMENTED | Auth/session/users modules in `kernel/src/auth/*`; PQC crates in userspace; `kernel/src/net/tls/mod.rs` warns about no certificate validation; `kernel/src/pkg/signature.rs` says embedded root key is placeholder | Security is present as theme and API surface, not as hardened end-to-end implementation. |
 
 ## 4. Blueprint vs Reality
@@ -146,16 +146,16 @@ WarOS fits best today as a `quantum SDK platform plus bootable research kernel p
 
 ## 6. Highest-Risk Weaknesses
 - The biggest risk is architectural overhang: `BLUEPRINT.md` describes a much larger system than the codebase currently delivers. Without a strict status discipline, contributors and outsiders can easily mistake direction for implementation.
-- The kernel syscall and process model are ahead of their proof. There is real ELF/process code, but a large fraction of Linux-like syscalls still return `ENOSYS`, there are no kernel integration tests for userspace execution, and CI does not boot the kernel.
+- The kernel syscall and process model are still ahead of their proof. There is now one smoke-tested ELF/load/run/exit path and CI does boot the kernel, but a large fraction of Linux-like syscalls still return `ENOSYS` and there is no broad libc/dynamic-linking compatibility.
 - Security claims are fragile today. TLS in the kernel explicitly warns that certificate validation is not implemented, package signatures are bootstrap hashes rather than real ML-DSA verification, and there is no secure boot chain.
 - The naming boundary between generic HAL code and the blueprint's QHAL is muddy. The repo has `kernel/src/hal/*`, but the shell itself reports that no QHAL drivers are loaded. That ambiguity is a documentation and design risk.
 - Contributor productivity will be constrained by the repo's split personality unless boundaries are clarified: the userspace SDK is test-rich and concrete, while the kernel has many large modules with much lighter validation and a high ratio of surface area to proved behavior.
 
 ## 7. Recommended Priority Order
-- P0: Add an automated headless kernel boot-and-shell smoke test.
-  Why it matters: the kernel currently only gets a compile check in CI, so the most important OS claim, "it boots and reaches a usable shell," is not continuously verified.
-  Files/crates likely involved: `.github/workflows/ci.yml`, `kernel/tools/run_qemu.sh`, `kernel/tools/run_qemu.ps1`, a new headless smoke script under `kernel/tools/`.
-  Acceptance criteria: CI boots `waros-bios.img` or `waros.img` under QEMU, captures serial output, and asserts markers for memory init, WarFS init, task scheduler init, NIC/DHCP init when enabled, and shell readiness.
+- P0: Harden Linux kernel image creation and diagnostics around the `bootloader` path.
+  Why it matters: boot smoke now exists, so the highest-risk CI path is host-side image generation and its poor upstream failure mode when `bootloader` panics during custom builds.
+  Files/crates likely involved: `.github/workflows/ci.yml`, `kernel/tools/create_image.sh`, `tools/kernel-image-builder/*`.
+  Acceptance criteria: Linux CI either creates the BIOS/UEFI images successfully or fails with actionable diagnostics about missing toolchain components or bootloader-side errors.
 - P0: Audit and gate the syscall surface so unsupported paths are explicit.
   Why it matters: `kernel/src/exec/syscall.rs` advertises far more than the kernel actually supports, which creates false Linux-compatibility expectations.
   Files/crates likely involved: `kernel/src/exec/syscall.rs`, `kernel/src/exec/syscalls/*`, `kernel/src/exec/compat.rs`, `kernel/src/shell/commands.rs`, `README.md`.
@@ -164,10 +164,10 @@ WarOS fits best today as a `quantum SDK platform plus bootable research kernel p
   Why it matters: there are already concrete drifts, including README's 4 MiB heap claim and the statement that the kernel does not perform HTTPS requests.
   Files/crates likely involved: `README.md`, `BLUEPRINT.md`, `docs/ARCHITECTURE_AUDIT_MARCH_2026.md`, future status docs.
   Acceptance criteria: all top-level docs distinguish implemented/partial/planned status and remove contradicted statements.
-- P1: Prove one minimal end-to-end userspace execution path in the kernel.
-  Why it matters: WarExec/ELF loading exists in code, but there is not enough repository evidence yet to claim a real userspace model.
-  Files/crates likely involved: `kernel/src/exec/*`, `kernel/src/shell/commands.rs`, a minimal sample userspace ELF build target.
-  Acceptance criteria: a small user binary can be loaded from WarFS, started from the shell, return an exit code, and be exercised by an automated QEMU smoke test.
+- P1: Keep the userspace proof narrow and explicit instead of widening the ABI surface.
+  Why it matters: WarExec/ELF loading now has one real smoke-tested path, but that is still far from a general-purpose userspace model.
+  Files/crates likely involved: `kernel/src/exec/*`, `kernel/src/shell/commands.rs`, `kernel/tools/boot_smoke.sh`.
+  Acceptance criteria: user-visible help and docs stay explicit about the partial syscall ABI, and any new userspace behavior lands with deterministic smoke coverage.
 - P1: Harden kernel HTTPS and package verification or mark them experimental.
   Why it matters: the kernel currently has real network/TLS/IBM/package code, but critical security properties are missing.
   Files/crates likely involved: `kernel/src/net/tls/mod.rs`, `kernel/src/net/ibm.rs`, `kernel/src/pkg/signature.rs`, `kernel/src/pkg/*`.
@@ -197,11 +197,11 @@ WarOS fits best today as a `quantum SDK platform plus bootable research kernel p
 - Do not allow invented maturity language. Prompts should force classification as implemented, partial, stubbed, or planned.
 
 ## 9. Proposed Next 10 Issues
-### 1. Add Headless QEMU Boot Smoke Test to CI
-- Title: `kernel: add headless QEMU boot smoke test with serial-output assertions`
-- Scope: boot the kernel image in CI and assert successful arrival at the shell.
-- Affected modules: `.github/workflows/ci.yml`, `kernel/tools/*`, new smoke script.
-- Acceptance criteria: CI fails if serial output does not contain core boot markers and `WarOS shell online`.
+### 1. Harden Linux Kernel Image Creation in CI
+- Title: `kernel/tooling: harden Linux image creation and capture bootloader diagnostics`
+- Scope: keep the existing boot smoke path intact while making host-side image creation reliable and diagnosable on Linux runners.
+- Affected modules: `.github/workflows/ci.yml`, `kernel/tools/create_image.sh`, `tools/kernel-image-builder/*`.
+- Acceptance criteria: Linux CI either produces `waros.img` and `waros-bios.img` successfully or fails with actionable diagnostics about missing rustup components or bootloader-side stderr.
 
 ### 2. Verify WarFS Persistence Across Reboot
 - Title: `kernel/fs: add automated first-boot format and second-boot persistence test`
@@ -215,11 +215,11 @@ WarOS fits best today as a `quantum SDK platform plus bootable research kernel p
 - Affected modules: `kernel/src/exec/syscall.rs`, `kernel/src/exec/syscalls/*`, `kernel/src/exec/compat.rs`.
 - Acceptance criteria: no silent compatibility claims remain; each syscall has status documentation and tests where implemented.
 
-### 4. Prove One Minimal ELF Userspace Program
-- Title: `kernel/exec: add minimal user ELF sample and execve smoke test`
-- Scope: create a tiny userspace binary and validate `spawn/execve/wait`.
-- Affected modules: `kernel/src/exec/*`, `kernel/src/shell/commands.rs`, new sample binary target.
-- Acceptance criteria: shell launches the sample binary, captures its stdout, and reports its exit status in automated boot testing.
+### 4. Add One More Narrow Userspace ABI Smoke
+- Title: `kernel/exec: add a second deterministic ELF smoke without widening Linux claims`
+- Scope: exercise one more already-implemented syscall or ABI path with a tiny user ELF while keeping WarExec explicitly experimental.
+- Affected modules: `kernel/src/exec/*`, `kernel/tools/boot_smoke.sh`, optional additional sample ELF helper.
+- Acceptance criteria: automated QEMU smoke proves one additional deterministic userspace behavior beyond stdout+exit, and docs still state that the ABI is partial and non-Linux-compatible.
 
 ### 5. Harden Kernel TLS or Disable It by Default
 - Title: `kernel/net: implement certificate verification or mark HTTPS paths experimental`

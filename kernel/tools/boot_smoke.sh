@@ -51,6 +51,13 @@ if [ ! -f "${IMAGE_PATH}" ]; then
     "${SCRIPT_DIR}/create_image.sh"
 fi
 
+if [ ! -s "${IMAGE_PATH}" ]; then
+    fail "kernel image missing or empty: ${IMAGE_PATH}"
+fi
+
+echo "Boot smoke: using image ${IMAGE_PATH}"
+ls -lh "${IMAGE_PATH}" || true
+
 : > "${LOG_PATH}"
 
 # The assertions intentionally use stable serial markers that already exist in the kernel:
