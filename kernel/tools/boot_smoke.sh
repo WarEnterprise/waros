@@ -23,6 +23,13 @@ ABI_ARGV_ARGC_MARKER="argc=3"
 ABI_ARGV_ARGV1_MARKER="argv1=alpha"
 ABI_ARGV_ARGV2_MARKER="argv2=beta"
 ABI_ARGV_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-argv-smoke.elf exited with code 45"
+ABI_EXEC_LAUNCH_MARKER="[INFO] WarExec ABI proof: launching /bin/warexec-exec-parent.elf"
+ABI_EXEC_PARENT_MARKER="exec-parent-start"
+ABI_EXEC_CHILD_MARKER="exec-child"
+ABI_EXEC_ARGC_MARKER="argc=3"
+ABI_EXEC_ARGV1_MARKER="argv1=gamma"
+ABI_EXEC_ARGV2_MARKER="argv2=delta"
+ABI_EXEC_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-exec-child.elf exited with code 46"
 SHELL_MARKER="[INFO] WarOS shell online. Type 'help' for available commands."
 
 QEMU_PID=""
@@ -85,7 +92,14 @@ ls -lh "${IMAGE_PATH}" || true
 # 12. argv proof argv1 output
 # 13. argv proof argv2 output
 # 14. argv proof exit marker
-# 15. shell-ready banner
+# 15. exec proof launch marker
+# 16. exec parent pre-transition marker
+# 17. exec child marker
+# 18. exec child argc output
+# 19. exec child argv1 output
+# 20. exec child argv2 output
+# 21. exec child exit marker
+# 22. shell-ready banner
 #
 # This keeps CI deterministic without introducing timing-sensitive interaction or GUI automation.
 "${QEMU_BIN}" \
@@ -116,6 +130,13 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         && grep -Fq "${ABI_ARGV_ARGV1_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${ABI_ARGV_ARGV2_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${ABI_ARGV_PROOF_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_EXEC_LAUNCH_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_EXEC_PARENT_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_EXEC_CHILD_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_EXEC_ARGC_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_EXEC_ARGV1_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_EXEC_ARGV2_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_EXEC_PROOF_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${SHELL_MARKER}" "${LOG_PATH}"; then
         echo "Kernel boot smoke passed."
         echo "  Log: ${LOG_PATH}"
@@ -133,6 +154,13 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         echo "  Found: ${ABI_ARGV_ARGV1_MARKER}"
         echo "  Found: ${ABI_ARGV_ARGV2_MARKER}"
         echo "  Found: ${ABI_ARGV_PROOF_MARKER}"
+        echo "  Found: ${ABI_EXEC_LAUNCH_MARKER}"
+        echo "  Found: ${ABI_EXEC_PARENT_MARKER}"
+        echo "  Found: ${ABI_EXEC_CHILD_MARKER}"
+        echo "  Found: ${ABI_EXEC_ARGC_MARKER}"
+        echo "  Found: ${ABI_EXEC_ARGV1_MARKER}"
+        echo "  Found: ${ABI_EXEC_ARGV2_MARKER}"
+        echo "  Found: ${ABI_EXEC_PROOF_MARKER}"
         echo "  Found: ${SHELL_MARKER}"
         exit 0
     fi

@@ -430,6 +430,38 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
         }
     }
 
+    boot_notice("WarExec ABI proof: launching /bin/warexec-exec-parent.elf");
+    match cpu_interrupts::without_interrupts(|| exec::smoke::run_abi_exec_smoke()) {
+        Ok(exit_code) if exit_code == exec::smoke::ABI_EXEC_CHILD_ELF_EXIT_CODE => boot_ok_fmt(
+            format_args!(
+                "WarExec ABI proof: {} exited with code {}",
+                exec::smoke::ABI_EXEC_CHILD_ELF_PATH,
+                exit_code
+            ),
+            format_args!(
+                "WarExec ABI proof: {} exited with code {}",
+                exec::smoke::ABI_EXEC_CHILD_ELF_PATH,
+                exit_code
+            ),
+        ),
+        Ok(exit_code) => {
+            let message = alloc::format!(
+                "WarExec ABI proof: {} exited with unexpected code {}",
+                exec::smoke::ABI_EXEC_CHILD_ELF_PATH,
+                exit_code
+            );
+            boot_notice(message.as_str());
+        }
+        Err(error) => {
+            let message = alloc::format!(
+                "WarExec ABI proof: failed to execute {} ({:?})",
+                exec::smoke::ABI_EXEC_PARENT_ELF_PATH,
+                error
+            );
+            boot_notice(message.as_str());
+        }
+    }
+
     display::branding::boot_complete_animation();
     display::branding::show_separator();
     kprint_colored!(Colors::DIM, "Boot complete in {} ms.\n", boot_complete_ms);

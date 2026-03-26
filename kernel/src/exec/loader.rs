@@ -174,11 +174,18 @@ pub fn teardown_process(pid: u32) -> Result<(), ExecError> {
         .cloned()
         .ok_or(ExecError::ProcessNotFound)?;
 
+    teardown_process_image(process.page_table_phys, &process.address_space)
+}
+
+pub fn teardown_process_image(
+    page_table_phys: u64,
+    address_space: &AddressSpace,
+) -> Result<(), ExecError> {
     // Switch to the process's page table so active_mapper operates on it.
     // SAFETY: process.page_table_phys preserves the non-user kernel/runtime mappings needed
     // after the CR3 switch.
-    if process.page_table_phys != 0 && process.page_table_phys != kernel_cr3() {
-        unsafe { switch_cr3(process.page_table_phys); }
+    if page_table_phys != 0 && page_table_phys != kernel_cr3() {
+        unsafe { switch_cr3(page_table_phys); }
     }
 
     let mut mapper = active_mapper()?;
@@ -187,7 +194,7 @@ pub fn teardown_process(pid: u32) -> Result<(), ExecError> {
         .as_mut()
         .ok_or(ExecError::MemoryAllocationFailed)?;
 
-    for segment in &process.address_space.segments {
+    for segment in &address_space.segments {
         unmap_range(
             &mut mapper,
             allocator,
@@ -198,8 +205,8 @@ pub fn teardown_process(pid: u32) -> Result<(), ExecError> {
     unmap_range(
         &mut mapper,
         allocator,
-        process.address_space.stack_bottom,
-        process.address_space.stack_top,
+        address_space.stack_bottom,
+        address_space.stack_top,
     );
 
     // Restore kernel page table.
@@ -210,8 +217,8 @@ pub fn teardown_process(pid: u32) -> Result<(), ExecError> {
     }
 
     // Free the PML4 frame itself (but not intermediate tables — acceptable for now).
-    if process.page_table_phys != 0 && process.page_table_phys != kcr3 {
-        allocator.free_frame(PhysAddr::new(process.page_table_phys));
+    if page_table_phys != 0 && page_table_phys != kcr3 {
+        allocator.free_frame(PhysAddr::new(page_table_phys));
     }
 
     Ok(())

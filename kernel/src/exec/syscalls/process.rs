@@ -1,5 +1,5 @@
 use crate::exec::elf::parse_elf;
-use crate::exec::process::ProcessImageKind;
+use crate::exec::process::{ProcessImageKind, ProcessState};
 use crate::exec::{current_pid, loader, mark_exit, PROCESS_TABLE};
 use crate::auth::UserRole;
 use crate::auth::USER_DB;
@@ -54,14 +54,11 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
     let arg_refs: alloc::vec::Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
     let Some(pid) = current_pid() else { return -1; };
-    let (uid, _parent_pid, _priority, _cwd) = {
+    let (uid, old_page_table_phys, old_address_space) = {
         let process_table = PROCESS_TABLE.lock();
         let Some(proc) = process_table.get(pid) else { return -1; };
-        (proc.uid, proc.parent_pid, proc.priority, proc.cwd.clone())
+        (proc.uid, proc.page_table_phys, proc.address_space.clone())
     };
-
-    // Replace the current process image: teardown old memory, load new ELF.
-    let _ = loader::teardown_process(pid);
 
     let role = role_for_uid(uid);
     let elf_data = match fs::FILESYSTEM.lock().read_as(&path_str, uid, role) {
@@ -78,7 +75,11 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
         Err(_) => return -12,
     };
 
-    let saved_cr3 = loader::kernel_cr3();
+    let saved_cr3 = {
+        use x86_64::registers::control::Cr3;
+        let (frame, _) = Cr3::read();
+        frame.start_address().as_u64()
+    };
     // SAFETY: new_cr3 preserves the non-user kernel/runtime mappings required after the CR3 switch.
     unsafe {
         use x86_64::registers::control::{Cr3, Cr3Flags};
@@ -96,21 +97,37 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
         Cr3::write(PhysFrame::containing_address(PhysAddr::new(saved_cr3)), Cr3Flags::empty());
     }
 
-    let (address_space, context, _) = match map_result {
+    let (address_space, context, memory_pages) = match map_result {
         Ok(r) => r,
         Err(_) => return -8,
     };
 
-    // Update the process in place with the new image.
+    // Commit the replacement image in place. WarExec intentionally keeps this narrow:
+    // one process identity, one replacement ELF, same minimal argc/argv ABI, empty env.
     let mut process_table = PROCESS_TABLE.lock();
-    if let Some(process) = process_table.get_mut(pid) {
-        process.context = context;
-        process.page_table_phys = new_cr3;
-        process.address_space = address_space;
-        process.image_path = path_str;
-        process.image_kind = ProcessImageKind::Elf;
+    let Some(process) = process_table.get_mut(pid) else {
+        return -1;
+    };
+    process.context = context;
+    process.page_table_phys = new_cr3;
+    process.address_space = address_space;
+    process.memory_pages = memory_pages;
+    process.name = path_str.rsplit('/').next().unwrap_or(path_str.as_str()).into();
+    process.image_path = path_str;
+    process.image_kind = ProcessImageKind::Elf;
+    process.env.clear();
+    process.exit_code = None;
+    process.state = ProcessState::Running;
+    drop(process_table);
+
+    if let Err(error) = loader::teardown_process_image(old_page_table_phys, &old_address_space) {
+        crate::serial_println!(
+            "[INFO] WarExec exec: previous image cleanup incomplete ({:?})",
+            error
+        );
     }
 
+    crate::exec::syscall::request_exec_transition();
     0
 }
 

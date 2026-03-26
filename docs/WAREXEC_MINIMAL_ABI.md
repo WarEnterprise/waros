@@ -2,7 +2,7 @@
 
 WarOS does not currently provide a Linux userspace ABI.
 The kernel reuses selected x86_64 Linux syscall numbers for convenience only.
-Today, WarExec is an experimental minimal ABI with four CI-proven static ELF paths:
+Today, WarExec is an experimental minimal ABI with five CI-proven static ELF paths:
 
 - `/bin/warexec-smoke.elf`
   proves ELF load, stdout write, and exit
@@ -12,6 +12,8 @@ Today, WarExec is an experimental minimal ABI with four CI-proven static ELF pat
   proves per-FD read-offset advancement and EOF on a seeded WarFS file, plus stdout write and exit
 - `/bin/warexec-argv-smoke.elf`
   proves the current process-entry ABI: stack-based `argc`/`argv`, deterministic argument strings, and exit
+- `/bin/warexec-exec-parent.elf` -> `/bin/warexec-exec-child.elf`
+  proves one narrow userspace-triggered `execve` transition: in-place image replacement, reused stack-based `argc`/`argv`, deterministic child output, and exit
 
 ## CI-Proven ABI Contract
 
@@ -28,6 +30,12 @@ The following behavior is part of the currently proven minimal ABI:
   `argv[argc]` is `NULL`
   no envp array or auxv is exposed at entry yet
   general-purpose registers other than `%rsp` are not currently part of the ABI contract
+- Minimal exec replacement
+  `execve(path, argv, envp)` is a narrow in-place image replacement path only
+  path resolution uses WarFS and the target must be a static little-endian x86_64 ELF
+  a successful `execve` does not return to the caller; the current image is replaced and entered through the same stack-based `argc`/`argv` ABI
+  `envp` is currently ignored and the replacement image receives no envp array at entry
+  no fork, interpreter handoff, dynamic loader, or Linux-compatible `execve` semantics are claimed
 - Standard file descriptors
   fd `1` and fd `2` support `write`
   fd `0` exists but no interactive stdin ABI is proven yet
@@ -51,7 +59,7 @@ These limitations are intentional and should be treated as part of the ABI contr
 - envp is omitted from the userspace entry ABI for now
 - no broad libc compatibility is claimed
 - no `fork` ABI is exposed
-- `execve` exists only as an experimental in-place image replacement path; it reuses the same minimal stack ABI and currently passes an empty environment
+- `execve` is still intentionally narrow: one in-place image replacement path only
 - no dynamic linking, shared libraries, or interpreter handoff
 
 ## Syscall Surface Status
@@ -66,7 +74,8 @@ These limitations are intentional and should be treated as part of the ABI contr
 | 4 | `stat` | implemented but experimental | basic metadata struct only |
 | 9 / 11 / 12 | `mmap` / `munmap` / `brk` | implemented but experimental | narrow anonymous memory management only |
 | 20 / 39 / 102 | `getpid` / `getppid` / `getuid` | implemented but experimental | basic identity queries |
-| 59 / 61 | `execve` / `wait4` | implemented but experimental | not Linux-compatible semantics |
+| 59 | `execve` | implemented and proven | narrow in-place image replacement only; reuses stack-based `argc`/`argv`, envp omitted |
+| 61 | `wait4` | implemented but experimental | not part of the current minimal WarExec ABI |
 | 79 / 80 | `getcwd` / `chdir` | implemented but experimental | not CI-proven as ABI |
 | 228 / 230 | `clock_gettime` / `nanosleep` | implemented but experimental | simple time support |
 | 300-304 | `qalloc`..`qstate` | implemented but experimental | not part of the current minimal WarExec ABI |
@@ -87,6 +96,8 @@ These limitations are intentional and should be treated as part of the ABI contr
 - ELF proof binary: `/bin/warexec-read-smoke.elf`
 - ELF proof binary: `/bin/warexec-offset-smoke.elf`
 - ELF proof binary: `/bin/warexec-argv-smoke.elf`
+- ELF proof binary: `/bin/warexec-exec-parent.elf`
+- ELF proof binary: `/bin/warexec-exec-child.elf`
 
 This document is intentionally narrow.
 If a behavior is not listed above as proven or implemented, WarOS should not claim it as current userspace ABI support.
