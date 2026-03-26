@@ -1,5 +1,5 @@
 use crate::auth::session;
-use crate::exec::fd_table::DescriptorTarget;
+use crate::exec::fd_table::{DescriptorTarget, FileHandle};
 use crate::exec::PROCESS_TABLE;
 use crate::fs;
 
@@ -9,20 +9,24 @@ pub fn sys_read(fd: u32, buffer: *mut u8, len: usize) -> i64 {
     if buffer.is_null() {
         return -1;
     }
+    if len == 0 {
+        return 0;
+    }
 
-    // The current minimal ABI only supports plain WarFS file descriptors. Reads are
-    // intentionally stateless for now: each call returns bytes from offset 0, truncated
-    // to the caller's buffer length.
-    let path = {
-        let process_table = PROCESS_TABLE.lock();
-        let Some(process) = super::current_pid().and_then(|pid| process_table.get(pid)) else {
+    // The current minimal ABI only supports plain WarFS file descriptors. Each
+    // successful `open(path, 0, 0)` gets an independent per-FD read offset. `read`
+    // consumes from the current offset, advances it by the bytes actually copied,
+    // and returns 0 at EOF.
+    let (path, start_offset) = {
+        let mut process_table = PROCESS_TABLE.lock();
+        let Some(process) = super::current_pid().and_then(|pid| process_table.get_mut(pid)) else {
             return -1;
         };
-        let Some(descriptor) = process.fd_table.get(fd) else {
+        let Some(descriptor) = process.fd_table.get_mut(fd) else {
             return -1;
         };
-        match &descriptor.target {
-            DescriptorTarget::File(path) => path.clone(),
+        match &mut descriptor.target {
+            DescriptorTarget::File(handle) => (handle.path.clone(), handle.offset),
             _ => return ENOSYS,
         }
     };
@@ -30,9 +34,29 @@ pub fn sys_read(fd: u32, buffer: *mut u8, len: usize) -> i64 {
     let Ok((_, data)) = fs::read_current(&path) else {
         return -1;
     };
-    let bytes = &data[..data.len().min(len)];
+    let start = start_offset.min(data.len());
+    let end = start.saturating_add(len).min(data.len());
+    if start >= end {
+        return 0;
+    }
+    let bytes = &data[start..end];
     // SAFETY: The destination buffer belongs to the userspace caller.
-    unsafe { copy_to_user_ptr(buffer, bytes) as i64 }
+    let copied = unsafe { copy_to_user_ptr(buffer, bytes) };
+
+    let mut process_table = PROCESS_TABLE.lock();
+    let Some(process) = super::current_pid().and_then(|pid| process_table.get_mut(pid)) else {
+        return -1;
+    };
+    let Some(descriptor) = process.fd_table.get_mut(fd) else {
+        return -1;
+    };
+    match &mut descriptor.target {
+        DescriptorTarget::File(handle) => {
+            handle.offset = start.saturating_add(copied);
+            copied as i64
+        }
+        _ => ENOSYS,
+    }
 }
 
 pub fn sys_write(fd: u32, buffer: *const u8, len: usize) -> i64 {
@@ -77,7 +101,10 @@ pub fn sys_open(path: *const u8, _flags: u32, _mode: u32) -> i64 {
     };
     process
         .fd_table
-        .insert(DescriptorTarget::File(resolved)) as i64
+        .insert(DescriptorTarget::File(FileHandle {
+            path: resolved,
+            offset: 0,
+        })) as i64
 }
 
 pub fn sys_close(fd: u32) -> i64 {
