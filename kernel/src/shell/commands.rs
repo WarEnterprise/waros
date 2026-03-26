@@ -349,8 +349,8 @@ fn cmd_help(topic: Option<&str>) {
     kprint_colored!(Colors::PURPLE, "Execution\n");
     kprintln!("  exec <path>      ps              top             nice <pri> <cmd>");
     kprintln!("  jobs             wait <pid>      kill <pid>      warpkg <subcmd>");
-    kprint_colored!(Colors::DIM, "  WarExec is experimental: static ELF entry, stdout/stderr write, exit, and one\n");
-    kprint_colored!(Colors::DIM, "  narrow read-only open/read/close path are smoke-tested; broader libc, fork, execve,\n");
+    kprint_colored!(Colors::DIM, "  WarExec is experimental: static ELF entry, stack-based argc/argv, stdout/stderr write,\n");
+    kprint_colored!(Colors::DIM, "  narrow read-only per-FD open/read/close path are smoke-tested; broader libc, fork, execve,\n");
     kprint_colored!(Colors::DIM, "  and dynamic-linking compatibility are not claimed.\n");
     kprintln!();
 
@@ -1524,8 +1524,8 @@ fn cmd_kill(args: &[&str]) {
 fn cmd_exec(args: &[&str]) {
     let Some(path) = args.first().copied() else {
         kprintln!("Usage: exec <path> [args]");
-        kprintln!("  Supports the current minimal WarExec ABI only: static ELF entry, stdout/stderr");
-        kprintln!("  write, exit, and one narrow read-only open/read/close file path.");
+        kprintln!("  Supports the current minimal WarExec ABI only: static ELF entry, stack-based argc/argv,");
+        kprintln!("  stdout/stderr write, exit, and one narrow read-only open/read/close file path.");
         return;
     };
 

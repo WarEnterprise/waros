@@ -3,11 +3,17 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 #[derive(Debug, Clone)]
+pub struct FileHandle {
+    pub path: String,
+    pub offset: usize,
+}
+
+#[derive(Debug, Clone)]
 pub enum DescriptorTarget {
     Stdin,
     Stdout,
     Stderr,
-    File(String),
+    File(FileHandle),
     Socket(u32),
     Pipe(u32),
 }
@@ -64,6 +70,10 @@ impl FileDescriptorTable {
     #[must_use]
     pub fn get(&self, fd: u32) -> Option<&FileDescriptor> {
         self.entries.get(fd as usize).and_then(Option::as_ref)
+    }
+
+    pub fn get_mut(&mut self, fd: u32) -> Option<&mut FileDescriptor> {
+        self.entries.get_mut(fd as usize).and_then(Option::as_mut)
     }
 
     pub fn close(&mut self, fd: u32) -> bool {

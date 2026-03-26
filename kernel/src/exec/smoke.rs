@@ -12,13 +12,29 @@ pub const ABI_READ_SMOKE_ELF_PATH: &str = "/bin/warexec-read-smoke.elf";
 pub const ABI_READ_SMOKE_ELF_EXIT_CODE: i32 = 43;
 pub const ABI_READ_SMOKE_FILE_PATH: &str = "/abi/waros-abi-proof.txt";
 pub const ABI_READ_SMOKE_FILE_CONTENT: &str = "warexec abi file proof\n";
+pub const ABI_OFFSET_SMOKE_ELF_PATH: &str = "/bin/warexec-offset-smoke.elf";
+pub const ABI_OFFSET_SMOKE_ELF_EXIT_CODE: i32 = 44;
+pub const ABI_OFFSET_SMOKE_FILE_PATH: &str = "/abi/waros-offset-proof.txt";
+pub const ABI_OFFSET_SMOKE_FILE_CONTENT: &str = "chunk-one|chunk-two\n";
+pub const ABI_ARGV_SMOKE_ELF_PATH: &str = "/bin/warexec-argv-smoke.elf";
+pub const ABI_ARGV_SMOKE_ELF_EXIT_CODE: i32 = 45;
+pub const ABI_ARGV_SMOKE_ARG1: &str = "alpha";
+pub const ABI_ARGV_SMOKE_ARG2: &str = "beta";
 
 const ELF_BASE_VADDR: u64 = 0x0000_0000_0040_0000;
 const ELF_HEADER_SIZE: usize = 64;
 const PROGRAM_HEADER_SIZE: usize = 56;
 const CODE_SIZE: usize = 38;
 const ABI_READ_BUFFER_SIZE: u8 = 64;
-const ABI_READ_FAILURE_EXIT_CODE: i32 = 1;
+const ABI_SMOKE_FAILURE_EXIT_CODE: i32 = 1;
+const ABI_OFFSET_FIRST_CHUNK_LEN: usize = 10;
+const ABI_OFFSET_SECOND_CHUNK_LEN: usize = 10;
+const ABI_OFFSET_EOF_PROBE_LEN: usize = 1;
+const ABI_ARGV_SMOKE_EXPECTED_ARGC: usize = 3;
+const ABI_ARGV_SMOKE_ARGC_LINE: &str = "argc=3\n";
+const ABI_ARGV_SMOKE_ARGV1_PREFIX: &str = "argv1=";
+const ABI_ARGV_SMOKE_ARGV2_PREFIX: &str = "argv2=";
+const ABI_ARGV_SMOKE_NEWLINE: &str = "\n";
 
 const ET_EXEC: u16 = 2;
 const EM_X86_64: u16 = 0x3E;
@@ -41,6 +57,16 @@ pub fn elf_bytes() -> Vec<u8> {
 #[must_use]
 pub fn abi_read_elf_bytes() -> Vec<u8> {
     build_read_abi_smoke_elf()
+}
+
+#[must_use]
+pub fn abi_offset_elf_bytes() -> Vec<u8> {
+    build_offset_abi_smoke_elf()
+}
+
+#[must_use]
+pub fn abi_argv_elf_bytes() -> Vec<u8> {
+    build_argv_abi_smoke_elf()
 }
 
 fn build_write_exit_smoke_elf() -> Vec<u8> {
@@ -84,12 +110,25 @@ pub fn run_abi_read_smoke() -> Result<i32, ExecError> {
     run_program(ABI_READ_SMOKE_ELF_PATH)
 }
 
+pub fn run_abi_offset_smoke() -> Result<i32, ExecError> {
+    run_program(ABI_OFFSET_SMOKE_ELF_PATH)
+}
+
+pub fn run_abi_argv_smoke() -> Result<i32, ExecError> {
+    let args = [ABI_ARGV_SMOKE_ELF_PATH, ABI_ARGV_SMOKE_ARG1, ABI_ARGV_SMOKE_ARG2];
+    run_program_with_args(ABI_ARGV_SMOKE_ELF_PATH, &args)
+}
+
 fn run_program(path: &str) -> Result<i32, ExecError> {
     let args = [path];
+    run_program_with_args(path, &args)
+}
+
+fn run_program_with_args(path: &str, args: &[&str]) -> Result<i32, ExecError> {
     let env: Vec<(String, String)> = Vec::new();
     let pid = loader::spawn_process(
         path,
-        &args,
+        args,
         &env,
         session::current_uid(),
         super::ensure_shell_process(),
@@ -168,7 +207,7 @@ fn build_read_abi_smoke_elf() -> Vec<u8> {
     // mov eax, 60       ; sys_exit
     payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
     // mov edi, 1
-    payload.extend_from_slice(&[0xBF, ABI_READ_FAILURE_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_SMOKE_FAILURE_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
     // syscall
     payload.extend_from_slice(&[0x0F, 0x05]);
     // ud2              ; should never be reached
@@ -181,6 +220,299 @@ fn build_read_abi_smoke_elf() -> Vec<u8> {
     patch_rel32(&mut payload, path_disp_offset, path_offset);
     patch_rel8(&mut payload, open_fail_jump, fail_offset);
     patch_rel8(&mut payload, read_fail_jump, fail_offset);
+
+    build_single_segment_rx_elf(&payload)
+}
+
+fn build_offset_abi_smoke_elf() -> Vec<u8> {
+    let path = ABI_OFFSET_SMOKE_FILE_PATH.as_bytes();
+    let mut payload = Vec::with_capacity(224);
+
+    // sub rsp, 64       ; reserve a small stack buffer for sys_read
+    payload.extend_from_slice(&[0x48, 0x83, 0xEC, ABI_READ_BUFFER_SIZE]);
+    // mov eax, 2        ; sys_open
+    payload.extend_from_slice(&[0xB8, 0x02, 0x00, 0x00, 0x00]);
+    // lea rdi, [rip+path]
+    payload.extend_from_slice(&[0x48, 0x8D, 0x3D]);
+    let path_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    // xor esi, esi      ; flags = 0 (read-only narrow path)
+    payload.extend_from_slice(&[0x31, 0xF6]);
+    // xor edx, edx      ; mode = 0
+    payload.extend_from_slice(&[0x31, 0xD2]);
+    // syscall
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // test eax, eax
+    payload.extend_from_slice(&[0x85, 0xC0]);
+    // js fail
+    payload.extend_from_slice(&[0x0F, 0x88]);
+    let open_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    // mov ebx, eax      ; preserve fd across reads + close
+    payload.extend_from_slice(&[0x89, 0xC3]);
+
+    // First read: "chunk-one|"
+    // xor eax, eax      ; sys_read
+    payload.extend_from_slice(&[0x31, 0xC0]);
+    // mov edi, ebx      ; fd
+    payload.extend_from_slice(&[0x89, 0xDF]);
+    // mov rsi, rsp      ; buffer
+    payload.extend_from_slice(&[0x48, 0x89, 0xE6]);
+    // mov edx, len
+    payload.push(0xBA);
+    payload.extend_from_slice(&(ABI_OFFSET_FIRST_CHUNK_LEN as u32).to_le_bytes());
+    // syscall
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // cmp eax, expected_len
+    payload.extend_from_slice(&[0x83, 0xF8, ABI_OFFSET_FIRST_CHUNK_LEN as u8]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let first_read_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    // mov eax, 1        ; sys_write
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    // mov edi, 1        ; stdout
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    // mov rsi, rsp      ; buffer
+    payload.extend_from_slice(&[0x48, 0x89, 0xE6]);
+    // mov edx, len
+    payload.push(0xBA);
+    payload.extend_from_slice(&(ABI_OFFSET_FIRST_CHUNK_LEN as u32).to_le_bytes());
+    // syscall
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // Second read: "chunk-two\n"
+    // xor eax, eax      ; sys_read
+    payload.extend_from_slice(&[0x31, 0xC0]);
+    // mov edi, ebx      ; fd
+    payload.extend_from_slice(&[0x89, 0xDF]);
+    // mov rsi, rsp      ; buffer
+    payload.extend_from_slice(&[0x48, 0x89, 0xE6]);
+    // mov edx, len
+    payload.push(0xBA);
+    payload.extend_from_slice(&(ABI_OFFSET_SECOND_CHUNK_LEN as u32).to_le_bytes());
+    // syscall
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // cmp eax, expected_len
+    payload.extend_from_slice(&[0x83, 0xF8, ABI_OFFSET_SECOND_CHUNK_LEN as u8]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let second_read_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    // mov eax, 1        ; sys_write
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    // mov edi, 1        ; stdout
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    // mov rsi, rsp      ; buffer
+    payload.extend_from_slice(&[0x48, 0x89, 0xE6]);
+    // mov edx, len
+    payload.push(0xBA);
+    payload.extend_from_slice(&(ABI_OFFSET_SECOND_CHUNK_LEN as u32).to_le_bytes());
+    // syscall
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // EOF probe: read one more byte and require 0
+    // xor eax, eax      ; sys_read
+    payload.extend_from_slice(&[0x31, 0xC0]);
+    // mov edi, ebx      ; fd
+    payload.extend_from_slice(&[0x89, 0xDF]);
+    // mov rsi, rsp      ; buffer
+    payload.extend_from_slice(&[0x48, 0x89, 0xE6]);
+    // mov edx, 1
+    payload.push(0xBA);
+    payload.extend_from_slice(&(ABI_OFFSET_EOF_PROBE_LEN as u32).to_le_bytes());
+    // syscall
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // test eax, eax
+    payload.extend_from_slice(&[0x85, 0xC0]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let eof_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // mov eax, 3        ; sys_close
+    payload.extend_from_slice(&[0xB8, 0x03, 0x00, 0x00, 0x00]);
+    // mov edi, ebx      ; fd
+    payload.extend_from_slice(&[0x89, 0xDF]);
+    // syscall
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // test eax, eax
+    payload.extend_from_slice(&[0x85, 0xC0]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let close_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // mov eax, 60       ; sys_exit
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    // mov edi, 44
+    payload.extend_from_slice(&[0xBF, ABI_OFFSET_SMOKE_ELF_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    // syscall
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    let fail_offset = payload.len();
+    // mov eax, 60       ; sys_exit
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    // mov edi, 1
+    payload.extend_from_slice(&[0xBF, ABI_SMOKE_FAILURE_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    // syscall
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // ud2              ; should never be reached
+    payload.extend_from_slice(&[0x0F, 0x0B]);
+
+    let path_offset = payload.len();
+    payload.extend_from_slice(path);
+    payload.push(0);
+
+    patch_rel32(&mut payload, path_disp_offset, path_offset);
+    patch_rel32(&mut payload, open_fail_jump, fail_offset);
+    patch_rel32(&mut payload, first_read_fail_jump, fail_offset);
+    patch_rel32(&mut payload, second_read_fail_jump, fail_offset);
+    patch_rel32(&mut payload, eof_fail_jump, fail_offset);
+    patch_rel32(&mut payload, close_fail_jump, fail_offset);
+
+    build_single_segment_rx_elf(&payload)
+}
+
+fn build_argv_abi_smoke_elf() -> Vec<u8> {
+    let argc_line = ABI_ARGV_SMOKE_ARGC_LINE.as_bytes();
+    let argv1_prefix = ABI_ARGV_SMOKE_ARGV1_PREFIX.as_bytes();
+    let argv2_prefix = ABI_ARGV_SMOKE_ARGV2_PREFIX.as_bytes();
+    let newline = ABI_ARGV_SMOKE_NEWLINE.as_bytes();
+    let mut payload = Vec::with_capacity(320);
+
+    // mov rax, [rsp]    ; argc from the WarExec entry frame
+    payload.extend_from_slice(&[0x48, 0x8B, 0x04, 0x24]);
+    // cmp eax, 3
+    payload.extend_from_slice(&[0x83, 0xF8, ABI_ARGV_SMOKE_EXPECTED_ARGC as u8]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let argc_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // mov rbx, [rsp+32] ; argv[argc] terminator must be NULL
+    payload.extend_from_slice(&[0x48, 0x8B, 0x5C, 0x24, 0x20]);
+    // test rbx, rbx
+    payload.extend_from_slice(&[0x48, 0x85, 0xDB]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let argv_null_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // mov r12, [rsp+16] ; argv[1]
+    payload.extend_from_slice(&[0x4C, 0x8B, 0x64, 0x24, 0x10]);
+    // test r12, r12
+    payload.extend_from_slice(&[0x4D, 0x85, 0xE4]);
+    // je fail
+    payload.extend_from_slice(&[0x0F, 0x84]);
+    let argv1_null_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // mov r13, [rsp+24] ; argv[2]
+    payload.extend_from_slice(&[0x4C, 0x8B, 0x6C, 0x24, 0x18]);
+    // test r13, r13
+    payload.extend_from_slice(&[0x4D, 0x85, 0xED]);
+    // je fail
+    payload.extend_from_slice(&[0x0F, 0x84]);
+    let argv2_null_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // write("argc=3\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let argc_line_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(argc_line.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write("argv1=")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let argv1_prefix_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(argv1_prefix.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write(argv[1], 5)
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x4C, 0x89, 0xE6]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(ABI_ARGV_SMOKE_ARG1.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write("\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let newline1_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(newline.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write("argv2=")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let argv2_prefix_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(argv2_prefix.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write(argv[2], 4)
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x4C, 0x89, 0xEE]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(ABI_ARGV_SMOKE_ARG2.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write("\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let newline2_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(newline.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // exit(45)
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_ARGV_SMOKE_ELF_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    let fail_offset = payload.len();
+    // exit(1)
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_SMOKE_FAILURE_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    payload.extend_from_slice(&[0x0F, 0x0B]);
+
+    let argc_line_offset = payload.len();
+    payload.extend_from_slice(argc_line);
+    let argv1_prefix_offset = payload.len();
+    payload.extend_from_slice(argv1_prefix);
+    let argv2_prefix_offset = payload.len();
+    payload.extend_from_slice(argv2_prefix);
+    let newline_offset = payload.len();
+    payload.extend_from_slice(newline);
+
+    patch_rel32(&mut payload, argc_fail_jump, fail_offset);
+    patch_rel32(&mut payload, argv_null_fail_jump, fail_offset);
+    patch_rel32(&mut payload, argv1_null_fail_jump, fail_offset);
+    patch_rel32(&mut payload, argv2_null_fail_jump, fail_offset);
+    patch_rel32(&mut payload, argc_line_disp_offset, argc_line_offset);
+    patch_rel32(&mut payload, argv1_prefix_disp_offset, argv1_prefix_offset);
+    patch_rel32(&mut payload, newline1_disp_offset, newline_offset);
+    patch_rel32(&mut payload, argv2_prefix_disp_offset, argv2_prefix_offset);
+    patch_rel32(&mut payload, newline2_disp_offset, newline_offset);
 
     build_single_segment_rx_elf(&payload)
 }

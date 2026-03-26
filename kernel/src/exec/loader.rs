@@ -271,7 +271,7 @@ fn map_process_image(
     elf: &ElfInfo,
     elf_data: &[u8],
     args: &[&str],
-    env: &[(String, String)],
+    _env: &[(String, String)],
 ) -> Result<(AddressSpace, CpuContext, usize), ExecError> {
     let mut mapper = active_mapper()?;
     let mut allocator_guard = memory::FRAME_ALLOCATOR.lock();
@@ -311,7 +311,7 @@ fn map_process_image(
     memory_pages = memory_pages.saturating_add(aligned_page_count(AddressSpace::USER_STACK_SIZE));
     address_space.finalize_heap_layout();
 
-    let stack_top = setup_user_stack(address_space.stack_top, args, env)?;
+    let stack_top = setup_user_stack(address_space.stack_top, args)?;
     let selectors = gdt::selectors();
     let mut context = CpuContext::for_user(elf.entry_point, stack_top, page_table_phys);
     context.cs = u64::from(selectors.user_code.0);
@@ -412,25 +412,15 @@ fn map_stack(
 fn setup_user_stack(
     stack_top: u64,
     args: &[&str],
-    env: &[(String, String)],
-) -> Result<u64, ExecError> {
+)
+    -> Result<u64, ExecError> {
     let mut sp = stack_top;
-
-    let mut env_ptrs = alloc::vec::Vec::new();
-    for (key, value) in env.iter().rev() {
-        let text = alloc::format!("{key}={value}");
-        sp = sp.saturating_sub((text.len() + 1) as u64);
-        unsafe {
-            core::ptr::copy_nonoverlapping(text.as_ptr(), sp as *mut u8, text.len());
-            (sp as *mut u8).add(text.len()).write(0);
-        }
-        env_ptrs.push(sp);
-    }
-    env_ptrs.reverse();
 
     let mut arg_ptrs = alloc::vec::Vec::new();
     for arg in args.iter().rev() {
         sp = sp.saturating_sub((arg.len() + 1) as u64);
+        // SAFETY: The initial user stack pages were mapped writable above and this helper
+        // only writes NUL-terminated argument strings within that reserved stack range.
         unsafe {
             core::ptr::copy_nonoverlapping(arg.as_ptr(), sp as *mut u8, arg.len());
             (sp as *mut u8).add(arg.len()).write(0);
@@ -439,40 +429,28 @@ fn setup_user_stack(
     }
     arg_ptrs.reverse();
 
-    sp &= !0xF;
+    // WarExec intentionally exposes a minimal stack-only process-entry ABI today:
+    //   rsp -> argc (u64)
+    //          argv[0..argc-1] pointers
+    //          argv[argc] = NULL
+    //
+    // No envp array or auxv is exposed yet. Keep the frame 16-byte aligned so one narrow,
+    // explicit entry contract is deterministic enough for CI and future hand-written ELFs.
+    let frame_words = arg_ptrs.len().saturating_add(2); // argc + argv pointers + NULL
+    let frame_bytes = (frame_words * 8) as u64;
+    sp = sp.saturating_sub(frame_bytes) & !0xF;
 
-    sp = sp.saturating_sub(16);
+    // SAFETY: The computed frame lies within the mapped user stack and contains only u64
+    // values for argc and argv pointers.
     unsafe {
-        (sp as *mut u64).write(0);
-        ((sp + 8) as *mut u64).write(0);
-    }
-
-    sp = sp.saturating_sub(8);
-    unsafe {
-        (sp as *mut u64).write(0);
-    }
-    for pointer in env_ptrs.iter().rev() {
-        sp = sp.saturating_sub(8);
-        unsafe {
-            (sp as *mut u64).write(*pointer);
+        (sp as *mut u64).write(arg_ptrs.len() as u64);
+        let argv_base = sp + 8;
+        for (index, pointer) in arg_ptrs.iter().enumerate() {
+            ((argv_base + (index as u64 * 8)) as *mut u64).write(*pointer);
         }
+        ((argv_base + (arg_ptrs.len() as u64 * 8)) as *mut u64).write(0);
     }
 
-    sp = sp.saturating_sub(8);
-    unsafe {
-        (sp as *mut u64).write(0);
-    }
-    for pointer in arg_ptrs.iter().rev() {
-        sp = sp.saturating_sub(8);
-        unsafe {
-            (sp as *mut u64).write(*pointer);
-        }
-    }
-
-    sp = sp.saturating_sub(8);
-    unsafe {
-        (sp as *mut u64).write(args.len() as u64);
-    }
     Ok(sp)
 }
 
