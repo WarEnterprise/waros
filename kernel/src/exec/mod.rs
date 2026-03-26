@@ -208,46 +208,52 @@ pub fn current_uid() -> u16 {
 
 pub fn run_user_process(pid: u32) -> Result<i32, ExecError> {
     let shell_pid = ensure_shell_process();
-    let process = PROCESS_TABLE
-        .lock()
-        .get(pid)
-        .cloned()
-        .ok_or(ExecError::ProcessNotFound)?;
-
     SCHEDULER.lock().disable();
     mark_running(pid);
+    let exit_code = loop {
+        let process = PROCESS_TABLE
+            .lock()
+            .get(pid)
+            .cloned()
+            .ok_or(ExecError::ProcessNotFound)?;
 
-    // Switch to the process's isolated page table before entering ring 3.
-    let kcr3 = loader::kernel_cr3();
-    if process.page_table_phys != 0 && process.page_table_phys != kcr3 {
-        use x86_64::registers::control::{Cr3, Cr3Flags};
-        use x86_64::structures::paging::PhysFrame;
-        use x86_64::PhysAddr;
-        let frame = PhysFrame::containing_address(PhysAddr::new(process.page_table_phys));
-        // SAFETY: process.page_table_phys preserves the non-user kernel/runtime mappings needed
-        // after the CR3 switch.
-        unsafe { Cr3::write(frame, Cr3Flags::empty()); }
-    }
+        // Switch to the process's isolated page table before entering ring 3.
+        let kcr3 = loader::kernel_cr3();
+        if process.page_table_phys != 0 && process.page_table_phys != kcr3 {
+            use x86_64::registers::control::{Cr3, Cr3Flags};
+            use x86_64::structures::paging::PhysFrame;
+            use x86_64::PhysAddr;
+            let frame = PhysFrame::containing_address(PhysAddr::new(process.page_table_phys));
+            // SAFETY: process.page_table_phys preserves the non-user kernel/runtime mappings needed
+            // after the CR3 switch.
+            unsafe { Cr3::write(frame, Cr3Flags::empty()); }
+        }
 
-    let exit_code = unsafe {
-        syscall::run_user_process(
-            process.context.rip,
-            process.context.rsp,
-            process.context.rflags,
-            process.context.cs,
-            process.context.ss,
-        )
-    } as i32;
+        let user_return = unsafe {
+            syscall::run_user_process(
+                process.context.rip,
+                process.context.rsp,
+                process.context.rflags,
+                process.context.cs,
+                process.context.ss,
+            )
+        };
 
-    // Restore kernel page table.
-    if kcr3 != 0 {
-        use x86_64::registers::control::{Cr3, Cr3Flags};
-        use x86_64::structures::paging::PhysFrame;
-        use x86_64::PhysAddr;
-        let frame = PhysFrame::containing_address(PhysAddr::new(kcr3));
-        // SAFETY: KERNEL_CR3 was saved at boot from the bootloader-established CR3.
-        unsafe { Cr3::write(frame, Cr3Flags::empty()); }
-    }
+        // Restore kernel page table after every ring-3 run, including exec image replacement.
+        if kcr3 != 0 {
+            use x86_64::registers::control::{Cr3, Cr3Flags};
+            use x86_64::structures::paging::PhysFrame;
+            use x86_64::PhysAddr;
+            let frame = PhysFrame::containing_address(PhysAddr::new(kcr3));
+            // SAFETY: KERNEL_CR3 was saved at boot from the bootloader-established CR3.
+            unsafe { Cr3::write(frame, Cr3Flags::empty()); }
+        }
+
+        match user_return {
+            syscall::UserReturn::Exit(exit_code) => break exit_code,
+            syscall::UserReturn::Exec => continue,
+        }
+    };
 
     {
         let mut scheduler = SCHEDULER.lock();

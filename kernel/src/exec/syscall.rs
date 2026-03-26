@@ -37,7 +37,23 @@ static mut WAROS_USER_RETURN_RIP: u64 = 0;
 static mut WAROS_USER_EXIT_CODE: i64 = -1;
 
 #[unsafe(no_mangle)]
+static mut WAROS_USER_RETURN_KIND: u8 = 0;
+
+#[unsafe(no_mangle)]
 static mut WAROS_USER_RETURN_PENDING: u8 = 0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum UserReturnKind {
+    Exit = 1,
+    Exec = 2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserReturn {
+    Exit(i32),
+    Exec,
+}
 
 global_asm!(
     r#"
@@ -114,6 +130,7 @@ waros_run_user_process:
     mov qword ptr [rip + WAROS_USER_RETURN_RIP], rax
     mov qword ptr [rip + WAROS_USER_RETURN_RSP], rsp
     mov qword ptr [rip + WAROS_USER_EXIT_CODE], -1
+    mov byte ptr [rip + WAROS_USER_RETURN_KIND], 0
     mov byte ptr [rip + WAROS_USER_RETURN_PENDING], 0
 
     push r8
@@ -176,6 +193,17 @@ pub fn request_kernel_return(exit_code: i32) {
     // synchronous bootstrap path at a time.
     unsafe {
         WAROS_USER_EXIT_CODE = i64::from(exit_code);
+        WAROS_USER_RETURN_KIND = UserReturnKind::Exit as u8;
+        WAROS_USER_RETURN_PENDING = 1;
+    }
+}
+
+pub fn request_exec_transition() {
+    // SAFETY: WarOS currently runs a single CPU and only one userspace process can be in the
+    // synchronous bootstrap path at a time.
+    unsafe {
+        WAROS_USER_EXIT_CODE = 0;
+        WAROS_USER_RETURN_KIND = UserReturnKind::Exec as u8;
         WAROS_USER_RETURN_PENDING = 1;
     }
 }
@@ -186,10 +214,16 @@ pub unsafe fn run_user_process(
     user_rflags: u64,
     user_cs: u64,
     user_ss: u64,
-) -> i64 {
+) -> UserReturn {
     // SAFETY: The caller guarantees that the entry point and stack belong to a mapped
     // ring-3 image and that the process kernel stack/TSS are already active.
-    unsafe { waros_run_user_process(entry, user_stack, user_rflags, user_cs, user_ss) }
+    let exit_code = unsafe { waros_run_user_process(entry, user_stack, user_rflags, user_cs, user_ss) };
+    let return_kind = unsafe { WAROS_USER_RETURN_KIND };
+    if return_kind == UserReturnKind::Exec as u8 {
+        UserReturn::Exec
+    } else {
+        UserReturn::Exit(exit_code as i32)
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -228,7 +262,7 @@ pub extern "C" fn syscall_dispatch(
         12 => syscalls::memory::sys_brk(arg1),
         20 => syscalls::process::sys_getpid(),
         39 => syscalls::process::sys_getppid(),
-        59 => syscalls::process::sys_execve(arg1 as *const u8, arg2 as *const *const u8, arg3 as *const *const u8), // experimental minimal ELF replacement path
+        59 => syscalls::process::sys_execve(arg1 as *const u8, arg2 as *const *const u8, arg3 as *const *const u8), // experimental narrow in-place ELF replacement path
         61 => syscalls::process::sys_wait4(arg1 as i32, arg2 as *mut i32, arg3 as u32),
         79 => syscalls::file::sys_getcwd(arg1 as *mut u8, arg2 as usize),
         80 => syscalls::file::sys_chdir(arg1 as *const u8),

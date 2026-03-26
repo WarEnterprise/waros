@@ -20,6 +20,11 @@ pub const ABI_ARGV_SMOKE_ELF_PATH: &str = "/bin/warexec-argv-smoke.elf";
 pub const ABI_ARGV_SMOKE_ELF_EXIT_CODE: i32 = 45;
 pub const ABI_ARGV_SMOKE_ARG1: &str = "alpha";
 pub const ABI_ARGV_SMOKE_ARG2: &str = "beta";
+pub const ABI_EXEC_PARENT_ELF_PATH: &str = "/bin/warexec-exec-parent.elf";
+pub const ABI_EXEC_CHILD_ELF_PATH: &str = "/bin/warexec-exec-child.elf";
+pub const ABI_EXEC_CHILD_ELF_EXIT_CODE: i32 = 46;
+pub const ABI_EXEC_SMOKE_ARG1: &str = "gamma";
+pub const ABI_EXEC_SMOKE_ARG2: &str = "delta";
 
 const ELF_BASE_VADDR: u64 = 0x0000_0000_0040_0000;
 const ELF_HEADER_SIZE: usize = 64;
@@ -35,6 +40,8 @@ const ABI_ARGV_SMOKE_ARGC_LINE: &str = "argc=3\n";
 const ABI_ARGV_SMOKE_ARGV1_PREFIX: &str = "argv1=";
 const ABI_ARGV_SMOKE_ARGV2_PREFIX: &str = "argv2=";
 const ABI_ARGV_SMOKE_NEWLINE: &str = "\n";
+const ABI_EXEC_PARENT_STDOUT: &str = "exec-parent-start\n";
+const ABI_EXEC_CHILD_STDOUT: &str = "exec-child\n";
 
 const ET_EXEC: u16 = 2;
 const EM_X86_64: u16 = 0x3E;
@@ -67,6 +74,16 @@ pub fn abi_offset_elf_bytes() -> Vec<u8> {
 #[must_use]
 pub fn abi_argv_elf_bytes() -> Vec<u8> {
     build_argv_abi_smoke_elf()
+}
+
+#[must_use]
+pub fn abi_exec_parent_elf_bytes() -> Vec<u8> {
+    build_exec_parent_abi_smoke_elf()
+}
+
+#[must_use]
+pub fn abi_exec_child_elf_bytes() -> Vec<u8> {
+    build_exec_child_abi_smoke_elf()
 }
 
 fn build_write_exit_smoke_elf() -> Vec<u8> {
@@ -117,6 +134,11 @@ pub fn run_abi_offset_smoke() -> Result<i32, ExecError> {
 pub fn run_abi_argv_smoke() -> Result<i32, ExecError> {
     let args = [ABI_ARGV_SMOKE_ELF_PATH, ABI_ARGV_SMOKE_ARG1, ABI_ARGV_SMOKE_ARG2];
     run_program_with_args(ABI_ARGV_SMOKE_ELF_PATH, &args)
+}
+
+pub fn run_abi_exec_smoke() -> Result<i32, ExecError> {
+    let args = [ABI_EXEC_PARENT_ELF_PATH];
+    run_program_with_args(ABI_EXEC_PARENT_ELF_PATH, &args)
 }
 
 fn run_program(path: &str) -> Result<i32, ExecError> {
@@ -375,11 +397,111 @@ fn build_offset_abi_smoke_elf() -> Vec<u8> {
 }
 
 fn build_argv_abi_smoke_elf() -> Vec<u8> {
+    build_arg_report_smoke_elf(
+        None,
+        ABI_ARGV_SMOKE_ARG1,
+        ABI_ARGV_SMOKE_ARG2,
+        ABI_ARGV_SMOKE_ELF_EXIT_CODE,
+    )
+}
+
+fn build_exec_parent_abi_smoke_elf() -> Vec<u8> {
+    let parent_line = ABI_EXEC_PARENT_STDOUT.as_bytes();
+    let child_path = ABI_EXEC_CHILD_ELF_PATH.as_bytes();
+    let arg1 = ABI_EXEC_SMOKE_ARG1.as_bytes();
+    let arg2 = ABI_EXEC_SMOKE_ARG2.as_bytes();
+    let mut payload = Vec::with_capacity(256);
+
+    // sub rsp, 32       ; argv[0..2] + NULL terminator for execve
+    payload.extend_from_slice(&[0x48, 0x83, 0xEC, 0x20]);
+
+    // write("exec-parent-start\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let parent_line_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(parent_line.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // lea r12, [rip+child_path]
+    payload.extend_from_slice(&[0x4C, 0x8D, 0x25]);
+    let child_path_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    // lea r13, [rip+arg1]
+    payload.extend_from_slice(&[0x4C, 0x8D, 0x2D]);
+    let arg1_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    // lea r14, [rip+arg2]
+    payload.extend_from_slice(&[0x4C, 0x8D, 0x35]);
+    let arg2_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // argv[0] = child path
+    payload.extend_from_slice(&[0x4C, 0x89, 0x24, 0x24]);
+    // argv[1] = gamma
+    payload.extend_from_slice(&[0x4C, 0x89, 0x6C, 0x24, 0x08]);
+    // argv[2] = delta
+    payload.extend_from_slice(&[0x4C, 0x89, 0x74, 0x24, 0x10]);
+    // argv[3] = NULL
+    payload.extend_from_slice(&[0x48, 0xC7, 0x44, 0x24, 0x18, 0x00, 0x00, 0x00, 0x00]);
+
+    // execve(child_path, argv, NULL)
+    payload.extend_from_slice(&[0xB8, 0x3B, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x4C, 0x89, 0xE7]);
+    payload.extend_from_slice(&[0x48, 0x89, 0xE6]);
+    payload.extend_from_slice(&[0x31, 0xD2]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // Successful exec must not return. If it does, fail hard with exit(1).
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_SMOKE_FAILURE_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    payload.extend_from_slice(&[0x0F, 0x0B]);
+
+    let parent_line_offset = payload.len();
+    payload.extend_from_slice(parent_line);
+    payload.push(0);
+    let child_path_offset = payload.len();
+    payload.extend_from_slice(child_path);
+    payload.push(0);
+    let arg1_offset = payload.len();
+    payload.extend_from_slice(arg1);
+    payload.push(0);
+    let arg2_offset = payload.len();
+    payload.extend_from_slice(arg2);
+    payload.push(0);
+
+    patch_rel32(&mut payload, parent_line_disp_offset, parent_line_offset);
+    patch_rel32(&mut payload, child_path_disp_offset, child_path_offset);
+    patch_rel32(&mut payload, arg1_disp_offset, arg1_offset);
+    patch_rel32(&mut payload, arg2_disp_offset, arg2_offset);
+
+    build_single_segment_rx_elf(&payload)
+}
+
+fn build_exec_child_abi_smoke_elf() -> Vec<u8> {
+    build_arg_report_smoke_elf(
+        Some(ABI_EXEC_CHILD_STDOUT),
+        ABI_EXEC_SMOKE_ARG1,
+        ABI_EXEC_SMOKE_ARG2,
+        ABI_EXEC_CHILD_ELF_EXIT_CODE,
+    )
+}
+
+fn build_arg_report_smoke_elf(
+    header_line: Option<&str>,
+    arg1: &str,
+    arg2: &str,
+    exit_code: i32,
+) -> Vec<u8> {
+    let header_line = header_line.map(str::as_bytes);
     let argc_line = ABI_ARGV_SMOKE_ARGC_LINE.as_bytes();
     let argv1_prefix = ABI_ARGV_SMOKE_ARGV1_PREFIX.as_bytes();
     let argv2_prefix = ABI_ARGV_SMOKE_ARGV2_PREFIX.as_bytes();
     let newline = ABI_ARGV_SMOKE_NEWLINE.as_bytes();
-    let mut payload = Vec::with_capacity(320);
+    let mut payload = Vec::with_capacity(384);
 
     // mov rax, [rsp]    ; argc from the WarExec entry frame
     payload.extend_from_slice(&[0x48, 0x8B, 0x04, 0x24]);
@@ -417,6 +539,20 @@ fn build_argv_abi_smoke_elf() -> Vec<u8> {
     let argv2_null_fail_jump = payload.len();
     payload.extend_from_slice(&[0, 0, 0, 0]);
 
+    let header_line_disp_offset = if header_line.is_some() {
+        payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+        payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+        payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+        let disp_offset = payload.len();
+        payload.extend_from_slice(&[0, 0, 0, 0]);
+        payload.push(0xBA);
+        payload.extend_from_slice(&(header_line.as_ref().map_or(0, |line| line.len()) as u32).to_le_bytes());
+        payload.extend_from_slice(&[0x0F, 0x05]);
+        Some(disp_offset)
+    } else {
+        None
+    };
+
     // write("argc=3\n")
     payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
     payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
@@ -437,12 +573,12 @@ fn build_argv_abi_smoke_elf() -> Vec<u8> {
     payload.extend_from_slice(&(argv1_prefix.len() as u32).to_le_bytes());
     payload.extend_from_slice(&[0x0F, 0x05]);
 
-    // write(argv[1], 5)
+    // write(argv[1], arg1.len())
     payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
     payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
     payload.extend_from_slice(&[0x4C, 0x89, 0xE6]);
     payload.push(0xBA);
-    payload.extend_from_slice(&(ABI_ARGV_SMOKE_ARG1.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&(arg1.len() as u32).to_le_bytes());
     payload.extend_from_slice(&[0x0F, 0x05]);
 
     // write("\n")
@@ -465,12 +601,12 @@ fn build_argv_abi_smoke_elf() -> Vec<u8> {
     payload.extend_from_slice(&(argv2_prefix.len() as u32).to_le_bytes());
     payload.extend_from_slice(&[0x0F, 0x05]);
 
-    // write(argv[2], 4)
+    // write(argv[2], arg2.len())
     payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
     payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
     payload.extend_from_slice(&[0x4C, 0x89, 0xEE]);
     payload.push(0xBA);
-    payload.extend_from_slice(&(ABI_ARGV_SMOKE_ARG2.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&(arg2.len() as u32).to_le_bytes());
     payload.extend_from_slice(&[0x0F, 0x05]);
 
     // write("\n")
@@ -483,9 +619,9 @@ fn build_argv_abi_smoke_elf() -> Vec<u8> {
     payload.extend_from_slice(&(newline.len() as u32).to_le_bytes());
     payload.extend_from_slice(&[0x0F, 0x05]);
 
-    // exit(45)
+    // exit(exit_code)
     payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
-    payload.extend_from_slice(&[0xBF, ABI_ARGV_SMOKE_ELF_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, exit_code as u8, 0x00, 0x00, 0x00]);
     payload.extend_from_slice(&[0x0F, 0x05]);
 
     let fail_offset = payload.len();
@@ -495,6 +631,13 @@ fn build_argv_abi_smoke_elf() -> Vec<u8> {
     payload.extend_from_slice(&[0x0F, 0x05]);
     payload.extend_from_slice(&[0x0F, 0x0B]);
 
+    let header_line_offset = if let Some(line) = header_line {
+        let offset = payload.len();
+        payload.extend_from_slice(line);
+        Some(offset)
+    } else {
+        None
+    };
     let argc_line_offset = payload.len();
     payload.extend_from_slice(argc_line);
     let argv1_prefix_offset = payload.len();
@@ -508,6 +651,9 @@ fn build_argv_abi_smoke_elf() -> Vec<u8> {
     patch_rel32(&mut payload, argv_null_fail_jump, fail_offset);
     patch_rel32(&mut payload, argv1_null_fail_jump, fail_offset);
     patch_rel32(&mut payload, argv2_null_fail_jump, fail_offset);
+    if let (Some(disp_offset), Some(line_offset)) = (header_line_disp_offset, header_line_offset) {
+        patch_rel32(&mut payload, disp_offset, line_offset);
+    }
     patch_rel32(&mut payload, argc_line_disp_offset, argc_line_offset);
     patch_rel32(&mut payload, argv1_prefix_disp_offset, argv1_prefix_offset);
     patch_rel32(&mut payload, newline1_disp_offset, newline_offset);
