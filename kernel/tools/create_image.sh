@@ -12,4 +12,4 @@ cd "$KERNEL_DIR"
 
 cargo +nightly build --release --target x86_64-unknown-none
 cd "$REPO_ROOT"
-cargo +nightly run --manifest-path "$IMAGE_BUILDER_MANIFEST" --target x86_64-pc-windows-msvc --release -- "$KERNEL_BIN" "$TARGET_DIR"
+cargo +nightly run --manifest-path "$IMAGE_BUILDER_MANIFEST" --release -- "$KERNEL_BIN" "$TARGET_DIR"

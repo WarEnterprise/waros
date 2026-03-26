@@ -296,6 +296,36 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     BOOT_COMPLETE_MS.store(boot_complete_ms, Ordering::Relaxed);
     fs::seed_system_files().map_err(|_| "failed to seed filesystem system files")?;
     pkg::init().map_err(|_| "failed to seed package repository")?;
+    match exec::smoke::run() {
+        Ok(exit_code) if exit_code == exec::smoke::SMOKE_ELF_EXIT_CODE => boot_ok_fmt(
+            format_args!(
+                "WarExec smoke: {} exited with code {}",
+                exec::smoke::SMOKE_ELF_PATH,
+                exit_code
+            ),
+            format_args!(
+                "WarExec smoke: {} exited with code {}",
+                exec::smoke::SMOKE_ELF_PATH,
+                exit_code
+            ),
+        ),
+        Ok(exit_code) => {
+            let message = alloc::format!(
+                "WarExec smoke: {} exited with unexpected code {}",
+                exec::smoke::SMOKE_ELF_PATH,
+                exit_code
+            );
+            boot_notice(message.as_str());
+        }
+        Err(error) => {
+            let message = alloc::format!(
+                "WarExec smoke: failed to execute {} ({:?})",
+                exec::smoke::SMOKE_ELF_PATH,
+                error
+            );
+            boot_notice(message.as_str());
+        }
+    }
 
     display::branding::boot_complete_animation();
     display::branding::show_separator();
