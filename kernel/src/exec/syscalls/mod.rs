@@ -34,14 +34,14 @@ pub struct Timespec {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct FileStat {
+pub struct WarExecStat {
     pub size: u64,
-    pub created_at: u64,
-    pub modified_at: u64,
-    pub owner_uid: u16,
+    pub file_type: u8,
     pub readonly: u8,
-    pub _reserved: [u8; 5],
+    pub _reserved: [u8; 6],
 }
+
+pub const WAREXEC_FILE_TYPE_REGULAR: u8 = 1;
 
 #[must_use]
 pub fn current_pid() -> Option<u32> {

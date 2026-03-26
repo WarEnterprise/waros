@@ -43,6 +43,12 @@ ABI_WAIT_LAUNCH_MARKER="[INFO] WarExec ABI proof: launching /bin/warexec-wait-sm
 ABI_WAIT_START_MARKER="wait-proof-start"
 ABI_WAIT_STATUS_MARKER="wait-status=1792"
 ABI_WAIT_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-wait-smoke.elf exited with code 49"
+ABI_STAT_LAUNCH_MARKER="[INFO] WarExec ABI proof: launching /bin/warexec-stat-smoke.elf"
+ABI_STAT_START_MARKER="stat-proof-start"
+ABI_STAT_SIZE_MARKER="stat-size=23"
+ABI_STAT_TYPE_MARKER="stat-type=file"
+ABI_FSTAT_SIZE_MARKER="fstat-size=23"
+ABI_STAT_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-stat-smoke.elf exited with code 50"
 SHELL_MARKER="[INFO] WarOS shell online. Type 'help' for available commands."
 
 QEMU_PID=""
@@ -125,7 +131,13 @@ ls -lh "${IMAGE_PATH}" || true
 # 32. wait proof start marker
 # 33. wait proof status marker
 # 34. wait proof exit marker
-# 35. shell-ready banner
+# 35. stat proof launch marker
+# 36. stat proof start marker
+# 37. stat size marker
+# 38. stat type marker
+# 39. fstat size marker
+# 40. stat proof exit marker
+# 41. shell-ready banner
 #
 # This keeps CI deterministic without introducing timing-sensitive interaction or GUI automation.
 "${QEMU_BIN}" \
@@ -176,6 +188,12 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         && grep -Fq "${ABI_WAIT_START_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${ABI_WAIT_STATUS_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${ABI_WAIT_PROOF_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_STAT_LAUNCH_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_STAT_START_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_STAT_SIZE_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_STAT_TYPE_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_FSTAT_SIZE_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_STAT_PROOF_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${SHELL_MARKER}" "${LOG_PATH}"; then
         echo "Kernel boot smoke passed."
         echo "  Log: ${LOG_PATH}"
@@ -213,6 +231,12 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         echo "  Found: ${ABI_WAIT_START_MARKER}"
         echo "  Found: ${ABI_WAIT_STATUS_MARKER}"
         echo "  Found: ${ABI_WAIT_PROOF_MARKER}"
+        echo "  Found: ${ABI_STAT_LAUNCH_MARKER}"
+        echo "  Found: ${ABI_STAT_START_MARKER}"
+        echo "  Found: ${ABI_STAT_SIZE_MARKER}"
+        echo "  Found: ${ABI_STAT_TYPE_MARKER}"
+        echo "  Found: ${ABI_FSTAT_SIZE_MARKER}"
+        echo "  Found: ${ABI_STAT_PROOF_MARKER}"
         echo "  Found: ${SHELL_MARKER}"
         exit 0
     fi
