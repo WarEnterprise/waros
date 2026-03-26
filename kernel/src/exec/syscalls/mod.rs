@@ -41,7 +41,19 @@ pub struct WarExecStat {
     pub _reserved: [u8; 6],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct WarExecDirEntry {
+    pub file_type: u8,
+    pub name_len: u8,
+    pub _reserved: [u8; 6],
+    pub name: [u8; WAREXEC_DIRENT_NAME_CAPACITY],
+}
+
 pub const WAREXEC_FILE_TYPE_REGULAR: u8 = 1;
+pub const WAREXEC_FILE_TYPE_DIRECTORY: u8 = 2;
+pub const WAREXEC_DIRENT_NAME_CAPACITY: usize = 32;
+pub const WAREXEC_OPEN_DIRECTORY: u32 = 0x0001_0000;
 
 #[must_use]
 pub fn current_pid() -> Option<u32> {

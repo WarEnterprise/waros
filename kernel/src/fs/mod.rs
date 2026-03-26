@@ -504,6 +504,32 @@ Filesystem: {} files max, {} KiB max per file\n",
     )?;
     let abi_stat_elf = crate::exec::smoke::abi_stat_elf_bytes();
     filesystem.write_system(crate::exec::smoke::ABI_STAT_SMOKE_ELF_PATH, &abi_stat_elf, true)?;
+    filesystem.write_system(
+        &directory_marker_path(crate::exec::smoke::ABI_READDIR_SMOKE_DIR_PATH),
+        &[],
+        true,
+    )?;
+    filesystem.write_system(
+        "/abi/readdir-proof/alpha.txt",
+        b"alpha dirent proof\n",
+        true,
+    )?;
+    filesystem.write_system(
+        "/abi/readdir-proof/beta.txt",
+        b"beta dirent proof\n",
+        true,
+    )?;
+    filesystem.write_system(
+        "/abi/readdir-proof/gamma.txt",
+        b"gamma dirent proof\n",
+        true,
+    )?;
+    let abi_readdir_elf = crate::exec::smoke::abi_readdir_elf_bytes();
+    filesystem.write_system(
+        crate::exec::smoke::ABI_READDIR_SMOKE_ELF_PATH,
+        &abi_readdir_elf,
+        true,
+    )?;
     Ok(())
 }
 
