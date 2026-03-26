@@ -245,9 +245,9 @@ pub extern "C" fn syscall_dispatch(
     // WarOS currently exposes a narrow experimental userspace ABI. These numeric values reuse
     // selected x86_64 Linux syscall numbers for convenience only; they do not imply Linux ABI
     // compatibility. The current proven ABI uses a small deterministic negative error subset
-    // (`-2`, `-9`, `-14`, `-22`, `-38`) instead of claiming broad errno compatibility. The
-    // dispatch is intentionally split between the minimal ABI proved in CI, broader experimental
-    // code paths, and explicitly unsupported numbers that return ENOSYS.
+    // (`-2`, `-9`, `-10`, `-14`, `-22`, `-38`) instead of claiming broad errno compatibility.
+    // The dispatch is intentionally split between the minimal ABI proved in CI, broader
+    // experimental code paths, and explicitly unsupported numbers that return ENOSYS.
     match syscall_num {
         // Minimal WarExec ABI: proven today by headless boot smoke.
         0 => syscalls::file::sys_read(arg1 as u32, arg2 as *mut u8, arg3 as usize),
@@ -265,7 +265,7 @@ pub extern "C" fn syscall_dispatch(
         20 => syscalls::process::sys_getpid(),
         39 => syscalls::process::sys_getppid(),
         59 => syscalls::process::sys_execve(arg1 as *const u8, arg2 as *const *const u8, arg3 as *const *const u8), // experimental narrow in-place ELF replacement path
-        61 => syscalls::process::sys_wait4(arg1 as i32, arg2 as *mut i32, arg3 as u32),
+        61 => syscalls::process::sys_wait4(arg1 as i32, arg2 as *mut i32, arg3 as u32), // narrow exited-child wait/reap path only
         79 => syscalls::file::sys_getcwd(arg1 as *mut u8, arg2 as usize),
         80 => syscalls::file::sys_chdir(arg1 as *const u8),
         102 => syscalls::process::sys_getuid(),

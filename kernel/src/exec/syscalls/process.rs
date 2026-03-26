@@ -7,8 +7,10 @@ use crate::fs;
 
 use super::{
     read_user_pointer_array_checked, read_user_string_checked, write_struct_to_user_checked,
-    ENOENT, ENOEXEC, ENOMEM, ENOSYS, EPERM, MAX_USER_STRING_LEN,
+    ECHILD, ENOENT, ENOEXEC, ENOMEM, ENOSYS, EPERM, MAX_USER_STRING_LEN,
 };
+
+const WAIT_STATUS_EXIT_SHIFT: u32 = 8;
 
 pub fn sys_getpid() -> i64 {
     current_pid().map_or(-1, i64::from)
@@ -30,7 +32,7 @@ pub fn sys_getuid() -> i64 {
 
 pub fn sys_fork() -> i64 {
     // WarOS does not currently expose a fork ABI. Keep the number reserved but fail
-    // explicitly until address-space cloning, descriptor offsets, and wait semantics are real.
+    // explicitly until address-space cloning and broader process-creation semantics are real.
     ENOSYS
 }
 
@@ -143,22 +145,33 @@ pub fn sys_exit(code: i32) -> i64 {
     }
 }
 
-pub fn sys_wait4(pid: i32, status_ptr: *mut i32, _options: u32) -> i64 {
+pub fn sys_wait4(pid: i32, status_ptr: *mut i32, options: u32) -> i64 {
+    if options != 0 {
+        return ENOSYS;
+    }
+    if pid == 0 || pid < -1 {
+        return ENOSYS;
+    }
+
     let parent_pid = match current_pid() {
         Some(p) => p,
-        None => return -1,
+        None => return EPERM,
     };
 
+    // WarExec currently exposes one narrow lifecycle observation path only:
+    // `wait4(pid, status_ptr, 0)` where `pid` is either `-1` (any exited child)
+    // or a direct child PID. The call only observes already-zombied children,
+    // writes one exit-only status word, and immediately reaps the matching child.
     let found = PROCESS_TABLE.lock().find_zombie_child(parent_pid, pid);
 
     let (child_pid, exit_code) = match found {
         Some(r) => r,
-        None => return -10, // ECHILD
+        None => return ECHILD,
     };
 
     // Write exit status to user pointer.
     if !status_ptr.is_null() {
-        let status = (exit_code & 0xFF) << 8;
+        let status = encode_wait_exit_status(exit_code);
         if let Err(error) = write_struct_to_user_checked(status_ptr, &status) {
             return error;
         }
@@ -166,6 +179,10 @@ pub fn sys_wait4(pid: i32, status_ptr: *mut i32, _options: u32) -> i64 {
 
     PROCESS_TABLE.lock().remove(child_pid);
     i64::from(child_pid)
+}
+
+fn encode_wait_exit_status(exit_code: i32) -> i32 {
+    (exit_code & 0xFF) << WAIT_STATUS_EXIT_SHIFT
 }
 
 fn role_for_uid(uid: u16) -> UserRole {

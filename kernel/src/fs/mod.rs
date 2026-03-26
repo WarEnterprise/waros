@@ -490,6 +490,18 @@ Filesystem: {} files max, {} KiB max per file\n",
         &abi_fault_elf,
         true,
     )?;
+    let abi_wait_parent_elf = crate::exec::smoke::abi_wait_parent_elf_bytes();
+    filesystem.write_system(
+        crate::exec::smoke::ABI_WAIT_PARENT_ELF_PATH,
+        &abi_wait_parent_elf,
+        true,
+    )?;
+    let abi_wait_child_elf = crate::exec::smoke::abi_wait_child_elf_bytes();
+    filesystem.write_system(
+        crate::exec::smoke::ABI_WAIT_CHILD_ELF_PATH,
+        &abi_wait_child_elf,
+        true,
+    )?;
     Ok(())
 }
 

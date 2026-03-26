@@ -18,6 +18,7 @@ pub const EPERM: i64 = -1;
 pub const ENOENT: i64 = -2;
 pub const ENOEXEC: i64 = -8;
 pub const EBADF: i64 = -9;
+pub const ECHILD: i64 = -10;
 pub const ENOMEM: i64 = -12;
 pub const EFAULT: i64 = -14;
 pub const EINVAL: i64 = -22;
