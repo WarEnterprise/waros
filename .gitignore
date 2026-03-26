@@ -10,3 +10,16 @@ Cargo.lock
 .venv/
 .pytest_cache/
 __pycache__/
+# generated build artifacts
+target/
+**/target/
+build/
+out/
+deps/
+__pycache__/
+.pytest_cache/
+*.pdb
+*.rlib
+*.rmeta
+*.dll
+*.exe
