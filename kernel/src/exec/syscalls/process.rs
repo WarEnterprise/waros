@@ -36,7 +36,8 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
         return -22; // EINVAL
     };
 
-    // Collect argv strings.
+    // Collect argv strings for the current narrow WarExec entry ABI. `envp` is
+    // intentionally ignored for now; the replacement image receives an empty environment.
     let mut args: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
     if !argv.is_null() {
         for i in 0..64usize {

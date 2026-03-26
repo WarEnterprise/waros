@@ -457,6 +457,19 @@ Filesystem: {} files max, {} KiB max per file\n",
     )?;
     let abi_read_elf = crate::exec::smoke::abi_read_elf_bytes();
     filesystem.write_system(crate::exec::smoke::ABI_READ_SMOKE_ELF_PATH, &abi_read_elf, true)?;
+    filesystem.write_system(
+        crate::exec::smoke::ABI_OFFSET_SMOKE_FILE_PATH,
+        crate::exec::smoke::ABI_OFFSET_SMOKE_FILE_CONTENT.as_bytes(),
+        true,
+    )?;
+    let abi_offset_elf = crate::exec::smoke::abi_offset_elf_bytes();
+    filesystem.write_system(
+        crate::exec::smoke::ABI_OFFSET_SMOKE_ELF_PATH,
+        &abi_offset_elf,
+        true,
+    )?;
+    let abi_argv_elf = crate::exec::smoke::abi_argv_elf_bytes();
+    filesystem.write_system(crate::exec::smoke::ABI_ARGV_SMOKE_ELF_PATH, &abi_argv_elf, true)?;
     Ok(())
 }
 

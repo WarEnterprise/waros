@@ -15,6 +15,14 @@ EXEC_STDOUT_MARKER="warexec smoke user program"
 EXEC_MARKER="[OK] WarExec smoke: /bin/warexec-smoke.elf exited with code 42"
 ABI_PROOF_STDOUT_MARKER="warexec abi file proof"
 ABI_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-read-smoke.elf exited with code 43"
+ABI_OFFSET_FIRST_CHUNK_MARKER="chunk-one|"
+ABI_OFFSET_SECOND_CHUNK_MARKER="chunk-two"
+ABI_OFFSET_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-offset-smoke.elf exited with code 44"
+ABI_ARGV_LAUNCH_MARKER="[INFO] WarExec ABI proof: launching /bin/warexec-argv-smoke.elf"
+ABI_ARGV_ARGC_MARKER="argc=3"
+ABI_ARGV_ARGV1_MARKER="argv1=alpha"
+ABI_ARGV_ARGV2_MARKER="argv2=beta"
+ABI_ARGV_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-argv-smoke.elf exited with code 45"
 SHELL_MARKER="[INFO] WarOS shell online. Type 'help' for available commands."
 
 QEMU_PID=""
@@ -69,7 +77,15 @@ ls -lh "${IMAGE_PATH}" || true
 # 4. minimal WarExec user-ELF exit marker
 # 5. read-only WarFS ABI proof stdout
 # 6. read-only WarFS ABI proof exit marker
-# 7. shell-ready banner
+# 7. per-FD offset proof first chunk
+# 8. per-FD offset proof second chunk
+# 9. per-FD offset proof exit marker
+# 10. argv proof launch marker
+# 11. argv proof argc output
+# 12. argv proof argv1 output
+# 13. argv proof argv2 output
+# 14. argv proof exit marker
+# 15. shell-ready banner
 #
 # This keeps CI deterministic without introducing timing-sensitive interaction or GUI automation.
 "${QEMU_BIN}" \
@@ -92,6 +108,14 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         && grep -Fq "${EXEC_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${ABI_PROOF_STDOUT_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${ABI_PROOF_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_OFFSET_FIRST_CHUNK_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_OFFSET_SECOND_CHUNK_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_OFFSET_PROOF_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_ARGV_LAUNCH_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_ARGV_ARGC_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_ARGV_ARGV1_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_ARGV_ARGV2_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_ARGV_PROOF_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${SHELL_MARKER}" "${LOG_PATH}"; then
         echo "Kernel boot smoke passed."
         echo "  Log: ${LOG_PATH}"
@@ -101,6 +125,14 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         echo "  Found: ${EXEC_MARKER}"
         echo "  Found: ${ABI_PROOF_STDOUT_MARKER}"
         echo "  Found: ${ABI_PROOF_MARKER}"
+        echo "  Found: ${ABI_OFFSET_FIRST_CHUNK_MARKER}"
+        echo "  Found: ${ABI_OFFSET_SECOND_CHUNK_MARKER}"
+        echo "  Found: ${ABI_OFFSET_PROOF_MARKER}"
+        echo "  Found: ${ABI_ARGV_LAUNCH_MARKER}"
+        echo "  Found: ${ABI_ARGV_ARGC_MARKER}"
+        echo "  Found: ${ABI_ARGV_ARGV1_MARKER}"
+        echo "  Found: ${ABI_ARGV_ARGV2_MARKER}"
+        echo "  Found: ${ABI_ARGV_PROOF_MARKER}"
         echo "  Found: ${SHELL_MARKER}"
         exit 0
     fi
