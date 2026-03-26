@@ -2,7 +2,7 @@
 
 WarOS does not currently provide a Linux userspace ABI.
 The kernel reuses selected x86_64 Linux syscall numbers for convenience only.
-Today, WarExec is an experimental minimal ABI with seven CI-proven static ELF paths:
+Today, WarExec is an experimental minimal ABI with eight CI-proven static ELF paths:
 
 - `/bin/warexec-smoke.elf`
   proves ELF load, stdout write, and exit
@@ -18,6 +18,8 @@ Today, WarExec is an experimental minimal ABI with seven CI-proven static ELF pa
   proves one narrow per-process heap-growth path: current-break query, monotonic growth, writable+NX heap memory, heap-backed stdout, and exit
 - `/bin/warexec-fault-smoke.elf`
   proves one narrow pointer/error contract path: deterministic bad-pointer rejection on `write`, explicit negative error return, and exit
+- `/bin/warexec-wait-smoke.elf` with `/bin/warexec-wait-child.elf`
+  proves one narrow lifecycle path: a real child exits, `wait4(-1, status_ptr, 0)` observes one deterministic exit-only status word, reaps the child, and the parent exits
 
 ## CI-Proven ABI Contract
 
@@ -46,6 +48,16 @@ The following behavior is part of the currently proven minimal ABI:
   newly mapped heap pages are writable, user-accessible, and NX
   shrinking is intentionally unsupported for now; requests below the current break return the current break unchanged
   no broad Linux `brk`/`sbrk`/`mmap` compatibility is claimed
+- Minimal lifecycle / wait observation
+  `exit(code)` stores one deterministic exit code for the current process
+  `wait4(pid, status_ptr, 0)` currently supports only `pid = -1` (any exited direct child) or one direct child PID
+  the call only observes already-exited children; no broad blocking or signal semantics are claimed
+  on success, `wait4` returns the reaped child PID
+  if `status_ptr` is non-NULL, the kernel writes one exit-only status word: `(exit_code & 0xFF) << 8`
+  after a successful wait, the matching child is reaped and removed
+  if no matching exited child exists, the call fails with `-10`
+  nonzero `options`, `pid = 0`, and `pid < -1` are intentionally unsupported and fail with `-38`
+  the current proof is kernel-orchestrated because WarExec still does not expose a general userspace spawn or fork ABI
 - Pointer and error contract
   the current proven ABI validates userspace buffers and strings against the current process image, stack, and live heap before dereferencing them
   `write(fd, buf, len)` requires `buf..buf+len` to stay inside currently mapped user memory when `len > 0`
@@ -81,6 +93,8 @@ These limitations are intentional and should be treated as part of the ABI contr
 - `brk` is currently monotonic growth only
 - shrinking the heap is unsupported
 - no userspace signal or page-fault delivery is exposed for bad pointers; the current ABI returns a deterministic negative error instead
+- `wait4` currently observes only already-exited direct children; it is not broad POSIX `waitpid` compatibility
+- no general userspace spawn or fork ABI exists, so the current lifecycle proof is kernel-orchestrated
 - `lseek` is unsupported
 - no shared-offset, dup-like, or pipe semantics are claimed
 - process entry is currently stack-based only; no broad SysV or libc startup contract is claimed
@@ -104,7 +118,7 @@ These limitations are intentional and should be treated as part of the ABI contr
 | 9 / 11 | `mmap` / `munmap` | implemented but experimental | narrow anonymous memory management only |
 | 20 / 39 / 102 | `getpid` / `getppid` / `getuid` | implemented but experimental | basic identity queries |
 | 59 | `execve` | implemented and proven | narrow in-place image replacement only; reuses stack-based `argc`/`argv`, envp omitted, bad path/argv pointers return `-14` |
-| 61 | `wait4` | implemented but experimental | not part of the current minimal WarExec ABI |
+| 61 | `wait4` | implemented and proven | narrow exited-child observation only; returns child PID, writes `(exit_code & 0xFF) << 8`, reaps on success |
 | 79 / 80 | `getcwd` / `chdir` | implemented but experimental | not CI-proven as ABI |
 | 228 / 230 | `clock_gettime` / `nanosleep` | implemented but experimental | simple time support |
 | 300-304 | `qalloc`..`qstate` | implemented but experimental | not part of the current minimal WarExec ABI |
@@ -129,6 +143,8 @@ These limitations are intentional and should be treated as part of the ABI contr
 - ELF proof binary: `/bin/warexec-exec-child.elf`
 - ELF proof binary: `/bin/warexec-heap-smoke.elf`
 - ELF proof binary: `/bin/warexec-fault-smoke.elf`
+- ELF proof binary: `/bin/warexec-wait-smoke.elf`
+- ELF proof binary: `/bin/warexec-wait-child.elf`
 
 This document is intentionally narrow.
 If a behavior is not listed above as proven or implemented, WarOS should not claim it as current userspace ABI support.

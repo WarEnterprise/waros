@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 
 use crate::auth::session;
 
-use super::{loader, process::Priority, run_user_process, ExecError};
+use super::{loader, process::Priority, run_user_process, run_user_process_preserve_zombie, ExecError};
 
 pub const SMOKE_ELF_PATH: &str = "/bin/warexec-smoke.elf";
 pub const SMOKE_ELF_EXIT_CODE: i32 = 42;
@@ -29,6 +29,9 @@ pub const ABI_HEAP_SMOKE_ELF_PATH: &str = "/bin/warexec-heap-smoke.elf";
 pub const ABI_HEAP_SMOKE_ELF_EXIT_CODE: i32 = 47;
 pub const ABI_FAULT_SMOKE_ELF_PATH: &str = "/bin/warexec-fault-smoke.elf";
 pub const ABI_FAULT_SMOKE_ELF_EXIT_CODE: i32 = 48;
+pub const ABI_WAIT_PARENT_ELF_PATH: &str = "/bin/warexec-wait-smoke.elf";
+pub const ABI_WAIT_CHILD_ELF_PATH: &str = "/bin/warexec-wait-child.elf";
+pub const ABI_WAIT_PARENT_ELF_EXIT_CODE: i32 = 49;
 
 const ELF_BASE_VADDR: u64 = 0x0000_0000_0040_0000;
 const ELF_HEADER_SIZE: usize = 64;
@@ -56,6 +59,10 @@ const ABI_FAULT_ERR_STDOUT: &str = "fault-err=-14\n";
 const ABI_FAULT_BAD_PTR: u32 = 0x7000_0000;
 const ABI_FAULT_BAD_WRITE_LEN: u32 = 4;
 const ABI_FAULT_EXPECTED_ERR: i8 = -14;
+const ABI_WAIT_CHILD_EXIT_CODE: i32 = 7;
+const ABI_WAIT_START_STDOUT: &str = "wait-proof-start\n";
+const ABI_WAIT_STATUS_STDOUT: &str = "wait-status=1792\n";
+const ABI_WAIT_EXPECTED_STATUS_WORD: u32 = (ABI_WAIT_CHILD_EXIT_CODE as u32) << 8;
 
 const ET_EXEC: u16 = 2;
 const EM_X86_64: u16 = 0x3E;
@@ -108,6 +115,16 @@ pub fn abi_heap_elf_bytes() -> Vec<u8> {
 #[must_use]
 pub fn abi_fault_elf_bytes() -> Vec<u8> {
     build_fault_abi_smoke_elf()
+}
+
+#[must_use]
+pub fn abi_wait_parent_elf_bytes() -> Vec<u8> {
+    build_wait_parent_abi_smoke_elf()
+}
+
+#[must_use]
+pub fn abi_wait_child_elf_bytes() -> Vec<u8> {
+    build_wait_child_abi_smoke_elf()
 }
 
 fn build_write_exit_smoke_elf() -> Vec<u8> {
@@ -175,6 +192,59 @@ pub fn run_abi_fault_smoke() -> Result<i32, ExecError> {
     run_program_with_args(ABI_FAULT_SMOKE_ELF_PATH, &args)
 }
 
+pub fn run_abi_wait_smoke() -> Result<i32, ExecError> {
+    let env: Vec<(String, String)> = Vec::new();
+    let uid = session::current_uid();
+    let shell_pid = super::ensure_shell_process();
+    let parent_args = [ABI_WAIT_PARENT_ELF_PATH];
+    let parent_pid = loader::spawn_process(
+        ABI_WAIT_PARENT_ELF_PATH,
+        &parent_args,
+        &env,
+        uid,
+        shell_pid,
+        Priority::Normal,
+    )?;
+    let child_args = [ABI_WAIT_CHILD_ELF_PATH];
+    let child_pid = match loader::spawn_process(
+        ABI_WAIT_CHILD_ELF_PATH,
+        &child_args,
+        &env,
+        uid,
+        parent_pid,
+        Priority::Normal,
+    ) {
+        Ok(pid) => pid,
+        Err(error) => {
+            discard_process(parent_pid);
+            return Err(error);
+        }
+    };
+
+    match run_user_process_preserve_zombie(child_pid) {
+        Ok(exit_code) if exit_code == ABI_WAIT_CHILD_EXIT_CODE => {}
+        Ok(_) => {
+            discard_process(child_pid);
+            discard_process(parent_pid);
+            return Err(ExecError::LoadFailed);
+        }
+        Err(error) => {
+            discard_process(child_pid);
+            discard_process(parent_pid);
+            return Err(error);
+        }
+    }
+
+    match run_user_process(parent_pid) {
+        Ok(exit_code) => Ok(exit_code),
+        Err(error) => {
+            discard_process(child_pid);
+            discard_process(parent_pid);
+            Err(error)
+        }
+    }
+}
+
 fn run_program(path: &str) -> Result<i32, ExecError> {
     let args = [path];
     run_program_with_args(path, &args)
@@ -191,6 +261,11 @@ fn run_program_with_args(path: &str, args: &[&str]) -> Result<i32, ExecError> {
         Priority::Normal,
     )?;
     run_user_process(pid)
+}
+
+fn discard_process(pid: u32) {
+    super::SCHEDULER.lock().dequeue(pid);
+    super::PROCESS_TABLE.lock().remove(pid);
 }
 
 fn build_read_abi_smoke_elf() -> Vec<u8> {
@@ -711,6 +786,89 @@ fn build_fault_abi_smoke_elf() -> Vec<u8> {
     patch_rel32(&mut payload, start_line_disp_offset, start_line_offset);
     patch_rel32(&mut payload, fault_fail_jump, fail_offset);
     patch_rel32(&mut payload, err_line_disp_offset, err_line_offset);
+
+    build_single_segment_rx_elf(&payload)
+}
+
+fn build_wait_child_abi_smoke_elf() -> Vec<u8> {
+    let mut payload = Vec::with_capacity(24);
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_WAIT_CHILD_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    payload.extend_from_slice(&[0x0F, 0x0B]);
+    build_single_segment_rx_elf(&payload)
+}
+
+fn build_wait_parent_abi_smoke_elf() -> Vec<u8> {
+    let start_line = ABI_WAIT_START_STDOUT.as_bytes();
+    let status_line = ABI_WAIT_STATUS_STDOUT.as_bytes();
+    let mut payload = Vec::with_capacity(224);
+
+    // sub rsp, 16       ; reserve status storage
+    payload.extend_from_slice(&[0x48, 0x83, 0xEC, 0x10]);
+
+    // write("wait-proof-start\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let start_line_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(start_line.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // wait4(-1, rsp, 0)
+    payload.extend_from_slice(&[0xB8, 0x3D, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0xFF, 0xFF, 0xFF, 0xFF]);
+    payload.extend_from_slice(&[0x48, 0x89, 0xE6]);
+    payload.extend_from_slice(&[0x31, 0xD2]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // test eax, eax
+    payload.extend_from_slice(&[0x85, 0xC0]);
+    // jle fail
+    payload.extend_from_slice(&[0x0F, 0x8E]);
+    let wait_pid_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // cmp dword ptr [rsp], expected_status
+    payload.extend_from_slice(&[0x81, 0x3C, 0x24]);
+    payload.extend_from_slice(&ABI_WAIT_EXPECTED_STATUS_WORD.to_le_bytes());
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let wait_status_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // write("wait-status=1792\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let status_line_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(status_line.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // exit(49)
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_WAIT_PARENT_ELF_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    let fail_offset = payload.len();
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_SMOKE_FAILURE_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    payload.extend_from_slice(&[0x0F, 0x0B]);
+
+    let start_line_offset = payload.len();
+    payload.extend_from_slice(start_line);
+    let status_line_offset = payload.len();
+    payload.extend_from_slice(status_line);
+
+    patch_rel32(&mut payload, start_line_disp_offset, start_line_offset);
+    patch_rel32(&mut payload, wait_pid_fail_jump, fail_offset);
+    patch_rel32(&mut payload, wait_status_fail_jump, fail_offset);
+    patch_rel32(&mut payload, status_line_disp_offset, status_line_offset);
 
     build_single_segment_rx_elf(&payload)
 }

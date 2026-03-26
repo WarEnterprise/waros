@@ -207,6 +207,14 @@ pub fn current_uid() -> u16 {
 }
 
 pub fn run_user_process(pid: u32) -> Result<i32, ExecError> {
+    run_user_process_with_reap(pid, true)
+}
+
+pub fn run_user_process_preserve_zombie(pid: u32) -> Result<i32, ExecError> {
+    run_user_process_with_reap(pid, false)
+}
+
+fn run_user_process_with_reap(pid: u32, reap_on_return: bool) -> Result<i32, ExecError> {
     let shell_pid = ensure_shell_process();
     SCHEDULER.lock().disable();
     mark_running(pid);
@@ -267,7 +275,12 @@ pub fn run_user_process(pid: u32) -> Result<i32, ExecError> {
     }
 
     let teardown_result = loader::teardown_process(pid);
-    PROCESS_TABLE.lock().remove(pid);
+    if reap_on_return {
+        PROCESS_TABLE.lock().remove(pid);
+    } else if let Some(process) = PROCESS_TABLE.lock().get_mut(pid) {
+        process.memory_pages = 0;
+        process.page_table_phys = 0;
+    }
     teardown_result?;
     Ok(exit_code)
 }
