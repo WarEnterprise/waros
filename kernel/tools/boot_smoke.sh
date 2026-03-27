@@ -56,6 +56,11 @@ ABI_READDIR_ENTRY2_MARKER="dirent2=beta.txt"
 ABI_READDIR_ENTRY3_MARKER="dirent3=gamma.txt"
 ABI_READDIR_EOD_MARKER="readdir-eod=1"
 ABI_READDIR_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-readdir-smoke.elf exited with code 51"
+ABI_PATH_LAUNCH_MARKER="[INFO] WarExec ABI proof: launching /bin/warexec-path-smoke.elf"
+ABI_PATH_START_MARKER="path-proof-start"
+ABI_PATH_ABS_OK_MARKER="path-abs-ok=1"
+ABI_PATH_REL_ERR_MARKER="path-rel-err=-22"
+ABI_PATH_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-path-smoke.elf exited with code 52"
 SHELL_MARKER="[INFO] WarOS shell online. Type 'help' for available commands."
 
 QEMU_PID=""
@@ -151,7 +156,12 @@ ls -lh "${IMAGE_PATH}" || true
 # 45. third dirent marker
 # 46. end-of-directory marker
 # 47. readdir proof exit marker
-# 48. shell-ready banner
+# 48. pathname proof launch marker
+# 49. pathname proof start marker
+# 50. pathname absolute-path success marker
+# 51. pathname relative-path rejection marker
+# 52. pathname proof exit marker
+# 53. shell-ready banner
 #
 # This keeps CI deterministic without introducing timing-sensitive interaction or GUI automation.
 "${QEMU_BIN}" \
@@ -215,6 +225,11 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         && grep -Fq "${ABI_READDIR_ENTRY3_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${ABI_READDIR_EOD_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${ABI_READDIR_PROOF_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_PATH_LAUNCH_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_PATH_START_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_PATH_ABS_OK_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_PATH_REL_ERR_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_PATH_PROOF_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${SHELL_MARKER}" "${LOG_PATH}"; then
         echo "Kernel boot smoke passed."
         echo "  Log: ${LOG_PATH}"
@@ -265,6 +280,11 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         echo "  Found: ${ABI_READDIR_ENTRY3_MARKER}"
         echo "  Found: ${ABI_READDIR_EOD_MARKER}"
         echo "  Found: ${ABI_READDIR_PROOF_MARKER}"
+        echo "  Found: ${ABI_PATH_LAUNCH_MARKER}"
+        echo "  Found: ${ABI_PATH_START_MARKER}"
+        echo "  Found: ${ABI_PATH_ABS_OK_MARKER}"
+        echo "  Found: ${ABI_PATH_REL_ERR_MARKER}"
+        echo "  Found: ${ABI_PATH_PROOF_MARKER}"
         echo "  Found: ${SHELL_MARKER}"
         exit 0
     fi

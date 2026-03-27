@@ -2,7 +2,7 @@
 
 WarOS does not currently provide a Linux userspace ABI.
 The kernel reuses selected x86_64 Linux syscall numbers for convenience only.
-Today, WarExec is an experimental minimal ABI with ten CI-proven static ELF paths:
+Today, WarExec is an experimental minimal ABI with eleven CI-proven static ELF paths:
 
 - `/bin/warexec-smoke.elf`
   proves ELF load, stdout write, and exit
@@ -24,6 +24,8 @@ Today, WarExec is an experimental minimal ABI with ten CI-proven static ELF path
   proves one narrow metadata path: `stat(path, out_ptr)` and `fstat(fd, out_ptr)` report regular-file type plus exact byte size for a seeded WarFS file
 - `/bin/warexec-readdir-smoke.elf`
   proves one narrow directory path: `open(path, O_DIRECTORY, 0)` snapshots a deterministic directory view, `readdir(fd, out_ptr)` returns one entry per call in lexicographic order, and end-of-directory is explicit
+- `/bin/warexec-path-smoke.elf`
+  proves one narrow pathname contract: absolute path success for `stat` and `open`, deterministic rejection of relative paths, and exit
 
 ## CI-Proven ABI Contract
 
@@ -104,6 +106,16 @@ The following behavior is part of the currently proven minimal ABI:
   `name_len` is the byte length of the returned basename and `name` is NUL-padded scratch space for that basename
   `read(fd, ...)` on a directory descriptor remains unsupported
   this is a narrow WarExec directory contract only; it is not POSIX `opendir`/`readdir`/`getdents` compatibility
+- Minimal pathname contract
+  current proven path-taking syscalls are `open(path, ...)`, `stat(path, ...)`, and `execve(path, argv, envp)`
+  only absolute paths are accepted
+  empty strings are rejected
+  relative paths are rejected
+  repeated slashes are rejected rather than normalized
+  `.` and `..` path components are rejected explicitly
+  file-like paths reject a trailing slash
+  directory-open paths may include one trailing slash, which is stripped deterministically before lookup
+  no cwd-relative resolution, `openat`, symlink traversal, or broad POSIX normalization rules are claimed
 - Heap growth
   each process has one heap base, current break, and heap limit tracked by WarExec
   the current heap proof grows by one page and writes a deterministic string into the newly mapped region
@@ -121,6 +133,7 @@ These limitations are intentional and should be treated as part of the ABI contr
 - no general userspace spawn or fork ABI exists, so the current lifecycle proof is kernel-orchestrated
 - metadata is currently regular-file-only; no `lstat`, symlink metadata, inode model, timestamps, or mode-bit compatibility are claimed
 - directory iteration is currently read-only and snapshot-based; no directory mutation, `openat`, cwd-relative dir iteration contract, or broad POSIX dirent semantics are claimed
+- pathname handling is currently absolute-only; no cwd semantics, relative resolution, `openat`, symlink handling, or broad POSIX normalization rules are claimed
 - `lseek` is unsupported
 - no shared-offset, dup-like, or pipe semantics are claimed
 - process entry is currently stack-based only; no broad SysV or libc startup contract is claimed
@@ -136,16 +149,16 @@ These limitations are intentional and should be treated as part of the ABI contr
 | --- | --- | --- | --- |
 | 0 | `read` | implemented and proven | WarFS file descriptors only; per-FD forward read offset, EOF returns 0, bad buffers return `-14` |
 | 1 | `write` | implemented and proven | fd `1`/`2` only; bad buffers return `-14`, bad FDs return `-9` |
-| 2 | `open` | implemented and proven | existing WarFS file with `flags=0`, or WarFS directory with `flags=O_DIRECTORY`; bad path pointers return `-14` |
+| 2 | `open` | implemented and proven | absolute path only; existing WarFS file with `flags=0`, or WarFS directory with `flags=O_DIRECTORY`; bad path pointers return `-14`, invalid path forms return `-22` |
 | 3 | `close` | implemented and proven | closes a descriptor |
-| 4 | `stat` | implemented and proven | writes `WarExecStat` for one existing WarFS regular file path |
+| 4 | `stat` | implemented and proven | absolute path only; writes `WarExecStat` for one existing WarFS regular file path |
 | 5 | `fstat` | implemented and proven | writes `WarExecStat` for one WarFS-backed file descriptor |
 | 78 | `readdir` | implemented and proven | one `WarExecDirEntry` per call, lexicographic snapshot order, returns `1` or `0` at end-of-directory |
 | 60 | `exit` | implemented and proven | deterministic exit code |
 | 12 | `brk` | implemented and proven | narrow monotonic heap growth only; `brk(0)` queries current break, growth is bounded and NX |
 | 9 / 11 | `mmap` / `munmap` | implemented but experimental | narrow anonymous memory management only |
 | 20 / 39 / 102 | `getpid` / `getppid` / `getuid` | implemented but experimental | basic identity queries |
-| 59 | `execve` | implemented and proven | narrow in-place image replacement only; reuses stack-based `argc`/`argv`, envp omitted, bad path/argv pointers return `-14` |
+| 59 | `execve` | implemented and proven | absolute path only; narrow in-place image replacement only; reuses stack-based `argc`/`argv`, envp omitted, bad path/argv pointers return `-14` |
 | 61 | `wait4` | implemented and proven | narrow exited-child observation only; returns child PID, writes `(exit_code & 0xFF) << 8`, reaps on success |
 | 79 / 80 | `getcwd` / `chdir` | implemented but experimental | not CI-proven as ABI |
 | 228 / 230 | `clock_gettime` / `nanosleep` | implemented but experimental | simple time support |
@@ -176,6 +189,7 @@ These limitations are intentional and should be treated as part of the ABI contr
 - ELF proof binary: `/bin/warexec-stat-smoke.elf`
 - WarFS proof directory: `/abi/readdir-proof`
 - ELF proof binary: `/bin/warexec-readdir-smoke.elf`
+- ELF proof binary: `/bin/warexec-path-smoke.elf`
 
 This document is intentionally narrow.
 If a behavior is not listed above as proven or implemented, WarOS should not claim it as current userspace ABI support.

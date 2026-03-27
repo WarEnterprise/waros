@@ -6,8 +6,9 @@ use crate::auth::USER_DB;
 use crate::fs;
 
 use super::{
-    read_user_pointer_array_checked, read_user_string_checked, write_struct_to_user_checked,
-    ECHILD, ENOENT, ENOEXEC, ENOMEM, ENOSYS, EPERM, MAX_USER_STRING_LEN,
+    read_user_pointer_array_checked, read_user_string_checked, read_warexec_path_checked,
+    write_struct_to_user_checked, ECHILD, ENOENT, ENOEXEC, ENOMEM, ENOSYS, EPERM,
+    MAX_USER_STRING_LEN, WarExecPathKind,
 };
 
 const WAIT_STATUS_EXIT_SHIFT: u32 = 8;
@@ -37,7 +38,7 @@ pub fn sys_fork() -> i64 {
 }
 
 pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const u8) -> i64 {
-    let path_str = match read_user_string_checked(path, MAX_USER_STRING_LEN) {
+    let path_str = match read_warexec_path_checked(path, WarExecPathKind::FileLike) {
         Ok(path) => path,
         Err(error) => return error,
     };

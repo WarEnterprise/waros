@@ -6,9 +6,10 @@ use crate::fs::FsError;
 
 use super::{
     copy_from_user_ptr_checked, copy_to_user_ptr_checked, read_user_string_checked,
-    write_struct_to_user_checked, WarExecDirEntry, WarExecStat, WAREXEC_DIRENT_NAME_CAPACITY,
-    WAREXEC_FILE_TYPE_DIRECTORY, WAREXEC_FILE_TYPE_REGULAR, WAREXEC_OPEN_DIRECTORY, EBADF,
-    EINVAL, ENOENT, ENOSYS, EPERM, MAX_USER_STRING_LEN,
+    read_warexec_path_checked, write_struct_to_user_checked, WarExecDirEntry, WarExecStat,
+    WarExecPathKind, WAREXEC_DIRENT_NAME_CAPACITY, WAREXEC_FILE_TYPE_DIRECTORY,
+    WAREXEC_FILE_TYPE_REGULAR, WAREXEC_OPEN_DIRECTORY, EBADF, EINVAL, ENOENT, ENOSYS, EPERM,
+    MAX_USER_STRING_LEN,
 };
 
 fn map_fs_error(error: FsError) -> i64 {
@@ -146,11 +147,17 @@ pub fn sys_open(path: *const u8, flags: u32, mode: u32) -> i64 {
         return ENOSYS;
     }
 
-    let path = match read_user_string_checked(path, MAX_USER_STRING_LEN) {
+    let resolved = match read_warexec_path_checked(
+        path,
+        if open_directory {
+            WarExecPathKind::Directory
+        } else {
+            WarExecPathKind::FileLike
+        },
+    ) {
         Ok(path) => path,
         Err(error) => return error,
     };
-    let resolved = session::resolve_path(&path);
     let descriptor_target = if open_directory {
         match directory_handle_from_path(&resolved) {
             Ok(handle) => DescriptorTarget::Directory(handle),
@@ -182,11 +189,10 @@ pub fn sys_close(fd: u32) -> i64 {
 }
 
 pub fn sys_stat(path: *const u8, stat_out: *mut u8) -> i64 {
-    let path = match read_user_string_checked(path, MAX_USER_STRING_LEN) {
+    let resolved = match read_warexec_path_checked(path, WarExecPathKind::FileLike) {
         Ok(path) => path,
         Err(error) => return error,
     };
-    let resolved = session::resolve_path(&path);
     let entry = match fs::stat_current(&resolved) {
         Ok(entry) => entry,
         Err(error) => return map_fs_error(error),
