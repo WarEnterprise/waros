@@ -9,11 +9,25 @@ pub struct FileHandle {
 }
 
 #[derive(Debug, Clone)]
+pub struct DirectoryEntryHandle {
+    pub name: String,
+    pub is_dir: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DirectoryHandle {
+    pub path: String,
+    pub entries: Vec<DirectoryEntryHandle>,
+    pub cursor: usize,
+}
+
+#[derive(Debug, Clone)]
 pub enum DescriptorTarget {
     Stdin,
     Stdout,
     Stderr,
     File(FileHandle),
+    Directory(DirectoryHandle),
     Socket(u32),
     Pipe(u32),
 }

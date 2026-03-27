@@ -34,6 +34,12 @@ pub const ABI_WAIT_CHILD_ELF_PATH: &str = "/bin/warexec-wait-child.elf";
 pub const ABI_WAIT_PARENT_ELF_EXIT_CODE: i32 = 49;
 pub const ABI_STAT_SMOKE_ELF_PATH: &str = "/bin/warexec-stat-smoke.elf";
 pub const ABI_STAT_SMOKE_ELF_EXIT_CODE: i32 = 50;
+pub const ABI_READDIR_SMOKE_ELF_PATH: &str = "/bin/warexec-readdir-smoke.elf";
+pub const ABI_READDIR_SMOKE_ELF_EXIT_CODE: i32 = 51;
+pub const ABI_READDIR_SMOKE_DIR_PATH: &str = "/abi/readdir-proof";
+pub const ABI_READDIR_SMOKE_ENTRY1: &str = "alpha.txt";
+pub const ABI_READDIR_SMOKE_ENTRY2: &str = "beta.txt";
+pub const ABI_READDIR_SMOKE_ENTRY3: &str = "gamma.txt";
 
 const ELF_BASE_VADDR: u64 = 0x0000_0000_0040_0000;
 const ELF_HEADER_SIZE: usize = 64;
@@ -72,6 +78,14 @@ const ABI_FSTAT_SIZE_STDOUT: &str = "fstat-size=23\n";
 const ABI_STAT_EXPECTED_SIZE: u32 = ABI_READ_SMOKE_FILE_CONTENT.len() as u32;
 const ABI_STAT_EXPECTED_FILE_TYPE: u8 = 1;
 const ABI_STAT_STRUCT_SIZE: u8 = 16;
+const ABI_READDIR_START_STDOUT: &str = "readdir-proof-start\n";
+const ABI_READDIR_ENTRY1_PREFIX: &str = "dirent1=";
+const ABI_READDIR_ENTRY2_PREFIX: &str = "dirent2=";
+const ABI_READDIR_ENTRY3_PREFIX: &str = "dirent3=";
+const ABI_READDIR_EOD_STDOUT: &str = "readdir-eod=1\n";
+const ABI_READDIR_EXPECTED_FILE_TYPE: u8 = 1;
+const ABI_READDIR_STRUCT_SIZE: u8 = 40;
+const ABI_READDIR_OPEN_DIRECTORY_FLAG: u32 = 0x0001_0000;
 
 const ET_EXEC: u16 = 2;
 const EM_X86_64: u16 = 0x3E;
@@ -139,6 +153,11 @@ pub fn abi_wait_child_elf_bytes() -> Vec<u8> {
 #[must_use]
 pub fn abi_stat_elf_bytes() -> Vec<u8> {
     build_stat_abi_smoke_elf()
+}
+
+#[must_use]
+pub fn abi_readdir_elf_bytes() -> Vec<u8> {
+    build_readdir_abi_smoke_elf()
 }
 
 fn build_write_exit_smoke_elf() -> Vec<u8> {
@@ -262,6 +281,11 @@ pub fn run_abi_wait_smoke() -> Result<i32, ExecError> {
 pub fn run_abi_stat_smoke() -> Result<i32, ExecError> {
     let args = [ABI_STAT_SMOKE_ELF_PATH];
     run_program_with_args(ABI_STAT_SMOKE_ELF_PATH, &args)
+}
+
+pub fn run_abi_readdir_smoke() -> Result<i32, ExecError> {
+    let args = [ABI_READDIR_SMOKE_ELF_PATH];
+    run_program_with_args(ABI_READDIR_SMOKE_ELF_PATH, &args)
 }
 
 fn run_program(path: &str) -> Result<i32, ExecError> {
@@ -1079,6 +1103,245 @@ fn build_stat_abi_smoke_elf() -> Vec<u8> {
     patch_rel32(&mut payload, close_fail_jump, fail_offset);
 
     build_single_segment_rx_elf(&payload)
+}
+
+fn build_readdir_abi_smoke_elf() -> Vec<u8> {
+    let start_line = ABI_READDIR_START_STDOUT.as_bytes();
+    let entry1_prefix = ABI_READDIR_ENTRY1_PREFIX.as_bytes();
+    let entry2_prefix = ABI_READDIR_ENTRY2_PREFIX.as_bytes();
+    let entry3_prefix = ABI_READDIR_ENTRY3_PREFIX.as_bytes();
+    let eod_line = ABI_READDIR_EOD_STDOUT.as_bytes();
+    let dir_path = ABI_READDIR_SMOKE_DIR_PATH.as_bytes();
+    let newline = ABI_ARGV_SMOKE_NEWLINE.as_bytes();
+    let mut payload = Vec::with_capacity(512);
+
+    // sub rsp, 40       ; reserve one WarExecDirEntry slot
+    payload.extend_from_slice(&[0x48, 0x83, 0xEC, ABI_READDIR_STRUCT_SIZE]);
+
+    // write("readdir-proof-start\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let start_line_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(start_line.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // open("/abi/readdir-proof", O_DIRECTORY, 0)
+    payload.extend_from_slice(&[0xB8, 0x02, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x3D]);
+    let dir_path_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBE);
+    payload.extend_from_slice(&ABI_READDIR_OPEN_DIRECTORY_FLAG.to_le_bytes());
+    payload.extend_from_slice(&[0x31, 0xD2]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // test eax, eax
+    payload.extend_from_slice(&[0x85, 0xC0]);
+    // js fail
+    payload.extend_from_slice(&[0x0F, 0x88]);
+    let open_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    // mov ebx, eax
+    payload.extend_from_slice(&[0x89, 0xC3]);
+
+    let entry1_fail_jumps = append_readdir_entry_check_and_print(
+        &mut payload,
+        entry1_prefix,
+        ABI_READDIR_SMOKE_ENTRY1.as_bytes(),
+    );
+
+    let entry2_fail_jumps = append_readdir_entry_check_and_print(
+        &mut payload,
+        entry2_prefix,
+        ABI_READDIR_SMOKE_ENTRY2.as_bytes(),
+    );
+
+    let entry3_fail_jumps = append_readdir_entry_check_and_print(
+        &mut payload,
+        entry3_prefix,
+        ABI_READDIR_SMOKE_ENTRY3.as_bytes(),
+    );
+
+    // Fourth readdir must return explicit end-of-directory (0).
+    payload.extend_from_slice(&[0xB8, 0x4E, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x89, 0xDF]);
+    payload.extend_from_slice(&[0x48, 0x89, 0xE6]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // test eax, eax
+    payload.extend_from_slice(&[0x85, 0xC0]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let eod_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // write("readdir-eod=1\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let eod_line_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(eod_line.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // close(fd)
+    payload.extend_from_slice(&[0xB8, 0x03, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x89, 0xDF]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // test eax, eax
+    payload.extend_from_slice(&[0x85, 0xC0]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let close_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // exit(51)
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_READDIR_SMOKE_ELF_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    let fail_offset = payload.len();
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_SMOKE_FAILURE_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    payload.extend_from_slice(&[0x0F, 0x0B]);
+
+    let start_line_offset = payload.len();
+    payload.extend_from_slice(start_line);
+    let entry1_prefix_offset = payload.len();
+    payload.extend_from_slice(entry1_prefix);
+    let entry2_prefix_offset = payload.len();
+    payload.extend_from_slice(entry2_prefix);
+    let entry3_prefix_offset = payload.len();
+    payload.extend_from_slice(entry3_prefix);
+    let eod_line_offset = payload.len();
+    payload.extend_from_slice(eod_line);
+    let newline_offset = payload.len();
+    payload.extend_from_slice(newline);
+    let dir_path_offset = payload.len();
+    payload.extend_from_slice(dir_path);
+    payload.push(0);
+
+    patch_rel32(&mut payload, start_line_disp_offset, start_line_offset);
+    patch_rel32(&mut payload, dir_path_disp_offset, dir_path_offset);
+    patch_rel32(&mut payload, open_fail_jump, fail_offset);
+    patch_readdir_block(
+        &mut payload,
+        &entry1_fail_jumps,
+        fail_offset,
+        entry1_prefix_offset,
+        newline_offset,
+    );
+    patch_readdir_block(
+        &mut payload,
+        &entry2_fail_jumps,
+        fail_offset,
+        entry2_prefix_offset,
+        newline_offset,
+    );
+    patch_readdir_block(
+        &mut payload,
+        &entry3_fail_jumps,
+        fail_offset,
+        entry3_prefix_offset,
+        newline_offset,
+    );
+    patch_rel32(&mut payload, eod_fail_jump, fail_offset);
+    patch_rel32(&mut payload, eod_line_disp_offset, eod_line_offset);
+    patch_rel32(&mut payload, close_fail_jump, fail_offset);
+
+    build_single_segment_rx_elf(&payload)
+}
+
+#[derive(Clone, Copy)]
+struct ReaddirBlockPatchPoints {
+    call_fail_jump: usize,
+    file_type_fail_jump: usize,
+    name_len_fail_jump: usize,
+    prefix_disp_offset: usize,
+    newline_disp_offset: usize,
+}
+
+fn append_readdir_entry_check_and_print(
+    payload: &mut Vec<u8>,
+    prefix: &[u8],
+    expected_name: &[u8],
+) -> ReaddirBlockPatchPoints {
+    // readdir(fd, rsp)
+    payload.extend_from_slice(&[0xB8, 0x4E, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x89, 0xDF]);
+    payload.extend_from_slice(&[0x48, 0x89, 0xE6]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // cmp eax, 1
+    payload.extend_from_slice(&[0x83, 0xF8, 0x01]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let call_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    // cmp byte ptr [rsp], regular_file
+    payload.extend_from_slice(&[0x80, 0x3C, 0x24, ABI_READDIR_EXPECTED_FILE_TYPE]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let file_type_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    // cmp byte ptr [rsp+1], expected_name_len
+    payload.extend_from_slice(&[0x80, 0x7C, 0x24, 0x01, expected_name.len() as u8]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let name_len_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // write("direntN=")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let prefix_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(prefix.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write(name, name_len) directly from the kernel-populated dirent buffer
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x74, 0x24, 0x08]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(expected_name.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write("\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let newline_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(ABI_ARGV_SMOKE_NEWLINE.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    ReaddirBlockPatchPoints {
+        call_fail_jump,
+        file_type_fail_jump,
+        name_len_fail_jump,
+        prefix_disp_offset,
+        newline_disp_offset,
+    }
+}
+
+fn patch_readdir_block(
+    payload: &mut [u8],
+    patch_points: &ReaddirBlockPatchPoints,
+    fail_offset: usize,
+    prefix_offset: usize,
+    newline_offset: usize,
+) {
+    patch_rel32(payload, patch_points.call_fail_jump, fail_offset);
+    patch_rel32(payload, patch_points.file_type_fail_jump, fail_offset);
+    patch_rel32(payload, patch_points.name_len_fail_jump, fail_offset);
+    patch_rel32(payload, patch_points.prefix_disp_offset, prefix_offset);
+    patch_rel32(payload, patch_points.newline_disp_offset, newline_offset);
 }
 
 fn build_arg_report_smoke_elf(

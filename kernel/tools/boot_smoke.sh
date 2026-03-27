@@ -49,6 +49,13 @@ ABI_STAT_SIZE_MARKER="stat-size=23"
 ABI_STAT_TYPE_MARKER="stat-type=file"
 ABI_FSTAT_SIZE_MARKER="fstat-size=23"
 ABI_STAT_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-stat-smoke.elf exited with code 50"
+ABI_READDIR_LAUNCH_MARKER="[INFO] WarExec ABI proof: launching /bin/warexec-readdir-smoke.elf"
+ABI_READDIR_START_MARKER="readdir-proof-start"
+ABI_READDIR_ENTRY1_MARKER="dirent1=alpha.txt"
+ABI_READDIR_ENTRY2_MARKER="dirent2=beta.txt"
+ABI_READDIR_ENTRY3_MARKER="dirent3=gamma.txt"
+ABI_READDIR_EOD_MARKER="readdir-eod=1"
+ABI_READDIR_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-readdir-smoke.elf exited with code 51"
 SHELL_MARKER="[INFO] WarOS shell online. Type 'help' for available commands."
 
 QEMU_PID=""
@@ -137,7 +144,14 @@ ls -lh "${IMAGE_PATH}" || true
 # 38. stat type marker
 # 39. fstat size marker
 # 40. stat proof exit marker
-# 41. shell-ready banner
+# 41. readdir proof launch marker
+# 42. readdir proof start marker
+# 43. first dirent marker
+# 44. second dirent marker
+# 45. third dirent marker
+# 46. end-of-directory marker
+# 47. readdir proof exit marker
+# 48. shell-ready banner
 #
 # This keeps CI deterministic without introducing timing-sensitive interaction or GUI automation.
 "${QEMU_BIN}" \
@@ -194,6 +208,13 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         && grep -Fq "${ABI_STAT_TYPE_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${ABI_FSTAT_SIZE_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${ABI_STAT_PROOF_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_READDIR_LAUNCH_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_READDIR_START_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_READDIR_ENTRY1_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_READDIR_ENTRY2_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_READDIR_ENTRY3_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_READDIR_EOD_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_READDIR_PROOF_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${SHELL_MARKER}" "${LOG_PATH}"; then
         echo "Kernel boot smoke passed."
         echo "  Log: ${LOG_PATH}"
@@ -237,6 +258,13 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         echo "  Found: ${ABI_STAT_TYPE_MARKER}"
         echo "  Found: ${ABI_FSTAT_SIZE_MARKER}"
         echo "  Found: ${ABI_STAT_PROOF_MARKER}"
+        echo "  Found: ${ABI_READDIR_LAUNCH_MARKER}"
+        echo "  Found: ${ABI_READDIR_START_MARKER}"
+        echo "  Found: ${ABI_READDIR_ENTRY1_MARKER}"
+        echo "  Found: ${ABI_READDIR_ENTRY2_MARKER}"
+        echo "  Found: ${ABI_READDIR_ENTRY3_MARKER}"
+        echo "  Found: ${ABI_READDIR_EOD_MARKER}"
+        echo "  Found: ${ABI_READDIR_PROOF_MARKER}"
         echo "  Found: ${SHELL_MARKER}"
         exit 0
     fi

@@ -256,6 +256,7 @@ pub extern "C" fn syscall_dispatch(
         3 => syscalls::file::sys_close(arg1 as u32),
         4 => syscalls::file::sys_stat(arg1 as *const u8, arg2 as *mut u8),
         5 => syscalls::file::sys_fstat(arg1 as u32, arg2 as *mut u8),
+        78 => syscalls::file::sys_readdir(arg1 as u32, arg2 as *mut u8),
         12 => syscalls::memory::sys_brk(arg1),
         60 => syscalls::process::sys_exit(arg1 as i32),
 

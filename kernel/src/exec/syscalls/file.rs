@@ -1,13 +1,14 @@
 use crate::auth::session;
-use crate::exec::fd_table::{DescriptorTarget, FileHandle};
+use crate::exec::fd_table::{DescriptorTarget, DirectoryEntryHandle, DirectoryHandle, FileHandle};
 use crate::exec::PROCESS_TABLE;
 use crate::fs;
 use crate::fs::FsError;
 
 use super::{
     copy_from_user_ptr_checked, copy_to_user_ptr_checked, read_user_string_checked,
-    write_struct_to_user_checked, WarExecStat, WAREXEC_FILE_TYPE_REGULAR, EBADF, EINVAL, ENOENT,
-    ENOSYS, EPERM, MAX_USER_STRING_LEN,
+    write_struct_to_user_checked, WarExecDirEntry, WarExecStat, WAREXEC_DIRENT_NAME_CAPACITY,
+    WAREXEC_FILE_TYPE_DIRECTORY, WAREXEC_FILE_TYPE_REGULAR, WAREXEC_OPEN_DIRECTORY, EBADF,
+    EINVAL, ENOENT, ENOSYS, EPERM, MAX_USER_STRING_LEN,
 };
 
 fn map_fs_error(error: FsError) -> i64 {
@@ -26,6 +27,22 @@ fn warexec_stat_from_entry(entry: &fs::FileEntry) -> WarExecStat {
         readonly: u8::from(entry.readonly),
         _reserved: [0; 6],
     }
+}
+
+fn directory_handle_from_path(path: &str) -> Result<DirectoryHandle, i64> {
+    let (resolved, entries) = fs::list_entries_current(Some(path)).map_err(map_fs_error)?;
+    let entries = entries
+        .into_iter()
+        .map(|entry| DirectoryEntryHandle {
+            name: entry.name,
+            is_dir: entry.is_dir,
+        })
+        .collect();
+    Ok(DirectoryHandle {
+        path: resolved,
+        entries,
+        cursor: 0,
+    })
 }
 
 pub fn sys_read(fd: u32, buffer: *mut u8, len: usize) -> i64 {
@@ -121,7 +138,11 @@ pub fn sys_write(fd: u32, buffer: *const u8, len: usize) -> i64 {
 }
 
 pub fn sys_open(path: *const u8, flags: u32, mode: u32) -> i64 {
-    if flags != 0 || mode != 0 {
+    if mode != 0 {
+        return ENOSYS;
+    }
+    let open_directory = flags == WAREXEC_OPEN_DIRECTORY;
+    if flags != 0 && !open_directory {
         return ENOSYS;
     }
 
@@ -130,20 +151,26 @@ pub fn sys_open(path: *const u8, flags: u32, mode: u32) -> i64 {
         Err(error) => return error,
     };
     let resolved = session::resolve_path(&path);
-    if fs::read_current(&resolved).is_err() {
-        return ENOENT;
-    }
+    let descriptor_target = if open_directory {
+        match directory_handle_from_path(&resolved) {
+            Ok(handle) => DescriptorTarget::Directory(handle),
+            Err(error) => return error,
+        }
+    } else {
+        if let Err(error) = fs::read_current(&resolved) {
+            return map_fs_error(error);
+        }
+        DescriptorTarget::File(FileHandle {
+            path: resolved,
+            offset: 0,
+        })
+    };
 
     let mut process_table = PROCESS_TABLE.lock();
     let Some(process) = super::current_pid().and_then(|pid| process_table.get_mut(pid)) else {
         return EPERM;
     };
-    process
-        .fd_table
-        .insert(DescriptorTarget::File(FileHandle {
-            path: resolved,
-            offset: 0,
-        })) as i64
+    process.fd_table.insert(descriptor_target) as i64
 }
 
 pub fn sys_close(fd: u32) -> i64 {
@@ -195,6 +222,51 @@ pub fn sys_fstat(fd: u32, stat_out: *mut u8) -> i64 {
     let stat = warexec_stat_from_entry(&entry);
     match write_struct_to_user_checked(stat_out.cast::<WarExecStat>(), &stat) {
         Ok(()) => 0,
+        Err(error) => error,
+    }
+}
+
+pub fn sys_readdir(fd: u32, entry_out: *mut u8) -> i64 {
+    let next_entry = {
+        let mut process_table = PROCESS_TABLE.lock();
+        let Some(process) = super::current_pid().and_then(|pid| process_table.get_mut(pid)) else {
+            return EPERM;
+        };
+        let Some(descriptor) = process.fd_table.get_mut(fd) else {
+            return EBADF;
+        };
+        match &mut descriptor.target {
+            DescriptorTarget::Directory(handle) => {
+                if handle.cursor >= handle.entries.len() {
+                    return 0;
+                }
+                let entry = handle.entries[handle.cursor].clone();
+                handle.cursor = handle.cursor.saturating_add(1);
+                entry
+            }
+            _ => return ENOSYS,
+        }
+    };
+
+    let name_bytes = next_entry.name.as_bytes();
+    if name_bytes.len() > WAREXEC_DIRENT_NAME_CAPACITY {
+        return EINVAL;
+    }
+
+    let mut name = [0u8; WAREXEC_DIRENT_NAME_CAPACITY];
+    name[..name_bytes.len()].copy_from_slice(name_bytes);
+    let entry = WarExecDirEntry {
+        file_type: if next_entry.is_dir {
+            WAREXEC_FILE_TYPE_DIRECTORY
+        } else {
+            WAREXEC_FILE_TYPE_REGULAR
+        },
+        name_len: name_bytes.len() as u8,
+        _reserved: [0; 6],
+        name,
+    };
+    match write_struct_to_user_checked(entry_out.cast::<WarExecDirEntry>(), &entry) {
+        Ok(()) => 1,
         Err(error) => error,
     }
 }
