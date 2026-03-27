@@ -78,6 +78,8 @@ pub fn handle(args: &[&str]) {
                     kprintln!("  Description:  {}", info.description);
                     kprintln!("  Size:         {} bytes", info.size_bytes);
                     kprintln!("  Dependencies: {}", if info.dependencies.is_empty() { String::from("none") } else { info.dependencies.join(", ") });
+                    kprintln!("  Signature:    {}", info.signature_scheme);
+                    kprintln!("  Signed by:    {}", info.signed_by);
                     kprintln!("  Source:       {}", info.download_url);
                 }
                 Err(error) => report_error(error),
@@ -91,7 +93,7 @@ pub fn handle(args: &[&str]) {
             match with_manager(|manager| manager.verify(name)) {
                 Ok(()) => {
                     kprint_colored!(Colors::GREEN, "[WarPkg] ");
-                    kprintln!("{name} verified.");
+                    kprintln!("{name} verified against the signed manifest.");
                 }
                 Err(error) => report_error(error),
             }
@@ -110,6 +112,7 @@ fn print_help() {
     kprintln!("  warpkg list");
     kprintln!("  warpkg info <name>");
     kprintln!("  warpkg verify <name>");
+    kprintln!("  Install and remove require PKG_INSTALL. Packages install only after signed-manifest verification.");
 }
 
 fn print_search_results(results: &[PackageInfo]) {

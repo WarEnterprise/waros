@@ -59,10 +59,15 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
     let arg_refs: alloc::vec::Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
     let Some(pid) = current_pid() else { return EPERM; };
-    let (uid, old_page_table_phys, old_address_space) = {
+    let (uid, old_page_table_phys, old_address_space, old_capabilities) = {
         let process_table = PROCESS_TABLE.lock();
         let Some(proc) = process_table.get(pid) else { return EPERM; };
-        (proc.uid, proc.page_table_phys, proc.address_space.clone())
+        (
+            proc.uid,
+            proc.page_table_phys,
+            proc.address_space.clone(),
+            proc.effective_capabilities,
+        )
     };
 
     let role = role_for_uid(uid);
@@ -120,6 +125,8 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
     process.name = path_str.rsplit('/').next().unwrap_or(path_str.as_str()).into();
     process.image_path = path_str;
     process.image_kind = ProcessImageKind::Elf;
+    process.effective_capabilities =
+        crate::security::capabilities::exec_capabilities(old_capabilities, uid);
     process.env.clear();
     process.exit_code = None;
     process.state = ProcessState::Running;

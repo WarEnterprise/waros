@@ -269,7 +269,7 @@ pub fn execute_command(command_line: &str) {
         "waros" => cmd_waros(),
         // WarShield security commands
         "security" => cmd_security(&parts[1..]),
-        "capabilities" => cmd_capabilities(),
+        "capabilities" => cmd_capabilities(&parts[1..]),
         "audit" => cmd_audit(&parts[1..]),
         "firewall" => cmd_firewall(&parts[1..]),
         "integrity" => cmd_integrity(&parts[1..]),
@@ -375,7 +375,7 @@ fn cmd_help(topic: Option<&str>) {
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Security (WarShield)\n");
-    kprintln!("  security [status|profile <p>]   capabilities    audit [log|stats]");
+    kprintln!("  security [status|profile <p>]   capabilities [drop <CAP>...]   audit [log|stats]");
     kprintln!("  firewall [status|rules|add|remove|log]          integrity [build|check]");
     kprintln!("  encrypt <file>  decrypt <file>  qkd bb84 [n]");
     kprintln!();
@@ -2861,18 +2861,47 @@ fn cmd_security(args: &[&str]) {
     }
 }
 
-fn cmd_capabilities() {
-    let pid = exec::current_pid().unwrap_or(0);
-    let caps = {
-        let pt = exec::PROCESS_TABLE.lock();
-        pt.get(pid).map(|p| p.effective_capabilities)
-    };
-    if let Some(caps) = caps {
-        kprint_colored!(Colors::CYAN, "Process Capabilities");
-        kprintln!(" (pid {})", pid);
-        kprintln!("{}", security::capabilities::format_capabilities(caps));
-    } else {
-        kprintln!("No process context");
+fn cmd_capabilities(args: &[&str]) {
+    match args.first().copied() {
+        None => {
+            let pid = exec::current_pid().unwrap_or(0);
+            let caps = security::capabilities::current_capabilities();
+            if let Some(caps) = caps {
+                kprint_colored!(Colors::CYAN, "Process Capabilities");
+                kprintln!(" (pid {})", pid);
+                kprintln!("{}", security::capabilities::format_capabilities(caps));
+            } else {
+                kprintln!("No process context");
+            }
+        }
+        Some("drop") => {
+            if args.len() < 2 {
+                kprintln!("Usage: capabilities drop <CAP> [CAP...]");
+                return;
+            }
+            let mut to_drop = security::capabilities::Capabilities::empty();
+            for name in &args[1..] {
+                let Some(capability) = security::capabilities::parse_capability(name) else {
+                    kprintln!("Unknown capability '{}'.", name);
+                    kprintln!(
+                        "Known capabilities: {}",
+                        security::capabilities::all_capability_names().join(", ")
+                    );
+                    return;
+                };
+                to_drop |= capability;
+            }
+            security::capabilities::drop_capabilities(to_drop);
+            kprint_colored!(Colors::GREEN, "Dropped: ");
+            kprintln!("{:?}", to_drop);
+            if let Some(caps) = security::capabilities::current_capabilities() {
+                kprintln!("{}", security::capabilities::format_capabilities(caps));
+            }
+        }
+        Some(other) => {
+            kprintln!("Unknown subcommand: {}", other);
+            kprintln!("Usage: capabilities [drop <CAP> [CAP...]]");
+        }
     }
 }
 

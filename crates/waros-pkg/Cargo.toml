@@ -1,0 +1,15 @@
+[package]
+name = "waros-pkg"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WarOS package manifest and signature verification primitives"
+
+[dependencies]
+ml-dsa = { version = "0.1.0-rc.8", default-features = false, features = ["alloc"] }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.10", default-features = false }
+sha3 = { version = "0.10", default-features = false }

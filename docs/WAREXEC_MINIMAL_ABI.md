@@ -2,7 +2,7 @@
 
 WarOS does not currently provide a Linux userspace ABI.
 The kernel reuses selected x86_64 Linux syscall numbers for convenience only.
-Today, WarExec is an experimental minimal ABI with twelve CI-proven static ELF paths plus a narrow execution-hardening envelope from WarShield Pass 1:
+Today, WarExec is an experimental minimal ABI with twelve CI-proven static ELF paths plus a narrow execution-hardening envelope from WarShield Pass 1 and Pass 2:
 
 - `/bin/warexec-smoke.elf`
   proves ELF load, stdout write, and exit
@@ -48,8 +48,10 @@ The following behavior is part of the currently proven minimal ABI:
   `execve(path, argv, envp)` is a narrow in-place image replacement path only
   path resolution uses WarFS and the target must be a static little-endian x86_64 ELF
   a successful `execve` does not return to the caller; the current image is replaced and entered through the same stack-based `argc`/`argv` ABI
+  the current process keeps its PID, UID, and parent linkage across the replacement
+  effective capabilities preserve or narrow only; `execve` does not widen privilege relative to the current process or the target-UID baseline
   `envp` is currently ignored and the replacement image receives no envp array at entry
-  no fork, interpreter handoff, dynamic loader, or Linux-compatible `execve` semantics are claimed
+  no setuid, file-capability, interpreter handoff, dynamic loader, `fork`, or Linux-compatible `execve` semantics are claimed
 - Minimal heap growth
   `brk(0)` queries the current heap break
   `brk(new_end)` grows the current process heap monotonically if `new_end` stays inside the reserved heap window
@@ -137,14 +139,18 @@ The following behavior is part of the currently proven minimal ABI:
 
 ## Current Hardening Around the ABI
 
-WarShield Pass 1 added execution hardening around the current WarExec path. These are implementation facts about the current kernel, not a claim of broad Linux compatibility:
+WarShield Pass 1 and Pass 2 added execution hardening around the current WarExec path. These are implementation facts about the current kernel, not a claim of broad Linux compatibility:
 
 - new WarExec stacks are randomized at load time through the current ASLR path
 - heap and mmap base randomization also exist today as implementation details, but they should not yet be treated as stable ABI promises
 - PT_LOAD segments are populated through temporary writable NX mappings and then tightened to their final permissions
 - the loader rejects writable-and-executable user segments and verifies the final mapped segment set before entry
 - user stack and heap mappings are NX in the current implementation
-- capability enforcement currently applies to kernel-resident shell and system operations; there is not yet a general userspace capability syscall ABI
+- shell/session privilege maps explicitly into the kernel shell process instead of being treated as an implicit ambient state
+- spawned WarExec children inherit the parent effective capability set intersected with the target-UID baseline
+- `execve` preserves or narrows the current process capability set only; it does not widen privilege
+- one-way capability drops on the current process remain one-way under the current spawn and `execve` model
+- capability enforcement still applies through kernel-owned launch and system-operation paths; there is not yet a general userspace capability syscall ABI
 
 ## Current Limitations
 
@@ -158,6 +164,7 @@ These limitations are intentional and should be treated as part of the ABI contr
 - no userspace signal or page-fault delivery is exposed for bad pointers; the current ABI returns a deterministic negative error instead
 - `wait4` currently observes only already-exited direct children; it is not broad POSIX `waitpid` compatibility
 - no general userspace spawn or fork ABI exists, so the current lifecycle proof is kernel-orchestrated
+- no broad POSIX credential, setuid, or file-capability model exists; the current deterministic capability model covers shell-process creation, spawn, and `execve` replacement only
 - metadata is currently regular-file-only; no `lstat`, symlink metadata, inode model, timestamps, or mode-bit compatibility are claimed
 - directory iteration is currently read-only and snapshot-based; no directory mutation, `openat`, cwd-relative dir iteration contract, or broad POSIX dirent semantics are claimed
 - pathname handling is currently absolute-only; no cwd semantics, relative resolution, `openat`, symlink handling, or broad POSIX normalization rules are claimed
@@ -166,7 +173,7 @@ These limitations are intentional and should be treated as part of the ABI contr
 - process entry is currently stack-based only; no broad SysV or libc startup contract is claimed
 - envp is omitted from the userspace entry ABI for now
 - network/socket/HTTPS syscalls remain outside the minimal ABI and currently return `ENOSYS`
-- capability checks are not exposed as a general userspace ABI today; current capability enforcement is on kernel shell and system operations
+- capability checks are not exposed as a general userspace ABI today; current capability enforcement is on kernel shell, launch, and system-operation paths
 - no broad libc compatibility is claimed
 - no `fork` ABI is exposed
 - `execve` is still intentionally narrow: one in-place image replacement path only

@@ -60,7 +60,7 @@ pub fn init() {
     crate::serial_println!("[PROOF] WarShield: ASLR wired (stack randomization, 8-bit entropy)");
     crate::serial_println!("[PROOF] WarShield: W^X enforced (loader rejects W+X, verify_wx post-check)");
     crate::serial_println!("[PROOF] WarShield: capabilities wired (halt/reboot/useradd/userdel/format/profile)");
-    crate::serial_println!("[PROOF] WarShield: integration pass 1 complete");
+    crate::serial_println!("[PROOF] WarShield: pass 1 foundation complete");
 }
 
 fn boot_ok_security(message: &str, _start_ticks: u64) {
@@ -100,6 +100,9 @@ pub fn format_status() -> String {
 
     let encrypted = crypt::file_encryption::encrypted_file_count();
     let qkd_keys = crypt::qkd::stored_key_count();
+    let capability_model =
+        "shell session maps explicitly to a shell process; spawn inherits parent effective set; exec preserves or narrows only";
+    let warpkg_root = crate::pkg::trust_root_summary();
 
     format!(
         "WarShield Security Status:\n\
@@ -124,6 +127,13 @@ pub fn format_status() -> String {
          \n    Encrypted:   {} file(s)\
          \n    Key store:   no kernel PQ key store exposed\
          \n\
+         \n  WarPkg:\
+         \n    Verify path: signed manifest + payload digests\
+         \n    Trust root:  {}\
+         \n\
+         \n  Capabilities:\
+         \n    Model:       {}\
+         \n\
          \n  Quantum Security:\
          \n    QKD demo:    {} stored simulated BB84 key file(s)",
         profile.name(),
@@ -140,6 +150,8 @@ pub fn format_status() -> String {
         vault_count,
         violations.len(),
         encrypted,
+        warpkg_root,
+        capability_model,
         qkd_keys,
     )
 }

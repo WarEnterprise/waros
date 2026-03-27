@@ -1,5 +1,4 @@
 use alloc::string::String;
-use alloc::vec;
 use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
@@ -7,19 +6,22 @@ use spin::{Lazy, Mutex};
 
 use crate::fs;
 use crate::net;
+use crate::security::capabilities::{self, Capabilities};
 
+pub mod bootstrap;
 pub mod commands;
 pub mod installer;
 pub mod manifest;
 pub mod registry;
 pub mod resolver;
 pub mod signature;
+pub mod smoke;
 
 use installer::{install as install_package, remove as remove_package};
-use manifest::{Manifest, ManifestFile, WarPackBundle, WarPackPayload};
+use manifest::WarPackBundle;
 use registry::{bundle_path, fetch_index, load_local_index};
 use resolver::resolve_dependencies;
-use signature::{sha256_hex, sign_bootstrap};
+use signature::{format_trust_root, sha256_hex};
 
 pub const DEFAULT_REPO_URL: &str = "https://warenterprise.com/packages";
 pub const LOCAL_INDEX_PATH: &str = "/var/pkg/index.json";
@@ -37,6 +39,7 @@ pub struct InstalledPackage {
     pub installed_at: u64,
     pub size_bytes: u64,
     pub signed_by: String,
+    pub signature_scheme: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,9 +55,17 @@ pub struct PackageInfo {
     pub description: String,
     pub size_bytes: u64,
     pub sha256: String,
-    pub signature: String,
+    pub signed_by: String,
+    pub signature_scheme: String,
     pub dependencies: Vec<String>,
     pub download_url: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct VerifiedPackage {
+    pub bundle: WarPackBundle,
+    pub signed_by: String,
+    pub signature_scheme: String,
 }
 
 pub struct PackageManager {
@@ -68,7 +79,10 @@ pub enum PkgError {
     PackageNotFound,
     PackageNotInstalled,
     ChecksumMismatch,
+    UnsignedPackage,
     SignatureInvalid,
+    MetadataMismatch,
+    PermissionDenied,
     DependencyCycle,
     DependencyNotFound(String),
     DownloadFailed,
@@ -83,7 +97,10 @@ impl core::fmt::Display for PkgError {
             Self::PackageNotFound => formatter.write_str("package not found"),
             Self::PackageNotInstalled => formatter.write_str("package is not installed"),
             Self::ChecksumMismatch => formatter.write_str("package checksum mismatch"),
+            Self::UnsignedPackage => formatter.write_str("package is unsigned"),
             Self::SignatureInvalid => formatter.write_str("package signature invalid"),
+            Self::MetadataMismatch => formatter.write_str("package metadata does not match signed manifest"),
+            Self::PermissionDenied => formatter.write_str("permission denied: PKG_INSTALL capability required"),
             Self::DependencyCycle => formatter.write_str("dependency cycle detected"),
             Self::DependencyNotFound(name) => {
                 write!(formatter, "dependency '{}' missing from package index", name)
@@ -107,6 +124,7 @@ impl PackageManager {
     }
 
     pub fn update(&mut self) -> Result<(), PkgError> {
+        require_pkg_install()?;
         let index = fetch_index(&self.repo_url).or_else(|_| load_local_index())?;
         let bytes = serde_json::to_vec(&index).map_err(|_| PkgError::ExtractFailed)?;
         fs::FILESYSTEM
@@ -137,6 +155,7 @@ impl PackageManager {
     }
 
     pub fn install(&mut self, name: &str) -> Result<(), PkgError> {
+        require_pkg_install()?;
         let index = self.index.clone().ok_or(PkgError::PackageNotFound)?;
         let ordered = resolve_dependencies(&index, name)?;
         for package_name in ordered {
@@ -151,6 +170,7 @@ impl PackageManager {
     }
 
     pub fn remove(&mut self, name: &str) -> Result<(), PkgError> {
+        require_pkg_install()?;
         remove_package(self, name)
     }
 
@@ -169,13 +189,7 @@ impl PackageManager {
     pub fn verify(&self, name: &str) -> Result<(), PkgError> {
         let info = self.package_info(name).ok_or(PkgError::PackageNotFound)?;
         let bytes = self.fetch_package(&info.download_url)?;
-        if sha256_hex(&bytes) != info.sha256 {
-            return Err(PkgError::ChecksumMismatch);
-        }
-        if !signature::verify_bootstrap(&bytes, &info.signature) {
-            return Err(PkgError::SignatureInvalid);
-        }
-        Ok(())
+        verify_package_bytes(info, &bytes).map(|_| ())
     }
 
     pub fn save_installed_list(&self) -> Result<(), PkgError> {
@@ -206,9 +220,43 @@ pub fn init() -> Result<(), PkgError> {
     Ok(())
 }
 
-pub fn with_manager<T>(f: impl FnOnce(&mut PackageManager) -> Result<T, PkgError>) -> Result<T, PkgError> {
+pub fn with_manager<T>(
+    f: impl FnOnce(&mut PackageManager) -> Result<T, PkgError>,
+) -> Result<T, PkgError> {
     let mut manager = PACKAGE_MANAGER.lock();
     f(&mut manager)
+}
+
+pub fn verify_package_bytes(
+    package: &PackageInfo,
+    bytes: &[u8],
+) -> Result<VerifiedPackage, PkgError> {
+    if sha256_hex(bytes) != package.sha256 {
+        return Err(PkgError::ChecksumMismatch);
+    }
+
+    let bundle: WarPackBundle = serde_json::from_slice(bytes).map_err(|_| PkgError::ExtractFailed)?;
+    signature::verify_bootstrap_bundle(&bundle).map_err(map_verify_error)?;
+
+    let manifest = &bundle.signed_manifest.manifest;
+    if manifest.name != package.name
+        || manifest.version != package.version
+        || manifest.description != package.description
+        || manifest.dependencies != package.dependencies
+    {
+        return Err(PkgError::MetadataMismatch);
+    }
+
+    Ok(VerifiedPackage {
+        signed_by: bundle.signed_manifest.signature.key_id.clone(),
+        signature_scheme: bundle.signed_manifest.signature.scheme.clone(),
+        bundle,
+    })
+}
+
+#[must_use]
+pub fn trust_root_summary() -> String {
+    format_trust_root()
 }
 
 fn load_installed() -> Option<Vec<InstalledPackage>> {
@@ -218,25 +266,26 @@ fn load_installed() -> Option<Vec<InstalledPackage>> {
 }
 
 fn seed_repository() -> Result<(), PkgError> {
-    let packages = built_in_packages();
+    let packages = bootstrap::built_in_packages();
     let mut index_packages = Vec::new();
     let mut filesystem = fs::FILESYSTEM.lock();
 
     for bundle in packages {
         let bytes = serde_json::to_vec(&bundle).map_err(|_| PkgError::ExtractFailed)?;
-        let name = bundle.manifest.name.clone();
-        let path = bundle_path(&name);
+        let manifest = &bundle.signed_manifest.manifest;
+        let path = bundle_path(&manifest.name);
         filesystem
             .write_system(&path, &bytes, false)
             .map_err(|_| PkgError::InstallFailed)?;
         index_packages.push(PackageInfo {
-            name: bundle.manifest.name.clone(),
-            version: bundle.manifest.version.clone(),
-            description: bundle.manifest.description.clone(),
+            name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            description: manifest.description.clone(),
             size_bytes: bytes.len() as u64,
             sha256: sha256_hex(&bytes),
-            signature: sign_bootstrap(&bytes),
-            dependencies: bundle.manifest.dependencies.clone(),
+            signed_by: bundle.signed_manifest.signature.key_id.clone(),
+            signature_scheme: bundle.signed_manifest.signature.scheme.clone(),
+            dependencies: manifest.dependencies.clone(),
             download_url: path,
         });
     }
@@ -257,128 +306,13 @@ fn seed_repository() -> Result<(), PkgError> {
     Ok(())
 }
 
-fn built_in_packages() -> Vec<WarPackBundle> {
-    vec![
-        package(
-            "quantum-examples",
-            "Quantum example circuits",
-            "quantum",
-            vec![
-                file("/usr/share/quantum/bell.qasm", "bell.qasm", false, include_str!("../../../examples/qasm/bell.qasm")),
-                file("/usr/share/quantum/ghz5.qasm", "ghz5.qasm", false, include_str!("../../../examples/qasm/ghz5.qasm")),
-                file("/usr/share/quantum/grover2.qasm", "grover2.qasm", false, include_str!("../../../examples/qasm/grover2.qasm")),
-                file("/usr/share/quantum/qft4.qasm", "qft4.qasm", false, include_str!("../../../examples/qasm/qft4.qasm")),
-            ],
-            Vec::new(),
-        ),
-        package(
-            "crypto-tools",
-            "Post-quantum crypto command helpers",
-            "crypto",
-            vec![file(
-                "/usr/bin/crypto-tools",
-                "crypto-tools",
-                true,
-                "#!warsh\ncrypto\n",
-            )],
-            Vec::new(),
-        ),
-        package(
-            "network-utils",
-            "Network helper scripts",
-            "binary",
-            vec![
-                file("/usr/bin/net-status", "net-status", true, "#!warsh\nnet status\n"),
-                file("/usr/bin/net-dns", "net-dns", true, "#!warsh\ndns warenterprise.com\n"),
-            ],
-            Vec::new(),
-        ),
-        package(
-            "system-monitor",
-            "Top-style system dashboard launcher",
-            "binary",
-            vec![file("/usr/bin/system-monitor", "system-monitor", true, "#!warsh\ntop\n")],
-            Vec::new(),
-        ),
-        package(
-            "waros-docs",
-            "Offline WarOS documentation",
-            "docs",
-            vec![file(
-                "/usr/share/doc/waros/README.txt",
-                "README.txt",
-                false,
-                "WarOS package repository bootstrap.\nUse 'warpkg list' and 'warpkg info <name>'.\n",
-            )],
-            Vec::new(),
-        ),
-        package(
-            "quantum-benchmarks",
-            "Quantum benchmark scripts",
-            "quantum",
-            vec![file(
-                "/usr/share/quantum/benchmarks.txt",
-                "benchmarks.txt",
-                false,
-                "bell: 2 qubits\nqft4: 4 qubits\nghz5: 5 qubits\n",
-            )],
-            vec![String::from("quantum-examples")],
-        ),
-        package(
-            "hello-world",
-            "WarExec hello-world launcher",
-            "binary",
-            vec![file("/usr/bin/hello", "hello", true, "#!warsh\necho Hello from WarOS package manager\n")],
-            Vec::new(),
-        ),
-        package(
-            "war-shell-plugins",
-            "Shell helper launchers",
-            "binary",
-            vec![
-                file("/usr/bin/waros-help", "waros-help", true, "#!warsh\nhelp\n"),
-                file("/usr/bin/waros-version", "waros-version", true, "#!warsh\nversion --all\n"),
-            ],
-            Vec::new(),
-        ),
-    ]
+fn require_pkg_install() -> Result<(), PkgError> {
+    capabilities::session_require(Capabilities::PKG_INSTALL).map_err(|_| PkgError::PermissionDenied)
 }
 
-fn package(
-    name: &str,
-    description: &str,
-    category: &str,
-    files: Vec<(ManifestFile, WarPackPayload)>,
-    dependencies: Vec<String>,
-) -> WarPackBundle {
-    let (manifest_files, payloads): (Vec<_>, Vec<_>) = files.into_iter().unzip();
-    WarPackBundle {
-        manifest: Manifest {
-            name: name.into(),
-            version: String::from("0.1.0"),
-            description: description.into(),
-            author: String::from("War Enterprise"),
-            license: String::from("Proprietary"),
-            files: manifest_files,
-            dependencies,
-            min_waros_version: crate::KERNEL_VERSION.into(),
-            category: category.into(),
-        },
-        payloads,
+fn map_verify_error(error: signature::VerifyError) -> PkgError {
+    match error {
+        signature::VerifyError::SignatureMissing => PkgError::UnsignedPackage,
+        _ => PkgError::SignatureInvalid,
     }
-}
-
-fn file(path: &str, source: &str, executable: bool, contents: &str) -> (ManifestFile, WarPackPayload) {
-    (
-        ManifestFile {
-            path: path.into(),
-            source: source.into(),
-            executable,
-            size: contents.len() as u64,
-        },
-        WarPackPayload {
-            source: source.into(),
-            contents: contents.into(),
-        },
-    )
 }
