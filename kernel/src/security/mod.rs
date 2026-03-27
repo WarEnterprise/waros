@@ -79,7 +79,11 @@ pub fn format_status() -> String {
     use alloc::format;
 
     let profile = policy::profiles::current();
-    let aslr_status = if aslr::is_enabled() { "enabled (8-bit stack, 13-bit heap, 14-bit mmap)" } else { "disabled" };
+    let aslr_status = if aslr::is_enabled() {
+        "enabled (stack/heap/mmap randomization)"
+    } else {
+        "disabled"
+    };
     let entropy = crypt::entropy::entropy_bits();
     let rdrand = if crypt::entropy::has_rdrand() { "available" } else { "unavailable" };
 
@@ -101,7 +105,7 @@ pub fn format_status() -> String {
         "WarShield Security Status:\n\
          \n  Profile:      {}\
          \n  ASLR:         {}\
-         \n  W^X:          enforced\
+         \n  W^X:          enforced on WarExec load path\
          \n  Entropy:      {} bits (RDRAND: {})\
          \n\
          \n  WarGuard Firewall:\n{}\
@@ -118,10 +122,10 @@ pub fn format_status() -> String {
          \n\
          \n  WarCrypt:\
          \n    Encrypted:   {} file(s)\
-         \n    PQ keys:     {}\
+         \n    Key store:   no kernel PQ key store exposed\
          \n\
          \n  Quantum Security:\
-         \n    QKD keys:    {} (BB84)",
+         \n    QKD demo:    {} stored simulated BB84 key file(s)",
         profile.name(),
         aslr_status,
         entropy,
@@ -136,7 +140,6 @@ pub fn format_status() -> String {
         vault_count,
         violations.len(),
         encrypted,
-        qkd_keys,
         qkd_keys,
     )
 }

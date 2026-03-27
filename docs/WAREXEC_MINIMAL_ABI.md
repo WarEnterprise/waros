@@ -2,7 +2,7 @@
 
 WarOS does not currently provide a Linux userspace ABI.
 The kernel reuses selected x86_64 Linux syscall numbers for convenience only.
-Today, WarExec is an experimental minimal ABI with twelve CI-proven static ELF paths:
+Today, WarExec is an experimental minimal ABI with twelve CI-proven static ELF paths plus a narrow execution-hardening envelope from WarShield Pass 1:
 
 - `/bin/warexec-smoke.elf`
   proves ELF load, stdout write, and exit
@@ -135,6 +135,17 @@ The following behavior is part of the currently proven minimal ABI:
   each process has one heap base, current break, and heap limit tracked by WarExec
   the current heap proof grows by one page and writes a deterministic string into the newly mapped region
 
+## Current Hardening Around the ABI
+
+WarShield Pass 1 added execution hardening around the current WarExec path. These are implementation facts about the current kernel, not a claim of broad Linux compatibility:
+
+- new WarExec stacks are randomized at load time through the current ASLR path
+- heap and mmap base randomization also exist today as implementation details, but they should not yet be treated as stable ABI promises
+- PT_LOAD segments are populated through temporary writable NX mappings and then tightened to their final permissions
+- the loader rejects writable-and-executable user segments and verifies the final mapped segment set before entry
+- user stack and heap mappings are NX in the current implementation
+- capability enforcement currently applies to kernel-resident shell and system operations; there is not yet a general userspace capability syscall ABI
+
 ## Current Limitations
 
 These limitations are intentional and should be treated as part of the ABI contract today:
@@ -154,6 +165,8 @@ These limitations are intentional and should be treated as part of the ABI contr
 - no shared-offset, dup-like, or pipe semantics are claimed
 - process entry is currently stack-based only; no broad SysV or libc startup contract is claimed
 - envp is omitted from the userspace entry ABI for now
+- network/socket/HTTPS syscalls remain outside the minimal ABI and currently return `ENOSYS`
+- capability checks are not exposed as a general userspace ABI today; current capability enforcement is on kernel shell and system operations
 - no broad libc compatibility is claimed
 - no `fork` ABI is exposed
 - `execve` is still intentionally narrow: one in-place image replacement path only
