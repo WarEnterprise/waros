@@ -32,6 +32,35 @@ impl TcpConnection {
         remote_port: u16,
         timeout_ms: u64,
     ) -> Result<Self, NetError> {
+        // WarGuard firewall check: outbound TCP
+        {
+            use crate::security::firewall;
+            use crate::security::firewall::rules::{Action, Direction, Protocol};
+
+            let src_ip = stack
+                .network_config
+                .map(|c| u32::from_be_bytes(c.ip.0))
+                .unwrap_or(0);
+            let action = firewall::process_packet(
+                Direction::Outbound,
+                Protocol::Tcp,
+                src_ip,
+                u32::from_be_bytes(remote_ip.0),
+                0,
+                remote_port,
+            );
+            if action == Action::Deny {
+                crate::serial_println!(
+                    "[WarGuard] DENY outbound TCP to {}:{}",
+                    remote_ip,
+                    remote_port
+                );
+                return Err(NetError::ProtocolError(
+                    alloc::string::String::from("firewall: outbound TCP denied"),
+                ));
+            }
+        }
+
         let socket = tcp::Socket::new(
             tcp::SocketBuffer::new(vec![0; TCP_SOCKET_BUFFER_SIZE]),
             tcp::SocketBuffer::new(vec![0; TCP_SOCKET_BUFFER_SIZE]),

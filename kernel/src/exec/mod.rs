@@ -172,6 +172,7 @@ pub fn ensure_shell_process() -> u32 {
         task_id: None,
         image_kind: ProcessImageKind::KernelShell,
         image_path: String::from("shell"),
+        effective_capabilities: crate::security::capabilities::default_for_uid(uid),
     };
     let pid = process_table.create_process(process).unwrap_or(1);
     process_table.shell_pid = Some(pid);
@@ -374,6 +375,7 @@ pub fn spawn_shell_command(command_line: &str, priority: Priority) -> Result<u32
         task_id: None,
         image_kind: ProcessImageKind::ShellCommand,
         image_path: command.clone(),
+        effective_capabilities: crate::security::capabilities::default_for_uid(uid),
     };
     let pid = PROCESS_TABLE.lock().create_process(process)?;
     SCHEDULER.lock().enqueue(pid, priority);
