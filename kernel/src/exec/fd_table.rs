@@ -3,9 +3,17 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 #[derive(Debug, Clone)]
+pub enum FileHandleAccess {
+    ReadOnly,
+    CreateWrite,
+}
+
+#[derive(Debug, Clone)]
 pub struct FileHandle {
     pub path: String,
     pub offset: usize,
+    pub access: FileHandleAccess,
+    pub staged_data: Vec<u8>,
 }
 
 #[derive(Debug, Clone)]

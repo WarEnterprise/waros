@@ -2,7 +2,7 @@
 
 WarOS does not currently provide a Linux userspace ABI.
 The kernel reuses selected x86_64 Linux syscall numbers for convenience only.
-Today, WarExec is an experimental minimal ABI with eleven CI-proven static ELF paths:
+Today, WarExec is an experimental minimal ABI with twelve CI-proven static ELF paths:
 
 - `/bin/warexec-smoke.elf`
   proves ELF load, stdout write, and exit
@@ -26,6 +26,8 @@ Today, WarExec is an experimental minimal ABI with eleven CI-proven static ELF p
   proves one narrow directory path: `open(path, O_DIRECTORY, 0)` snapshots a deterministic directory view, `readdir(fd, out_ptr)` returns one entry per call in lexicographic order, and end-of-directory is explicit
 - `/bin/warexec-path-smoke.elf`
   proves one narrow pathname contract: absolute path success for `stat` and `open`, deterministic rejection of relative paths, and exit
+- `/bin/warexec-write-smoke.elf`
+  proves one narrow create/write path: create-new open, userspace write into a staged regular-file descriptor, commit on `close`, `stat` size verification, read-back verification, and exit
 
 ## CI-Proven ABI Contract
 
@@ -79,6 +81,19 @@ The following behavior is part of the currently proven minimal ABI:
 - Standard file descriptors
   fd `1` and fd `2` support `write`
   fd `0` exists but no interactive stdin ABI is proven yet
+- Minimal file creation and write path
+  `open(path, O_CREATE|O_WRITE, 0)` is the only currently proven writable file-open form
+  the path must satisfy the same absolute-only pathname contract as the rest of WarExec
+  the call is create-new only and fails if the target file already exists
+  the parent directory must already exist
+  the returned descriptor is a regular-file create/write handle only; it is not a broad POSIX writable FD
+  `write(fd, buf, len)` on that descriptor copies from validated userspace memory into a per-FD staged buffer and advances the forward offset
+  `write` either accepts the full buffer or fails with a deterministic negative error; no broad partial-write contract is claimed
+  `close(fd)` is the commit point: on successful close, the staged buffer becomes the new WarFS file contents
+  if the process exits without a successful close, WarOS does not currently guarantee that staged create/write data is persisted
+  `read(fd, ...)` on a create/write descriptor remains unsupported
+  `fstat(fd, ...)` on a live create/write descriptor reports the staged size, while `stat(path, ...)` and reopen/read after close observe the committed file
+  this is a narrow WarExec create/write contract only; it is not POSIX `open`/`creat`/`write`/`truncate` compatibility
 - Exit
   `exit` returns a deterministic code to the kernel bootstrap path
 - Read-only file path
@@ -124,8 +139,9 @@ The following behavior is part of the currently proven minimal ABI:
 
 These limitations are intentional and should be treated as part of the ABI contract today:
 
-- `open` is currently a narrow read-only path only
+- `open` currently supports only three narrow forms: read-only regular file, `O_DIRECTORY`, and create-new `O_CREATE|O_WRITE`
 - `read` maintains only a narrow per-FD forward offset
+- writable file descriptors are create-new only; no overwrite, append, truncate, rename, or unlink semantics are claimed
 - `brk` is currently monotonic growth only
 - shrinking the heap is unsupported
 - no userspace signal or page-fault delivery is exposed for bad pointers; the current ABI returns a deterministic negative error instead
@@ -148,8 +164,8 @@ These limitations are intentional and should be treated as part of the ABI contr
 | Number | Syscall | Status | Notes |
 | --- | --- | --- | --- |
 | 0 | `read` | implemented and proven | WarFS file descriptors only; per-FD forward read offset, EOF returns 0, bad buffers return `-14` |
-| 1 | `write` | implemented and proven | fd `1`/`2` only; bad buffers return `-14`, bad FDs return `-9` |
-| 2 | `open` | implemented and proven | absolute path only; existing WarFS file with `flags=0`, or WarFS directory with `flags=O_DIRECTORY`; bad path pointers return `-14`, invalid path forms return `-22` |
+| 1 | `write` | implemented and proven | fd `1`/`2`, plus create-new WarFS regular-file descriptors opened with `O_CREATE\|O_WRITE`; bad buffers return `-14`, bad FDs return `-9` |
+| 2 | `open` | implemented and proven | absolute path only; existing WarFS file with `flags=0`, WarFS directory with `flags=O_DIRECTORY`, or create-new regular file with `flags=O_CREATE\|O_WRITE`; bad path pointers return `-14`, invalid path forms return `-22` |
 | 3 | `close` | implemented and proven | closes a descriptor |
 | 4 | `stat` | implemented and proven | absolute path only; writes `WarExecStat` for one existing WarFS regular file path |
 | 5 | `fstat` | implemented and proven | writes `WarExecStat` for one WarFS-backed file descriptor |
@@ -190,6 +206,8 @@ These limitations are intentional and should be treated as part of the ABI contr
 - WarFS proof directory: `/abi/readdir-proof`
 - ELF proof binary: `/bin/warexec-readdir-smoke.elf`
 - ELF proof binary: `/bin/warexec-path-smoke.elf`
+- WarFS proof directory: `/abi/write-proof`
+- ELF proof binary: `/bin/warexec-write-smoke.elf`
 
 This document is intentionally narrow.
 If a behavior is not listed above as proven or implemented, WarOS should not claim it as current userspace ABI support.

@@ -63,6 +63,7 @@ pub struct WordCount {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsError {
     FileNotFound,
+    AlreadyExists,
     FilesystemFull,
     FilenameTooLong,
     FileTooLarge,
@@ -309,6 +310,56 @@ impl WarFS {
         Ok(())
     }
 
+    pub fn create_new_as(
+        &mut self,
+        name: &str,
+        data: &[u8],
+        owner_uid: u16,
+        permissions: FilePermissions,
+        readonly: bool,
+    ) -> Result<(), FsError> {
+        if data.len() > MAX_FILE_SIZE {
+            return Err(FsError::FileTooLarge);
+        }
+
+        let canonical = canonical_path(name)?;
+        if canonical == "/" {
+            return Err(FsError::InvalidFilename);
+        }
+        if self.find(&canonical).is_some() {
+            return Err(FsError::AlreadyExists);
+        }
+
+        let parent = parent_directory(&canonical);
+        if !self.directory_exists_canonical(&parent) {
+            return Err(FsError::FileNotFound);
+        }
+        if self.files.len() >= self.max_files {
+            return Err(FsError::FilesystemFull);
+        }
+        if self.used_space().saturating_add(data.len()) > TOTAL_CAPACITY {
+            return Err(FsError::FilesystemFull);
+        }
+
+        let now = interrupts::tick_count();
+        self.files.push(FileEntry {
+            name: canonical.clone(),
+            data: data.to_vec(),
+            created_at: now,
+            modified_at: now,
+            readonly,
+            owner_uid,
+            permissions,
+        });
+        self.files.sort_by(|left, right| left.name.cmp(&right.name));
+
+        if let Some(entry) = self.find(&canonical) {
+            crate::disk::maybe_sync_file_entry(entry);
+        }
+
+        Ok(())
+    }
+
     #[must_use]
     pub fn owned_file_count(&self, uid: u16) -> usize {
         self.files.iter().filter(|entry| entry.owner_uid == uid).count()
@@ -385,6 +436,16 @@ impl WarFS {
     fn find_mut(&mut self, canonical: &str) -> Option<&mut FileEntry> {
         self.files.iter_mut().find(|entry| entry.name == canonical)
     }
+
+    fn directory_exists_canonical(&self, path: &str) -> bool {
+        if path == "/" {
+            return true;
+        }
+        let marker_path = directory_marker_path(path);
+        self.files.iter().any(|entry| {
+            entry.name == marker_path || entry.name.starts_with(&(path.to_string() + "/"))
+        })
+    }
 }
 
 impl Default for WarFS {
@@ -397,6 +458,7 @@ impl core::fmt::Display for FsError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::FileNotFound => formatter.write_str("file not found"),
+            Self::AlreadyExists => formatter.write_str("file already exists"),
             Self::FilesystemFull => formatter.write_str("filesystem full"),
             Self::FilenameTooLong => formatter.write_str("filename too long"),
             Self::FileTooLarge => formatter.write_str("file exceeds 64 KiB limit"),
@@ -532,6 +594,18 @@ Filesystem: {} files max, {} KiB max per file\n",
     )?;
     let abi_path_elf = crate::exec::smoke::abi_path_elf_bytes();
     filesystem.write_system(crate::exec::smoke::ABI_PATH_SMOKE_ELF_PATH, &abi_path_elf, true)?;
+    filesystem.write_system(
+        &directory_marker_path(crate::exec::smoke::ABI_WRITE_SMOKE_DIR_PATH),
+        &[],
+        true,
+    )?;
+    let _ = filesystem.delete(crate::exec::smoke::ABI_WRITE_SMOKE_FILE_PATH);
+    let abi_write_elf = crate::exec::smoke::abi_write_elf_bytes();
+    filesystem.write_system(
+        crate::exec::smoke::ABI_WRITE_SMOKE_ELF_PATH,
+        &abi_write_elf,
+        true,
+    )?;
     Ok(())
 }
 
@@ -547,6 +621,36 @@ pub fn write_current(name: &str, data: &[u8]) -> Result<String, FsError> {
     FILESYSTEM
         .lock()
         .write_as(&resolved, data, uid, role, permissions)?;
+    Ok(resolved)
+}
+
+pub fn validate_create_new_current(name: &str) -> Result<String, FsError> {
+    let resolved = session::resolve_path(name);
+    if !session::can_access_path(&resolved, true) {
+        return Err(FsError::PermissionDenied);
+    }
+
+    let canonical = canonical_path(&resolved)?;
+    if canonical == "/" {
+        return Err(FsError::InvalidFilename);
+    }
+    if FILESYSTEM.lock().find(&canonical).is_some() {
+        return Err(FsError::AlreadyExists);
+    }
+    let parent = parent_directory(&canonical);
+    if !directory_exists(&parent) {
+        return Err(FsError::FileNotFound);
+    }
+    Ok(canonical)
+}
+
+pub fn create_new_current(name: &str, data: &[u8]) -> Result<String, FsError> {
+    let resolved = validate_create_new_current(name)?;
+    let uid = session::current_uid();
+    let permissions = default_permissions_for(&resolved, uid);
+    FILESYSTEM
+        .lock()
+        .create_new_as(&resolved, data, uid, permissions, false)?;
     Ok(resolved)
 }
 
