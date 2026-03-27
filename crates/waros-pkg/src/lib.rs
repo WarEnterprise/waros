@@ -152,8 +152,8 @@ pub fn sign_manifest(
     let message = canonical_signed_message(manifest, payloads)
         .map_err(|_| SignError::CanonicalEncodingFailed)?;
     let secret_key_bytes = parse_hex(secret_key_hex).ok_or(SignError::InvalidSecretKey)?;
-    let secret_seed =
-        ml_dsa::Seed::try_from(secret_key_bytes.as_slice()).map_err(|_| SignError::InvalidSecretKey)?;
+    let secret_seed = ml_dsa::Seed::try_from(secret_key_bytes.as_slice())
+        .map_err(|_| SignError::InvalidSecretKey)?;
     let signing_key = MlDsa65::from_seed(&secret_seed);
     let signature = signing_key.sign(&message).encode();
     Ok(SignatureEnvelope {
@@ -195,8 +195,10 @@ pub fn verify_bundle(bundle: &WarPackBundle, root: TrustRoot) -> Result<(), Veri
     let encoded_public_key = EncodedVerifyingKey::<MlDsa65>::try_from(public_key_bytes.as_slice())
         .map_err(|_| VerifyError::InvalidPublicKey)?;
     let public_key = VerifyingKey::<MlDsa65>::decode(&encoded_public_key);
-    let message =
-        canonical_signed_message(&bundle.signed_manifest.manifest, &bundle.signed_manifest.payloads)?;
+    let message = canonical_signed_message(
+        &bundle.signed_manifest.manifest,
+        &bundle.signed_manifest.payloads,
+    )?;
 
     let signature = MlDsaSignature::<MlDsa65>::try_from(signature_bytes.as_slice())
         .map_err(|_| VerifyError::InvalidSignatureEncoding)?;
@@ -318,8 +320,7 @@ mod tests {
     use super::*;
     use ml_dsa::signature::Keypair;
 
-    const TEST_SEED_HEX: &str =
-        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+    const TEST_SEED_HEX: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
 
     fn test_root() -> TrustRoot {
         let seed = ml_dsa::Seed::try_from(parse_hex(TEST_SEED_HEX).unwrap().as_slice()).unwrap();
