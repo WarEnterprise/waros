@@ -602,6 +602,7 @@ fn with_extension(name: &str, extension: &str) -> String {
 fn map_fs_error(error: fs::FsError) -> &'static str {
     match error {
         fs::FsError::FileNotFound => "file not found",
+        fs::FsError::AlreadyExists => "file already exists",
         fs::FsError::FilesystemFull => "filesystem full",
         fs::FsError::FilenameTooLong => "filename too long",
         fs::FsError::FileTooLarge => "file too large",

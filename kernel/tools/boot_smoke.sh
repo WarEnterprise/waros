@@ -61,6 +61,11 @@ ABI_PATH_START_MARKER="path-proof-start"
 ABI_PATH_ABS_OK_MARKER="path-abs-ok=1"
 ABI_PATH_REL_ERR_MARKER="path-rel-err=-22"
 ABI_PATH_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-path-smoke.elf exited with code 52"
+ABI_WRITE_LAUNCH_MARKER="[INFO] WarExec ABI proof: launching /bin/warexec-write-smoke.elf"
+ABI_WRITE_START_MARKER="write-proof-start"
+ABI_WRITE_SIZE_MARKER="write-size=17"
+ABI_WRITE_READBACK_MARKER="write-readback=waros-write-proof"
+ABI_WRITE_PROOF_MARKER="[OK] WarExec ABI proof: /bin/warexec-write-smoke.elf exited with code 53"
 SHELL_MARKER="[INFO] WarOS shell online. Type 'help' for available commands."
 
 QEMU_PID=""
@@ -161,7 +166,12 @@ ls -lh "${IMAGE_PATH}" || true
 # 50. pathname absolute-path success marker
 # 51. pathname relative-path rejection marker
 # 52. pathname proof exit marker
-# 53. shell-ready banner
+# 53. write proof launch marker
+# 54. write proof start marker
+# 55. write proof size marker
+# 56. write proof readback marker
+# 57. write proof exit marker
+# 58. shell-ready banner
 #
 # This keeps CI deterministic without introducing timing-sensitive interaction or GUI automation.
 "${QEMU_BIN}" \
@@ -230,6 +240,11 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         && grep -Fq "${ABI_PATH_ABS_OK_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${ABI_PATH_REL_ERR_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${ABI_PATH_PROOF_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_WRITE_LAUNCH_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_WRITE_START_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_WRITE_SIZE_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_WRITE_READBACK_MARKER}" "${LOG_PATH}" \
+        && grep -Fq "${ABI_WRITE_PROOF_MARKER}" "${LOG_PATH}" \
         && grep -Fq "${SHELL_MARKER}" "${LOG_PATH}"; then
         echo "Kernel boot smoke passed."
         echo "  Log: ${LOG_PATH}"
@@ -285,6 +300,11 @@ while [ "$(date +%s)" -lt "${deadline}" ]; do
         echo "  Found: ${ABI_PATH_ABS_OK_MARKER}"
         echo "  Found: ${ABI_PATH_REL_ERR_MARKER}"
         echo "  Found: ${ABI_PATH_PROOF_MARKER}"
+        echo "  Found: ${ABI_WRITE_LAUNCH_MARKER}"
+        echo "  Found: ${ABI_WRITE_START_MARKER}"
+        echo "  Found: ${ABI_WRITE_SIZE_MARKER}"
+        echo "  Found: ${ABI_WRITE_READBACK_MARKER}"
+        echo "  Found: ${ABI_WRITE_PROOF_MARKER}"
         echo "  Found: ${SHELL_MARKER}"
         exit 0
     fi

@@ -43,6 +43,11 @@ pub const ABI_READDIR_SMOKE_ENTRY3: &str = "gamma.txt";
 pub const ABI_PATH_SMOKE_ELF_PATH: &str = "/bin/warexec-path-smoke.elf";
 pub const ABI_PATH_SMOKE_ELF_EXIT_CODE: i32 = 52;
 pub const ABI_PATH_RELATIVE_PROOF_PATH: &str = "abi/waros-abi-proof.txt";
+pub const ABI_WRITE_SMOKE_ELF_PATH: &str = "/bin/warexec-write-smoke.elf";
+pub const ABI_WRITE_SMOKE_ELF_EXIT_CODE: i32 = 53;
+pub const ABI_WRITE_SMOKE_DIR_PATH: &str = "/abi/write-proof";
+pub const ABI_WRITE_SMOKE_FILE_PATH: &str = "/abi/write-proof/result.txt";
+pub const ABI_WRITE_SMOKE_FILE_CONTENT: &str = "waros-write-proof";
 
 const ELF_BASE_VADDR: u64 = 0x0000_0000_0040_0000;
 const ELF_HEADER_SIZE: usize = 64;
@@ -93,6 +98,12 @@ const ABI_PATH_START_STDOUT: &str = "path-proof-start\n";
 const ABI_PATH_ABS_OK_STDOUT: &str = "path-abs-ok=1\n";
 const ABI_PATH_REL_ERR_STDOUT: &str = "path-rel-err=-22\n";
 const ABI_PATH_EXPECTED_ERR: i8 = -22;
+const ABI_WRITE_START_STDOUT: &str = "write-proof-start\n";
+const ABI_WRITE_SIZE_STDOUT: &str = "write-size=17\n";
+const ABI_WRITE_READBACK_PREFIX: &str = "write-readback=";
+const ABI_WRITE_EXPECTED_SIZE: u32 = ABI_WRITE_SMOKE_FILE_CONTENT.len() as u32;
+const ABI_WRITE_OPEN_CREATE_WRITE_FLAG: u32 = 0x0000_0003;
+const ABI_WRITE_STACK_FRAME_SIZE: u8 = 80;
 
 const ET_EXEC: u16 = 2;
 const EM_X86_64: u16 = 0x3E;
@@ -170,6 +181,11 @@ pub fn abi_readdir_elf_bytes() -> Vec<u8> {
 #[must_use]
 pub fn abi_path_elf_bytes() -> Vec<u8> {
     build_path_abi_smoke_elf()
+}
+
+#[must_use]
+pub fn abi_write_elf_bytes() -> Vec<u8> {
+    build_write_abi_smoke_elf()
 }
 
 fn build_write_exit_smoke_elf() -> Vec<u8> {
@@ -303,6 +319,11 @@ pub fn run_abi_readdir_smoke() -> Result<i32, ExecError> {
 pub fn run_abi_path_smoke() -> Result<i32, ExecError> {
     let args = [ABI_PATH_SMOKE_ELF_PATH];
     run_program_with_args(ABI_PATH_SMOKE_ELF_PATH, &args)
+}
+
+pub fn run_abi_write_smoke() -> Result<i32, ExecError> {
+    let args = [ABI_WRITE_SMOKE_ELF_PATH];
+    run_program_with_args(ABI_WRITE_SMOKE_ELF_PATH, &args)
 }
 
 fn run_program(path: &str) -> Result<i32, ExecError> {
@@ -1419,6 +1440,237 @@ fn build_path_abi_smoke_elf() -> Vec<u8> {
     patch_rel32(&mut payload, relative_open_path_disp_offset, relative_path_offset);
     patch_rel32(&mut payload, relative_open_fail_jump, fail_offset);
     patch_rel32(&mut payload, rel_err_line_disp_offset, rel_err_line_offset);
+
+    build_single_segment_rx_elf(&payload)
+}
+
+fn build_write_abi_smoke_elf() -> Vec<u8> {
+    let start_line = ABI_WRITE_START_STDOUT.as_bytes();
+    let size_line = ABI_WRITE_SIZE_STDOUT.as_bytes();
+    let readback_prefix = ABI_WRITE_READBACK_PREFIX.as_bytes();
+    let file_path = ABI_WRITE_SMOKE_FILE_PATH.as_bytes();
+    let file_content = ABI_WRITE_SMOKE_FILE_CONTENT.as_bytes();
+    let newline = ABI_ARGV_SMOKE_NEWLINE.as_bytes();
+    let mut payload = Vec::with_capacity(640);
+    let mut readback_compare_fail_jumps = Vec::with_capacity(file_content.len());
+
+    // sub rsp, 80       ; reserve one WarExecStat slot + one readback buffer
+    payload.extend_from_slice(&[0x48, 0x83, 0xEC, ABI_WRITE_STACK_FRAME_SIZE]);
+
+    // write("write-proof-start\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let start_line_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(start_line.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // open(path, O_CREATE|O_WRITE, 0)
+    payload.extend_from_slice(&[0xB8, 0x02, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x3D]);
+    let create_path_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBE);
+    payload.extend_from_slice(&ABI_WRITE_OPEN_CREATE_WRITE_FLAG.to_le_bytes());
+    payload.extend_from_slice(&[0x31, 0xD2]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // test eax, eax
+    payload.extend_from_slice(&[0x85, 0xC0]);
+    // js fail
+    payload.extend_from_slice(&[0x0F, 0x88]);
+    let create_open_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    // mov ebx, eax
+    payload.extend_from_slice(&[0x89, 0xC3]);
+
+    // write(fd, "waros-write-proof", len)
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x89, 0xDF]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let file_content_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(file_content.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // cmp eax, len
+    payload.extend_from_slice(&[0x83, 0xF8, ABI_WRITE_EXPECTED_SIZE as u8]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let write_len_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // close(fd) commits the staged create-write handle into WarFS.
+    payload.extend_from_slice(&[0xB8, 0x03, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x89, 0xDF]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // test eax, eax
+    payload.extend_from_slice(&[0x85, 0xC0]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let create_close_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // stat(path, rsp)
+    payload.extend_from_slice(&[0xB8, 0x04, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x3D]);
+    let stat_path_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.extend_from_slice(&[0x48, 0x89, 0xE6]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // test eax, eax
+    payload.extend_from_slice(&[0x85, 0xC0]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let stat_call_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    // cmp dword ptr [rsp], expected_size
+    payload.extend_from_slice(&[0x81, 0x3C, 0x24]);
+    payload.extend_from_slice(&ABI_WRITE_EXPECTED_SIZE.to_le_bytes());
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let stat_size_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    // cmp byte ptr [rsp+8], regular_file
+    payload.extend_from_slice(&[0x80, 0x7C, 0x24, 0x08, ABI_STAT_EXPECTED_FILE_TYPE]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let stat_type_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // reopen read-only: open(path, 0, 0)
+    payload.extend_from_slice(&[0xB8, 0x02, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x3D]);
+    let reopen_path_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.extend_from_slice(&[0x31, 0xF6]);
+    payload.extend_from_slice(&[0x31, 0xD2]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // test eax, eax
+    payload.extend_from_slice(&[0x85, 0xC0]);
+    // js fail
+    payload.extend_from_slice(&[0x0F, 0x88]);
+    let reopen_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    // mov ebx, eax
+    payload.extend_from_slice(&[0x89, 0xC3]);
+
+    // read(fd, rsp+16, len)
+    payload.extend_from_slice(&[0x31, 0xC0]);
+    payload.extend_from_slice(&[0x89, 0xDF]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x74, 0x24, ABI_STAT_STRUCT_SIZE]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(file_content.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // cmp eax, len
+    payload.extend_from_slice(&[0x83, 0xF8, ABI_WRITE_EXPECTED_SIZE as u8]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let read_len_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    for (index, byte) in file_content.iter().enumerate() {
+        payload.extend_from_slice(&[0x80, 0x7C, 0x24, ABI_STAT_STRUCT_SIZE + index as u8, *byte]);
+        payload.extend_from_slice(&[0x0F, 0x85]);
+        readback_compare_fail_jumps.push(payload.len());
+        payload.extend_from_slice(&[0, 0, 0, 0]);
+    }
+
+    // close(read_fd)
+    payload.extend_from_slice(&[0xB8, 0x03, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x89, 0xDF]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    // test eax, eax
+    payload.extend_from_slice(&[0x85, 0xC0]);
+    // jne fail
+    payload.extend_from_slice(&[0x0F, 0x85]);
+    let reopen_close_fail_jump = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+
+    // write("write-size=17\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let size_line_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(size_line.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write("write-readback=")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let readback_prefix_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(readback_prefix.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write(buffer, len)
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x74, 0x24, ABI_STAT_STRUCT_SIZE]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(file_content.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // write("\n")
+    payload.extend_from_slice(&[0xB8, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, 0x01, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x48, 0x8D, 0x35]);
+    let newline_disp_offset = payload.len();
+    payload.extend_from_slice(&[0, 0, 0, 0]);
+    payload.push(0xBA);
+    payload.extend_from_slice(&(newline.len() as u32).to_le_bytes());
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    // exit(53)
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_WRITE_SMOKE_ELF_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+
+    let fail_offset = payload.len();
+    payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0xBF, ABI_SMOKE_FAILURE_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[0x0F, 0x05]);
+    payload.extend_from_slice(&[0x0F, 0x0B]);
+
+    let start_line_offset = payload.len();
+    payload.extend_from_slice(start_line);
+    let size_line_offset = payload.len();
+    payload.extend_from_slice(size_line);
+    let readback_prefix_offset = payload.len();
+    payload.extend_from_slice(readback_prefix);
+    let newline_offset = payload.len();
+    payload.extend_from_slice(newline);
+    let file_path_offset = payload.len();
+    payload.extend_from_slice(file_path);
+    payload.push(0);
+    let file_content_offset = payload.len();
+    payload.extend_from_slice(file_content);
+
+    patch_rel32(&mut payload, start_line_disp_offset, start_line_offset);
+    patch_rel32(&mut payload, create_path_disp_offset, file_path_offset);
+    patch_rel32(&mut payload, create_open_fail_jump, fail_offset);
+    patch_rel32(&mut payload, file_content_disp_offset, file_content_offset);
+    patch_rel32(&mut payload, write_len_fail_jump, fail_offset);
+    patch_rel32(&mut payload, create_close_fail_jump, fail_offset);
+    patch_rel32(&mut payload, stat_path_disp_offset, file_path_offset);
+    patch_rel32(&mut payload, stat_call_fail_jump, fail_offset);
+    patch_rel32(&mut payload, stat_size_fail_jump, fail_offset);
+    patch_rel32(&mut payload, stat_type_fail_jump, fail_offset);
+    patch_rel32(&mut payload, reopen_path_disp_offset, file_path_offset);
+    patch_rel32(&mut payload, reopen_fail_jump, fail_offset);
+    patch_rel32(&mut payload, read_len_fail_jump, fail_offset);
+    for fail_jump in readback_compare_fail_jumps {
+        patch_rel32(&mut payload, fail_jump, fail_offset);
+    }
+    patch_rel32(&mut payload, reopen_close_fail_jump, fail_offset);
+    patch_rel32(&mut payload, size_line_disp_offset, size_line_offset);
+    patch_rel32(&mut payload, readback_prefix_disp_offset, readback_prefix_offset);
+    patch_rel32(&mut payload, newline_disp_offset, newline_offset);
 
     build_single_segment_rx_elf(&payload)
 }

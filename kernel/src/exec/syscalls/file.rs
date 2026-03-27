@@ -1,5 +1,7 @@
 use crate::auth::session;
-use crate::exec::fd_table::{DescriptorTarget, DirectoryEntryHandle, DirectoryHandle, FileHandle};
+use crate::exec::fd_table::{
+    DescriptorTarget, DirectoryEntryHandle, DirectoryHandle, FileHandle, FileHandleAccess,
+};
 use crate::exec::PROCESS_TABLE;
 use crate::fs;
 use crate::fs::FsError;
@@ -8,13 +10,14 @@ use super::{
     copy_from_user_ptr_checked, copy_to_user_ptr_checked, read_user_string_checked,
     read_warexec_path_checked, write_struct_to_user_checked, WarExecDirEntry, WarExecStat,
     WarExecPathKind, WAREXEC_DIRENT_NAME_CAPACITY, WAREXEC_FILE_TYPE_DIRECTORY,
-    WAREXEC_FILE_TYPE_REGULAR, WAREXEC_OPEN_DIRECTORY, EBADF, EINVAL, ENOENT, ENOSYS, EPERM,
-    MAX_USER_STRING_LEN,
+    WAREXEC_FILE_TYPE_REGULAR, WAREXEC_OPEN_CREATE_WRITE, WAREXEC_OPEN_DIRECTORY, EBADF,
+    EINVAL, ENOENT, ENOSYS, EPERM, MAX_USER_STRING_LEN,
 };
 
 fn map_fs_error(error: FsError) -> i64 {
     match error {
         FsError::FileNotFound => ENOENT,
+        FsError::AlreadyExists => EINVAL,
         FsError::PermissionDenied | FsError::ReadOnly => EPERM,
         FsError::InvalidFilename | FsError::FilenameTooLong | FsError::FileTooLarge => EINVAL,
         FsError::FilesystemFull => ENOSYS,
@@ -60,7 +63,11 @@ pub fn sys_read(fd: u32, buffer: *mut u8, len: usize) -> i64 {
             return EBADF;
         };
         match &mut descriptor.target {
-            DescriptorTarget::File(handle) => (handle.path.clone(), handle.offset),
+            DescriptorTarget::File(handle)
+                if matches!(handle.access, FileHandleAccess::ReadOnly) =>
+            {
+                (handle.path.clone(), handle.offset)
+            }
             _ => return ENOSYS,
         }
     };
@@ -91,7 +98,9 @@ pub fn sys_read(fd: u32, buffer: *mut u8, len: usize) -> i64 {
         return EBADF;
     };
     match &mut descriptor.target {
-        DescriptorTarget::File(handle) => {
+        DescriptorTarget::File(handle)
+            if matches!(handle.access, FileHandleAccess::ReadOnly) =>
+        {
             handle.offset = start.saturating_add(copied);
             copied as i64
         }
@@ -100,6 +109,15 @@ pub fn sys_read(fd: u32, buffer: *mut u8, len: usize) -> i64 {
 }
 
 pub fn sys_write(fd: u32, buffer: *const u8, len: usize) -> i64 {
+    if len == 0 {
+        return 0;
+    }
+
+    let bytes = match copy_from_user_ptr_checked(buffer, len) {
+        Ok(bytes) => bytes,
+        Err(error) => return error,
+    };
+
     let descriptor_target = {
         let process_table = PROCESS_TABLE.lock();
         let Some(process) = super::current_pid().and_then(|pid| process_table.get(pid)) else {
@@ -109,15 +127,6 @@ pub fn sys_write(fd: u32, buffer: *const u8, len: usize) -> i64 {
             return EBADF;
         };
         descriptor.target.clone()
-    };
-
-    if len == 0 {
-        return 0;
-    }
-
-    let bytes = match copy_from_user_ptr_checked(buffer, len) {
-        Ok(bytes) => bytes,
-        Err(error) => return error,
     };
 
     match descriptor_target {
@@ -134,6 +143,35 @@ pub fn sys_write(fd: u32, buffer: *const u8, len: usize) -> i64 {
             }
             len as i64
         }
+        DescriptorTarget::File(handle)
+            if matches!(handle.access, FileHandleAccess::CreateWrite) =>
+        {
+            let mut process_table = PROCESS_TABLE.lock();
+            let Some(process) = super::current_pid().and_then(|pid| process_table.get_mut(pid)) else {
+                return EPERM;
+            };
+            let Some(descriptor) = process.fd_table.get_mut(fd) else {
+                return EBADF;
+            };
+            let DescriptorTarget::File(handle) = &mut descriptor.target else {
+                return ENOSYS;
+            };
+            if !matches!(handle.access, FileHandleAccess::CreateWrite) {
+                return ENOSYS;
+            }
+            let Some(end_offset) = handle.offset.checked_add(bytes.len()) else {
+                return EINVAL;
+            };
+            if end_offset > fs::MAX_FILE_SIZE {
+                return EINVAL;
+            }
+            if handle.staged_data.len() < end_offset {
+                handle.staged_data.resize(end_offset, 0);
+            }
+            handle.staged_data[handle.offset..end_offset].copy_from_slice(bytes.as_slice());
+            handle.offset = end_offset;
+            bytes.len() as i64
+        }
         _ => ENOSYS,
     }
 }
@@ -143,7 +181,8 @@ pub fn sys_open(path: *const u8, flags: u32, mode: u32) -> i64 {
         return ENOSYS;
     }
     let open_directory = flags == WAREXEC_OPEN_DIRECTORY;
-    if flags != 0 && !open_directory {
+    let open_create_write = flags == WAREXEC_OPEN_CREATE_WRITE;
+    if flags != 0 && !open_directory && !open_create_write {
         return ENOSYS;
     }
 
@@ -163,6 +202,16 @@ pub fn sys_open(path: *const u8, flags: u32, mode: u32) -> i64 {
             Ok(handle) => DescriptorTarget::Directory(handle),
             Err(error) => return error,
         }
+    } else if open_create_write {
+        if let Err(error) = fs::validate_create_new_current(&resolved) {
+            return map_fs_error(error);
+        }
+        DescriptorTarget::File(FileHandle {
+            path: resolved,
+            offset: 0,
+            access: FileHandleAccess::CreateWrite,
+            staged_data: alloc::vec::Vec::new(),
+        })
     } else {
         if let Err(error) = fs::read_current(&resolved) {
             return map_fs_error(error);
@@ -170,6 +219,8 @@ pub fn sys_open(path: *const u8, flags: u32, mode: u32) -> i64 {
         DescriptorTarget::File(FileHandle {
             path: resolved,
             offset: 0,
+            access: FileHandleAccess::ReadOnly,
+            staged_data: alloc::vec::Vec::new(),
         })
     };
 
@@ -181,6 +232,25 @@ pub fn sys_open(path: *const u8, flags: u32, mode: u32) -> i64 {
 }
 
 pub fn sys_close(fd: u32) -> i64 {
+    let descriptor_target = {
+        let process_table = PROCESS_TABLE.lock();
+        let Some(process) = super::current_pid().and_then(|pid| process_table.get(pid)) else {
+            return EPERM;
+        };
+        let Some(descriptor) = process.fd_table.get(fd) else {
+            return EBADF;
+        };
+        descriptor.target.clone()
+    };
+
+    if let DescriptorTarget::File(handle) = &descriptor_target {
+        if matches!(handle.access, FileHandleAccess::CreateWrite) {
+            if let Err(error) = fs::create_new_current(&handle.path, &handle.staged_data) {
+                return map_fs_error(error);
+            }
+        }
+    }
+
     let mut process_table = PROCESS_TABLE.lock();
     let Some(process) = super::current_pid().and_then(|pid| process_table.get_mut(pid)) else {
         return EPERM;
@@ -216,16 +286,26 @@ pub fn sys_fstat(fd: u32, stat_out: *mut u8) -> i64 {
         descriptor.target.clone()
     };
 
-    let path = match descriptor_target {
-        DescriptorTarget::File(handle) => handle.path,
+    let stat = match descriptor_target {
+        DescriptorTarget::File(handle)
+            if matches!(handle.access, FileHandleAccess::CreateWrite) =>
+        {
+            WarExecStat {
+                size: handle.staged_data.len() as u64,
+                file_type: WAREXEC_FILE_TYPE_REGULAR,
+                readonly: 0,
+                _reserved: [0; 6],
+            }
+        }
+        DescriptorTarget::File(handle) => {
+            let entry = match fs::stat_current(&handle.path) {
+                Ok(entry) => entry,
+                Err(error) => return map_fs_error(error),
+            };
+            warexec_stat_from_entry(&entry)
+        }
         _ => return ENOSYS,
     };
-
-    let entry = match fs::stat_current(&path) {
-        Ok(entry) => entry,
-        Err(error) => return map_fs_error(error),
-    };
-    let stat = warexec_stat_from_entry(&entry);
     match write_struct_to_user_checked(stat_out.cast::<WarExecStat>(), &stat) {
         Ok(()) => 0,
         Err(error) => error,
