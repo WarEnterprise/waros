@@ -55,6 +55,12 @@ pub const WAREXEC_FILE_TYPE_DIRECTORY: u8 = 2;
 pub const WAREXEC_DIRENT_NAME_CAPACITY: usize = 32;
 pub const WAREXEC_OPEN_DIRECTORY: u32 = 0x0001_0000;
 
+#[derive(Clone, Copy)]
+pub enum WarExecPathKind {
+    FileLike,
+    Directory,
+}
+
 #[must_use]
 pub fn current_pid() -> Option<u32> {
     crate::exec::current_pid()
@@ -149,6 +155,15 @@ pub fn read_user_string_checked(pointer: *const u8, max_len: usize) -> Result<St
     }
 
     Err(EFAULT)
+}
+
+pub fn read_warexec_path_checked(
+    pointer: *const u8,
+    path_kind: WarExecPathKind,
+) -> Result<String, i64> {
+    let path = read_user_string_checked(pointer, MAX_USER_STRING_LEN)?;
+    crate::fs::canonicalize_warexec_path(&path, matches!(path_kind, WarExecPathKind::Directory))
+        .map_err(|_| EINVAL)
 }
 
 pub fn read_user_pointer_array_checked(

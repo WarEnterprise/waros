@@ -530,6 +530,8 @@ Filesystem: {} files max, {} KiB max per file\n",
         &abi_readdir_elf,
         true,
     )?;
+    let abi_path_elf = crate::exec::smoke::abi_path_elf_bytes();
+    filesystem.write_system(crate::exec::smoke::ABI_PATH_SMOKE_ELF_PATH, &abi_path_elf, true)?;
     Ok(())
 }
 
@@ -899,6 +901,55 @@ pub fn file_count_for_user(uid: u16) -> usize {
     FILESYSTEM.lock().owned_file_count(uid)
 }
 
+pub fn canonicalize_warexec_path(
+    path: &str,
+    allow_directory_trailing_slash: bool,
+) -> Result<String, FsError> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() || !trimmed.starts_with('/') {
+        return Err(FsError::InvalidFilename);
+    }
+
+    let has_trailing_slash = trimmed.len() > 1 && trimmed.ends_with('/');
+    if has_trailing_slash && !allow_directory_trailing_slash {
+        return Err(FsError::InvalidFilename);
+    }
+
+    let normalized = if allow_directory_trailing_slash && has_trailing_slash {
+        trimmed.trim_end_matches('/')
+    } else {
+        trimmed
+    };
+
+    if normalized.len() > 1 && normalized.contains("//") {
+        return Err(FsError::InvalidFilename);
+    }
+
+    if normalized == "/" {
+        return Ok(String::from("/"));
+    }
+
+    let mut result = String::from("/");
+    let mut first = true;
+    for component in normalized.split('/').skip(1) {
+        if component.is_empty() || component == "." || component == ".." {
+            return Err(FsError::InvalidFilename);
+        }
+        validate_canonical_component(component)?;
+        if !first {
+            result.push('/');
+        }
+        result.push_str(component);
+        first = false;
+    }
+
+    if result.len() > MAX_PATH_LEN {
+        return Err(FsError::FilenameTooLong);
+    }
+
+    Ok(result)
+}
+
 fn default_permissions_for(path: &str, uid: u16) -> FilePermissions {
     if path == "/root" || path.starts_with("/root/") || path.starts_with("/home/") {
         FilePermissions::private(uid)
@@ -937,13 +988,7 @@ fn canonical_path(path: &str) -> Result<String, FsError> {
         if component == ".." {
             return Err(FsError::InvalidFilename);
         }
-        if component.len() > MAX_COMPONENT_LEN
-            || !component
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-        {
-            return Err(FsError::InvalidFilename);
-        }
+        validate_canonical_component(component)?;
         if !first {
             result.push('/');
         }
@@ -956,6 +1001,18 @@ fn canonical_path(path: &str) -> Result<String, FsError> {
     }
 
     Ok(result)
+}
+
+fn validate_canonical_component(component: &str) -> Result<(), FsError> {
+    if component.len() > MAX_COMPONENT_LEN
+        || !component
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        Err(FsError::InvalidFilename)
+    } else {
+        Ok(())
+    }
 }
 
 fn parent_directory(path: &str) -> String {
