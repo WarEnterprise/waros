@@ -1,5 +1,8 @@
 # WarOS Current Status After WarShield Pass 1
 
+This document is retained as a historical snapshot from immediately after the WarShield Pass 1 merge.
+Current repository status after Pass 2 is summarized in [POST_WARSHIELD_PASS2_STATUS.md](POST_WARSHIELD_PASS2_STATUS.md).
+
 This document is the short stage summary for the repository after the WarShield Pass 1 merge.
 
 ## Repository truth

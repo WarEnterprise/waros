@@ -301,6 +301,34 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     boot_ok("WarFS system files seeded");
     pkg::init().map_err(|_| "failed to seed package repository")?;
     boot_ok("WarPkg bootstrap repository ready");
+
+    boot_notice("WarPkg proof: verifying signed bundle and tamper rejection");
+    match cpu_interrupts::without_interrupts(pkg::smoke::run_signature_proof) {
+        Ok(()) => boot_ok_fmt(
+            format_args!(
+                "WarPkg proof: signed manifest verification wired ({})",
+                pkg::trust_root_summary()
+            ),
+            format_args!(
+                "WarPkg proof: signed manifest verification wired ({})",
+                pkg::trust_root_summary()
+            ),
+        ),
+        Err(error) => {
+            let message = alloc::format!("WarPkg proof: {}", error);
+            boot_notice(message.as_str());
+        }
+    }
+
+    boot_notice("WarShield capability proof: checking inherit-only launch and deny-after-drop");
+    match cpu_interrupts::without_interrupts(security::capabilities::run_transition_proof) {
+        Ok(()) => boot_ok("WarShield capability proof passed"),
+        Err(error) => {
+            let message = alloc::format!("WarShield capability proof: {}", error);
+            boot_notice(message.as_str());
+        }
+    }
+
     boot_notice("WarExec smoke: launching /bin/warexec-smoke.elf");
 
     // Keep the one-shot bootstrap ELF proof non-preemptible while it manipulates the

@@ -269,7 +269,7 @@ fn build_process(
         task_id: None,
         image_kind: ProcessImageKind::Elf,
         image_path: path.to_string(),
-        effective_capabilities: crate::security::capabilities::default_for_uid(uid),
+        effective_capabilities: crate::security::capabilities::spawn_capabilities(parent_pid, uid),
     })
 }
 

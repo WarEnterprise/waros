@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/waros-cli",
     "crates/waros-crypto",
+    "crates/waros-pkg",
     "crates/waros-python",
     "crates/waros-quantum",
 ]
