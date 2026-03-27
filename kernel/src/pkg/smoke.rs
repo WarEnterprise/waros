@@ -17,6 +17,7 @@ pub fn run_signature_proof() -> Result<(), &'static str> {
     };
 
     verify_package_bytes(&info, &bytes).map_err(|_| "valid signed package rejected")?;
+    crate::serial_println!("[PROOF] WarPkg: valid signed bundle accepted");
 
     let mut tampered_bundle: super::manifest::WarPackBundle =
         serde_json::from_slice(&bytes).map_err(|_| "failed to parse signed package bundle")?;
@@ -32,7 +33,10 @@ pub fn run_signature_proof() -> Result<(), &'static str> {
     };
 
     match verify_package_bytes(&tampered_info, &tampered_bytes) {
-        Err(PkgError::SignatureInvalid) => Ok(()),
+        Err(PkgError::SignatureInvalid) => {
+            crate::serial_println!("[PROOF] WarPkg: tampered bundle rejected");
+            Ok(())
+        }
         Err(_) => Err("tampered package rejected with wrong error"),
         Ok(_) => Err("tampered package unexpectedly verified"),
     }
