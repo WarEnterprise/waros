@@ -5,6 +5,7 @@ use bitflags::bitflags;
 
 use super::address_space::AddressSpace;
 use super::fd_table::FileDescriptorTable;
+use crate::security::capabilities::Capabilities;
 
 pub type QuantumRegisterHandle = u32;
 pub type CryptoKeyHandle = u32;
@@ -38,6 +39,7 @@ pub struct Process {
     pub task_id: Option<u64>,
     pub image_kind: ProcessImageKind,
     pub image_path: String,
+    pub effective_capabilities: Capabilities,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

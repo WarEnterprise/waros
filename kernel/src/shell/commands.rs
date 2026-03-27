@@ -22,6 +22,7 @@ use crate::net;
 use crate::pkg;
 use crate::quantum;
 use crate::shell::history;
+use crate::security;
 use crate::task;
 use crate::{
     boot_complete_ms, kprint, kprint_colored, kprintln, serial_println, BUILD_DATE,
@@ -266,6 +267,15 @@ pub fn execute_command(command_line: &str) {
         "reboot" => cmd_reboot(),
         "halt" => cmd_halt(),
         "waros" => cmd_waros(),
+        // WarShield security commands
+        "security" => cmd_security(&parts[1..]),
+        "capabilities" => cmd_capabilities(),
+        "audit" => cmd_audit(&parts[1..]),
+        "firewall" => cmd_firewall(&parts[1..]),
+        "integrity" => cmd_integrity(&parts[1..]),
+        "encrypt" => cmd_encrypt(&parts[1..]),
+        "decrypt" => cmd_decrypt(&parts[1..]),
+        "qkd" => cmd_qkd(&parts[1..]),
         unknown => cmd_unknown(unknown),
     }
 }
@@ -362,6 +372,12 @@ fn cmd_help(topic: Option<&str>) {
     kprintln!("  tasks           spawn <cmd>     kill <id>       banner");
     kprintln!("  keyboard <layout>  useradd <name>  userdel <name>  passwd [name]");
     kprintln!("  su <name>       logout          startx|gui");
+    kprintln!();
+
+    kprint_colored!(Colors::PURPLE, "Security (WarShield)\n");
+    kprintln!("  security [status|profile <p>]   capabilities    audit [log|stats]");
+    kprintln!("  firewall [status|rules|add|remove|log]          integrity [build|check]");
+    kprintln!("  encrypt <file>  decrypt <file>  qkd bb84 [n]");
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Control\n");
@@ -746,9 +762,9 @@ fn cmd_keyboard(args: &[&str]) {
 }
 
 fn cmd_useradd(args: &[&str]) {
-    if !auth::session::is_admin() {
+    if let Err(_) = security::capabilities::session_require(security::capabilities::Capabilities::USER_ADMIN) {
         kprint_colored!(Colors::RED, "[WarOS] ");
-        kprintln!("Permission denied. Only admin can create users.");
+        kprintln!("Permission denied. Requires USER_ADMIN capability.");
         return;
     }
 
@@ -784,9 +800,9 @@ fn cmd_useradd(args: &[&str]) {
 }
 
 fn cmd_userdel(args: &[&str]) {
-    if !auth::session::is_admin() {
+    if let Err(_) = security::capabilities::session_require(security::capabilities::Capabilities::USER_ADMIN) {
         kprint_colored!(Colors::RED, "[WarOS] ");
-        kprintln!("Permission denied. Only admin can delete users.");
+        kprintln!("Permission denied. Requires USER_ADMIN capability.");
         return;
     }
 
@@ -918,6 +934,14 @@ fn cmd_su(args: &[&str]) {
 }
 
 fn cmd_logout() {
+    let uid = auth::session::current_uid();
+    let username = auth::session::current_username();
+    security::audit::log_event(
+        security::audit::events::AuditEvent::Logout {
+            username,
+            uid,
+        },
+    );
     kprintln!("Logging out...");
     auth::session::logout();
 }
@@ -1437,9 +1461,9 @@ fn cmd_mount() {
 }
 
 fn cmd_format_disk() {
-    if !auth::session::is_admin() {
+    if let Err(_) = security::capabilities::session_require(security::capabilities::Capabilities::FS_ADMIN) {
         kprint_colored!(Colors::RED, "[WarOS] ");
-        kprintln!("Permission denied. Only admin can format the disk.");
+        kprintln!("Permission denied. Requires FS_ADMIN capability.");
         return;
     }
 
@@ -2545,12 +2569,22 @@ fn cmd_panic() {
 }
 
 fn cmd_reboot() {
+    if let Err(_) = security::capabilities::session_require(security::capabilities::Capabilities::SYS_POWER) {
+        kprint_colored!(Colors::RED, "[WarOS] ");
+        kprintln!("Permission denied. Requires SYS_POWER capability.");
+        return;
+    }
     kprintln!("Rebooting system.");
     serial_println!("Rebooting system.");
     hal::acpi::reboot();
 }
 
 fn cmd_halt() {
+    if let Err(_) = security::capabilities::session_require(security::capabilities::Capabilities::SYS_POWER) {
+        kprint_colored!(Colors::RED, "[WarOS] ");
+        kprintln!("Permission denied. Requires SYS_POWER capability.");
+        return;
+    }
     kprintln!("Shutting down system.");
     serial_println!("Shutting down system.");
     hal::acpi::shutdown();
@@ -2784,5 +2818,332 @@ fn cmd_alias(command_line: &str) {
 fn cmd_unalias(args: &[&str]) {
     for &name in args {
         ALIASES.lock().remove(name);
+    }
+}
+
+// ─── WarShield Security Commands ──────────────────────────────────────────
+
+fn cmd_security(args: &[&str]) {
+    match args.first().copied() {
+        Some("status") | None => {
+            kprintln!("{}", security::format_status());
+        }
+        Some("profile") => {
+            if let Some(name) = args.get(1).copied() {
+                if let Some(profile) = security::policy::profiles::SecurityProfile::from_name(name) {
+                    if security::capabilities::session_require(
+                        security::capabilities::Capabilities::SECURITY_ADMIN,
+                    ).is_err() {
+                        kprint_colored!(Colors::RED, "Error: ");
+                        kprintln!("SECURITY_ADMIN capability required");
+                        return;
+                    }
+                    security::policy::profiles::apply(profile);
+                    kprint_colored!(Colors::GREEN, "Security profile applied: ");
+                    kprintln!("{} — {}", profile.name(), profile.description());
+                } else {
+                    kprintln!("Unknown profile. Available: minimal, standard, server, paranoid");
+                }
+            } else {
+                let current = security::policy::profiles::current();
+                kprintln!("Current: {} — {}", current.name(), current.description());
+                kprintln!("Available profiles:");
+                kprintln!("  minimal  — ASLR + basic firewall (development)");
+                kprintln!("  standard — ASLR + W^X + firewall + audit (default)");
+                kprintln!("  server   — standard + strict firewall + rate limiting");
+                kprintln!("  paranoid — everything maxed + file integrity + full audit");
+            }
+        }
+        Some(other) => {
+            kprintln!("Unknown subcommand: {}", other);
+            kprintln!("Usage: security [status|profile <name>]");
+        }
+    }
+}
+
+fn cmd_capabilities() {
+    let pid = exec::current_pid().unwrap_or(0);
+    let caps = {
+        let pt = exec::PROCESS_TABLE.lock();
+        pt.get(pid).map(|p| p.effective_capabilities)
+    };
+    if let Some(caps) = caps {
+        kprint_colored!(Colors::CYAN, "Process Capabilities");
+        kprintln!(" (pid {})", pid);
+        kprintln!("{}", security::capabilities::format_capabilities(caps));
+    } else {
+        kprintln!("No process context");
+    }
+}
+
+fn cmd_audit(args: &[&str]) {
+    match args.first().copied() {
+        Some("log") => {
+            let n: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(20);
+            let events = security::audit::last_n(n);
+            if events.is_empty() {
+                kprintln!("No audit events recorded.");
+                return;
+            }
+            kprint_colored!(Colors::CYAN, "WarAudit Log");
+            kprintln!(" (last {})", n);
+            for (id, _ts, desc) in &events {
+                kprint_colored!(Colors::DIM, "  #{:<5} ", id);
+                kprintln!("{}", desc);
+            }
+        }
+        Some("stats") => {
+            kprint_colored!(Colors::CYAN, "WarAudit Statistics\n");
+            kprintln!("  Total events: {}", security::audit::total_count());
+            let stats = security::audit::stats();
+            for (category, count) in &stats {
+                kprintln!("  {:<12} {}", category, count);
+            }
+            let (ok, fail) = security::audit::auth_stats();
+            kprintln!("  Auth OK: {}, Failed: {}", ok, fail);
+        }
+        _ => {
+            kprintln!("Usage: audit log [n] | audit stats");
+        }
+    }
+}
+
+fn cmd_firewall(args: &[&str]) {
+    match args.first().copied() {
+        Some("status") | None => {
+            kprint_colored!(Colors::CYAN, "WarGuard Firewall\n");
+            kprintln!("{}", security::firewall::format_status());
+        }
+        Some("rules") => {
+            kprint_colored!(Colors::CYAN, "Firewall Rules:\n");
+            kprint!("{}", security::firewall::format_rules());
+        }
+        Some("add") => {
+            // firewall add allow|deny in|out tcp|udp|icmp [port]
+            if args.len() < 5 {
+                kprintln!("Usage: firewall add allow|deny in|out tcp|udp|icmp [port]");
+                return;
+            }
+            if security::capabilities::require_capability(
+                security::capabilities::Capabilities::NET_ADMIN,
+            ).is_err() {
+                kprint_colored!(Colors::RED, "Error: ");
+                kprintln!("NET_ADMIN capability required");
+                return;
+            }
+            let action = match args[1] {
+                "allow" => security::firewall::rules::Action::Allow,
+                "deny" => security::firewall::rules::Action::Deny,
+                _ => { kprintln!("Invalid action: use allow or deny"); return; }
+            };
+            let direction = match args[2] {
+                "in" => security::firewall::rules::Direction::Inbound,
+                "out" => security::firewall::rules::Direction::Outbound,
+                _ => { kprintln!("Invalid direction: use in or out"); return; }
+            };
+            let protocol = match args[3] {
+                "tcp" => security::firewall::rules::Protocol::Tcp,
+                "udp" => security::firewall::rules::Protocol::Udp,
+                "icmp" => security::firewall::rules::Protocol::Icmp,
+                "any" => security::firewall::rules::Protocol::Any,
+                _ => { kprintln!("Invalid protocol: use tcp, udp, icmp, or any"); return; }
+            };
+            let port = args.get(4).and_then(|s| s.parse::<u16>().ok());
+            let desc = alloc::format!("User rule: {} {} {} port {:?}", action, direction, protocol, port);
+            let id = security::firewall::add_rule(direction, protocol, port, action, desc);
+            kprint_colored!(Colors::GREEN, "Rule added: ");
+            kprintln!("id={}", id);
+        }
+        Some("remove") => {
+            if let Some(id) = args.get(1).and_then(|s| s.parse::<u32>().ok()) {
+                if security::capabilities::require_capability(
+                    security::capabilities::Capabilities::NET_ADMIN,
+                ).is_err() {
+                    kprint_colored!(Colors::RED, "Error: ");
+                    kprintln!("NET_ADMIN capability required");
+                    return;
+                }
+                if security::firewall::remove_rule(id) {
+                    kprintln!("Rule {} removed", id);
+                } else {
+                    kprintln!("Rule {} not found", id);
+                }
+            } else {
+                kprintln!("Usage: firewall remove <id>");
+            }
+        }
+        Some("log") => {
+            // Show recent firewall audit events
+            let events = security::audit::last_n(50);
+            kprint_colored!(Colors::CYAN, "Firewall Log:\n");
+            let mut found = false;
+            for (id, _ts, desc) in &events {
+                if desc.starts_with("FW_MATCH") || desc.starts_with("NET_CONN") {
+                    kprint_colored!(Colors::DIM, "  #{:<5} ", id);
+                    kprintln!("{}", desc);
+                    found = true;
+                }
+            }
+            if !found {
+                kprintln!("  No firewall events recorded.");
+            }
+        }
+        Some(other) => {
+            kprintln!("Unknown subcommand: {}", other);
+            kprintln!("Usage: firewall [status|rules|add|remove|log]");
+        }
+    }
+}
+
+fn cmd_integrity(args: &[&str]) {
+    match args.first().copied() {
+        Some("build") => {
+            let count = security::vault::build_database();
+            kprint_colored!(Colors::GREEN, "Integrity database built: ");
+            kprintln!("{} files hashed", count);
+        }
+        Some("check") => {
+            let violations = security::vault::verify_all();
+            if violations.is_empty() {
+                kprint_colored!(Colors::GREEN, "All monitored files intact.\n");
+            } else {
+                kprint_colored!(Colors::RED, "INTEGRITY VIOLATIONS DETECTED:\n");
+                for v in &violations {
+                    kprintln!("  {} — expected: {}... actual: {}...",
+                        v.path,
+                        &v.expected[..16.min(v.expected.len())],
+                        &v.actual[..16.min(v.actual.len())],
+                    );
+                }
+            }
+        }
+        _ => {
+            kprintln!("Usage: integrity build | integrity check");
+        }
+    }
+}
+
+fn cmd_encrypt(args: &[&str]) {
+    let Some(path) = args.first().copied() else {
+        kprintln!("Usage: encrypt <file>");
+        return;
+    };
+
+    let data = match fs::read_current(path) {
+        Ok((_, data)) => data,
+        Err(e) => {
+            kprint_colored!(Colors::RED, "Error: ");
+            kprintln!("cannot read {}: {:?}", path, e);
+            return;
+        }
+    };
+
+    kprint_colored!(Colors::DIM, "Password: ");
+    let password = crate::auth::login::read_line_hidden();
+    kprintln!();
+    if password.is_empty() {
+        kprintln!("Cancelled.");
+        return;
+    }
+
+    let encrypted = security::crypt::file_encryption::encrypt(&data, &password);
+    let enc_path = alloc::format!("{}.enc", path);
+    match fs::write_current(&enc_path, &encrypted) {
+        Ok(_) => {
+            let _ = fs::delete_current(path);
+            kprint_colored!(Colors::GREEN, "Encrypted: ");
+            kprintln!("{} -> {} ({} bytes)", path, enc_path, encrypted.len());
+            security::audit::log_event(
+                security::audit::events::AuditEvent::FileCreated {
+                    path: enc_path,
+                    uid: crate::exec::current_uid(),
+                },
+            );
+        }
+        Err(e) => {
+            kprint_colored!(Colors::RED, "Error writing: ");
+            kprintln!("{:?}", e);
+        }
+    }
+}
+
+fn cmd_decrypt(args: &[&str]) {
+    let Some(path) = args.first().copied() else {
+        kprintln!("Usage: decrypt <file.enc>");
+        return;
+    };
+
+    let data = match fs::read_current(path) {
+        Ok((_, data)) => data,
+        Err(e) => {
+            kprint_colored!(Colors::RED, "Error: ");
+            kprintln!("cannot read {}: {:?}", path, e);
+            return;
+        }
+    };
+
+    kprint_colored!(Colors::DIM, "Password: ");
+    let password = crate::auth::login::read_line_hidden();
+    kprintln!();
+    if password.is_empty() {
+        kprintln!("Cancelled.");
+        return;
+    }
+
+    match security::crypt::file_encryption::decrypt(&data, &password) {
+        Ok(plaintext) => {
+            let out_path = if path.ends_with(".enc") {
+                &path[..path.len() - 4]
+            } else {
+                path
+            };
+            match fs::write_current(out_path, &plaintext) {
+                Ok(_) => {
+                    let _ = fs::delete_current(path);
+                    kprint_colored!(Colors::GREEN, "Decrypted: ");
+                    kprintln!("{} -> {} ({} bytes)", path, out_path, plaintext.len());
+                }
+                Err(e) => {
+                    kprint_colored!(Colors::RED, "Error writing: ");
+                    kprintln!("{:?}", e);
+                }
+            }
+        }
+        Err(e) => {
+            kprint_colored!(Colors::RED, "Decryption failed: ");
+            kprintln!("{}", e);
+        }
+    }
+}
+
+fn cmd_qkd(args: &[&str]) {
+    match args.first().copied() {
+        Some("bb84") => {
+            let n: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(256);
+            kprint_colored!(Colors::CYAN, "BB84 Quantum Key Distribution:\n");
+            let result = security::crypt::qkd::simulate_bb84(n);
+            kprintln!("  Qubits sent:     {}", result.qubits_sent);
+            kprintln!("  Matching bases:  {}", result.matching_bases);
+            kprintln!("  Error rate:      {:.1}% (threshold: 11%)",
+                result.error_rate * 100.0);
+            kprintln!("  Eve detected:    {}", if result.eve_detected { "YES" } else { "NO" });
+            kprintln!("  Final key:       {} bits", result.final_key_bits);
+
+            if !result.key.is_empty() && !result.eve_detected {
+                // Save key to filesystem
+                let key_id = security::crypt::qkd::stored_key_count() + 1;
+                let key_path = alloc::format!("/etc/quantum_keys/session_{}", key_id);
+                let _ = fs::write_current("/etc/quantum_keys/.dir", &[]);
+                let _ = fs::write_current(&key_path, &result.key);
+                kprint_colored!(Colors::GREEN, "  Key saved to ");
+                kprintln!("{}", key_path);
+            } else if result.eve_detected {
+                kprint_colored!(Colors::RED, "  Channel compromised — key discarded\n");
+            }
+        }
+        _ => {
+            kprintln!("Usage: qkd bb84 [n_qubits]");
+            kprintln!("  Simulate BB84 quantum key distribution protocol");
+        }
     }
 }

@@ -21,6 +21,7 @@ mod net;
 mod panic;
 mod pkg;
 mod quantum;
+mod security;
 mod shell;
 mod task;
 
@@ -223,6 +224,8 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     boot_ok("Task scheduler: cooperative background tasks ready");
     exec::init();
     boot_ok("WarExec core ready");
+
+    security::init();
 
     let network = net::init().map_err(|_| "network initialization failed")?;
     let pci_inventory = net::pci_devices();

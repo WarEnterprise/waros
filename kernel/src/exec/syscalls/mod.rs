@@ -20,8 +20,13 @@ pub const ENOEXEC: i64 = -8;
 pub const EBADF: i64 = -9;
 pub const ECHILD: i64 = -10;
 pub const ENOMEM: i64 = -12;
+pub const EACCES: i64 = -13;
 pub const EFAULT: i64 = -14;
+pub const EEXIST: i64 = -17;
 pub const EINVAL: i64 = -22;
+pub const ENFILE: i64 = -23;
+pub const ENOSPC: i64 = -28;
+pub const ENAMETOOLONG: i64 = -36;
 pub const ENOSYS: i64 = -38;
 pub const MAX_USER_STRING_LEN: usize = 256;
 

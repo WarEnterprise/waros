@@ -269,6 +269,7 @@ fn build_process(
         task_id: None,
         image_kind: ProcessImageKind::Elf,
         image_path: path.to_string(),
+        effective_capabilities: crate::security::capabilities::default_for_uid(uid),
     })
 }
 
@@ -312,6 +313,15 @@ fn map_process_image(
     }
     for segment in &elf.segments {
         apply_segment_permissions(&mut mapper, segment)?;
+    }
+
+    // WarShield W^X verification: confirm no segment is both writable and executable.
+    if trace_loader {
+        crate::security::memory_protection::log_segment_protections(&address_space.segments);
+    }
+    if !crate::security::memory_protection::verify_wx(&address_space.segments) {
+        crate::serial_println!("[DENY] WarExec loader: W^X violation detected in {}", path);
+        return Err(ExecError::LoadFailed);
     }
 
     map_stack(&mut mapper, allocator, &mut address_space)?;
@@ -394,7 +404,8 @@ fn map_stack(
     allocator: &mut impl FrameAllocator<Size4KiB>,
     address_space: &mut AddressSpace,
 ) -> Result<(), ExecError> {
-    let stack_top = AddressSpace::USER_STACK_TOP;
+    let aslr_offset = crate::security::aslr::randomize_stack_offset();
+    let stack_top = AddressSpace::USER_STACK_TOP - aslr_offset;
     let stack_bottom = stack_top - AddressSpace::USER_STACK_SIZE;
     for address in (stack_bottom..stack_top).step_by(4096) {
         let page = Page::containing_address(VirtAddr::new(address));

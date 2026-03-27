@@ -100,10 +100,25 @@ impl FileDescriptorTable {
 
     pub fn close(&mut self, fd: u32) -> bool {
         if let Some(entry) = self.entries.get_mut(fd as usize) {
-            *entry = None;
-            true
+            if entry.is_some() {
+                *entry = None;
+                true
+            } else {
+                false // already closed — double-close returns EBADF
+            }
         } else {
             false
         }
+    }
+
+    /// Drop all open descriptors, committing any staged writes. Called on process exit.
+    pub fn close_all(&mut self) -> Vec<(u32, DescriptorTarget)> {
+        let mut closed = Vec::new();
+        for (index, slot) in self.entries.iter_mut().enumerate() {
+            if let Some(descriptor) = slot.take() {
+                closed.push((index as u32, descriptor.target));
+            }
+        }
+        closed
     }
 }

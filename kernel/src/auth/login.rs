@@ -97,6 +97,13 @@ pub fn login_screen() -> UserAccount {
                 db.save_to_fs();
                 drop(db);
 
+                crate::security::audit::log_event(
+                    crate::security::audit::events::AuditEvent::LoginSuccess {
+                        username: user.username.clone(),
+                        uid: user.uid,
+                    },
+                );
+
                 kprintln!();
                 kprint_colored!(Colors::GREEN, "  Welcome back");
                 kprintln!(", {}.", user.username);
@@ -111,6 +118,20 @@ pub fn login_screen() -> UserAccount {
             }
             Err(error) => {
                 drop(db);
+
+                let reason = match error {
+                    AuthError::UserNotFound => "user not found",
+                    AuthError::WrongPassword => "wrong password",
+                    AuthError::AccountDisabled => "account disabled",
+                    _ => "authentication failed",
+                };
+                crate::security::audit::log_event(
+                    crate::security::audit::events::AuditEvent::LoginFailed {
+                        username: username.clone(),
+                        reason: alloc::string::String::from(reason),
+                    },
+                );
+
                 failed_attempts = failed_attempts.saturating_add(1);
                 kprintln!();
                 kprint_colored!(Colors::RED, "  [WarOS] ");

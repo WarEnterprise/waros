@@ -429,7 +429,7 @@ impl WarFS {
         Ok(())
     }
 
-    fn find(&self, canonical: &str) -> Option<&FileEntry> {
+    pub fn find(&self, canonical: &str) -> Option<&FileEntry> {
         self.files.iter().find(|entry| entry.name == canonical)
     }
 
@@ -618,9 +618,23 @@ pub fn write_current(name: &str, data: &[u8]) -> Result<String, FsError> {
     let uid = session::current_uid();
     let role = session::current_role();
     let permissions = default_permissions_for(&resolved, uid);
-    FILESYSTEM
-        .lock()
-        .write_as(&resolved, data, uid, role, permissions)?;
+    let mut fs = FILESYSTEM.lock();
+    let existed = fs.find(&resolved).is_some();
+    fs.write_as(&resolved, data, uid, role, permissions)?;
+    drop(fs);
+
+    crate::security::audit::log_event(if existed {
+        crate::security::audit::events::AuditEvent::FileModified {
+            path: resolved.clone(),
+            uid,
+        }
+    } else {
+        crate::security::audit::events::AuditEvent::FileCreated {
+            path: resolved.clone(),
+            uid,
+        }
+    });
+
     Ok(resolved)
 }
 
@@ -651,6 +665,14 @@ pub fn create_new_current(name: &str, data: &[u8]) -> Result<String, FsError> {
     FILESYSTEM
         .lock()
         .create_new_as(&resolved, data, uid, permissions, false)?;
+
+    crate::security::audit::log_event(
+        crate::security::audit::events::AuditEvent::FileCreated {
+            path: resolved.clone(),
+            uid,
+        },
+    );
+
     Ok(resolved)
 }
 
@@ -690,6 +712,14 @@ pub fn delete_current(name: &str) -> Result<String, FsError> {
     let uid = session::current_uid();
     let role = session::current_role();
     FILESYSTEM.lock().delete_as(&resolved, uid, role)?;
+
+    crate::security::audit::log_event(
+        crate::security::audit::events::AuditEvent::FileDeleted {
+            path: resolved.clone(),
+            uid,
+        },
+    );
+
     Ok(resolved)
 }
 

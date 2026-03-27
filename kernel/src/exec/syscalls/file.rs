@@ -11,16 +11,18 @@ use super::{
     read_warexec_path_checked, write_struct_to_user_checked, WarExecDirEntry, WarExecStat,
     WarExecPathKind, WAREXEC_DIRENT_NAME_CAPACITY, WAREXEC_FILE_TYPE_DIRECTORY,
     WAREXEC_FILE_TYPE_REGULAR, WAREXEC_OPEN_CREATE_WRITE, WAREXEC_OPEN_DIRECTORY, EBADF,
-    EINVAL, ENOENT, ENOSYS, EPERM, MAX_USER_STRING_LEN,
+    EEXIST, EINVAL, ENAMETOOLONG, ENOENT, ENOSPC, ENOSYS, EPERM, MAX_USER_STRING_LEN,
 };
 
 fn map_fs_error(error: FsError) -> i64 {
     match error {
         FsError::FileNotFound => ENOENT,
-        FsError::AlreadyExists => EINVAL,
+        FsError::AlreadyExists => EEXIST,
         FsError::PermissionDenied | FsError::ReadOnly => EPERM,
-        FsError::InvalidFilename | FsError::FilenameTooLong | FsError::FileTooLarge => EINVAL,
-        FsError::FilesystemFull => ENOSYS,
+        FsError::InvalidFilename => EINVAL,
+        FsError::FilenameTooLong => ENAMETOOLONG,
+        FsError::FileTooLarge => ENOSPC,
+        FsError::FilesystemFull => ENOSPC,
     }
 }
 
