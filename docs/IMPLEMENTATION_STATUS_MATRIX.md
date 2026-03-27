@@ -1,34 +1,42 @@
 # WarOS Implementation Status Matrix
-| Subsystem | Current state | Proof | Immediate next step |
+
+Status terms used here:
+
+- `IMPLEMENTED`: present, exercised, and part of current repository truth
+- `INTEGRATED`: merged across subsystem boundaries with explicit scope limits
+- `PARTIAL`: real code path, but still missing broader coverage or hardening
+- `EXPERIMENTAL`: present but not release-grade
+- `SCAFFOLDED`: intentional stub or placeholder surface
+- `PLANNED ONLY`: blueprint direction, not a current implementation claim
+
+| Subsystem | Status | Proof | Current limit / next step |
 |---|---|---|---|
-| Workspace quantum SDK | IMPLEMENTED | `crates/waros-quantum/*`; `cargo test --workspace` passed | Keep expanding tests before adding new blueprint-scale claims |
-| Quantum simulators | IMPLEMENTED | `src/simulator/{statevector,mps,density,trajectory}.rs`; tests `mps.rs`, `result_and_statistics.rs` | Add performance/regression baselines to CI |
-| OpenQASM toolchain | IMPLEMENTED | `crates/waros-quantum/src/qasm/*`; tests `tests/qasm.rs` | Decide whether WarQIR is actually needed or keep QASM-first |
-| IBM userspace backend | IMPLEMENTED | `crates/waros-quantum/src/backends/ibm/*`; CLI `ibm` commands | Add integration tests against mocked IBM API responses |
-| PQ crypto crate | IMPLEMENTED | `crates/waros-crypto/src/{kem,sign,hash,qrng}.rs`; `tests/crypto.rs` | Add more negative/fuzz-style serialization tests |
-| CLI | IMPLEMENTED | `crates/waros-cli/src/*`; verified `qstat` and `run examples/qasm/bell.qasm --shots 128` | Add snapshot tests for command output |
-| Python SDK | IMPLEMENTED | `crates/waros-python/src/*`; `pytest` passed with 46 tests | Add wheel-build smoke test for import on clean env |
-| Kernel boot | IMPLEMENTED | `kernel/src/main.rs`; `kernel/tools/boot_smoke.sh`; CI boots the BIOS image headlessly and asserts serial markers | Keep Linux image creation + QEMU smoke reliable and preserve failure artifacts |
-| Kernel shell | IMPLEMENTED | `kernel/src/shell/*`; QEMU logs show shell ready | Add serial-driven shell smoke harness |
-| Interrupts/PIT | IMPLEMENTED | `kernel/src/arch/x86_64/{idt,interrupts,pit}.rs` | Add boot/runtime assertions in smoke tests |
-| Memory allocator + heap | IMPLEMENTED | `kernel/src/memory/{physical,heap,paging}.rs`; boot logs show init | Fix README heap-size drift and add allocator tests where practical |
-| WarFS core | PARTIALLY IMPLEMENTED | `kernel/src/fs/mod.rs`; shell FS commands; boot logs show format/load | Add reboot persistence tests and stronger invariants |
-| Disk persistence | PARTIALLY IMPLEMENTED | `kernel/src/disk/*`; boot logs show virtio-blk format/load | Add automated first-boot/second-boot validation |
-| Kernel device registry/HAL | PARTIALLY IMPLEMENTED | `kernel/src/hal/*`; shell can report devices | Clarify whether this is generic HAL or proto-QHAL |
-| Kernel networking stack | PARTIALLY IMPLEMENTED | `kernel/src/net/*`; boot logs show DHCP/DNS/NIC detection | Add automated networking smoke tests |
-| Kernel TLS/HTTPS | PARTIALLY IMPLEMENTED | `kernel/src/net/tls/mod.rs`; explicit warning says no cert validation | Implement verification or disable by default |
-| Kernel IBM Runtime path | PARTIALLY IMPLEMENTED | `kernel/src/net/ibm.rs`; shell `ibm` commands | Decide whether kernel-side IBM support is intentional and testable |
-| Kernel quantum simulator | IMPLEMENTED | `kernel/src/quantum/*`; shell quantum commands; boot log says subsystem ready | Cross-validate outputs with `waros-quantum` fixtures |
-| WarExec / ELF loading | PARTIALLY IMPLEMENTED | `kernel/src/exec/{loader,elf,syscall,smoke}.rs`; boot smoke asserts one ELF stdout + exit-code path | Keep the ABI narrow and document exactly which user paths are smoke-tested |
-| Linux compatibility layer | SCAFFOLDED / STUBBED | `kernel/src/exec/compat.rs` explicitly marks itself placeholder; shell help labels WarExec experimental; many `kernel/src/exec/syscalls/*` return `ENOSYS` | Keep claims narrow and do not imply libc/fork/exec compatibility beyond tested behavior |
-| Syscall surface | SCAFFOLDED / STUBBED | `kernel/src/exec/syscall.rs` documents an experimental Linux-numbered subset; many handlers still return `ENOSYS` | Replace placeholders only with tested handlers, otherwise keep the unsupported status explicit |
-| Package manager | PARTIALLY IMPLEMENTED | `kernel/src/pkg/*`; built-in bootstrap packages are seeded into WarFS | Replace placeholder signing and add remote/index tests |
-| Secure boot / PQ boot chain | PLANNED ONLY | No verifying boot stage in `kernel/` tooling | Do not market this until a real chain exists |
-| QRM | PLANNED ONLY | No dedicated module; only simple quantum register allocation | Define a narrow first milestone or drop the term from near-term docs |
-| QAPS | PARTIALLY IMPLEMENTED | Generic scheduler has `Quantum` priority/time slice | Add or remove coherence-aware scheduling claims |
-| UMA-Q | PLANNED ONLY | No unified classical/quantum memory subsystem in source tree | Keep out of implementation claims until designed concretely |
-| QuantumIPC | PLANNED ONLY | No IPC subsystem; `PipeHandle` is only a stub | Start with ordinary IPC before quantum-specific variants |
-| QHAL | PLANNED ONLY | Shell status literally says `QHAL drivers:   None loaded` | Define explicit quantum-driver interfaces before adding vendors |
-| QISA / WarQIR | PLANNED ONLY | No source modules; only QASM exists today | Decide whether to standardize on QASM first |
-| AI subsystem | PLANNED ONLY | `kernel/src/exec/syscalls/ai.rs` returns `ENOSYS` | Remove implied AI maturity from near-term architecture claims |
-| QuantumNet | PLANNED ONLY | Kernel quantum status says `Quantum net:    Not available`; `sys_qkd_bb84` is `ENOSYS` | Keep separate from current classical networking work |
+| Workspace quantum SDK | IMPLEMENTED | `crates/waros-quantum/*`; `cargo test --workspace` | Keep adding regression and performance coverage before widening claims |
+| CLI | IMPLEMENTED | `crates/waros-cli/*`; `waros qstat`; QASM run flow | Add output snapshots and more IBM mock coverage |
+| Python SDK | IMPLEMENTED | `crates/waros-python/*`; Python tests in CI | Keep wheel/import smoke strong across platforms |
+| PQ crypto crate | IMPLEMENTED | `crates/waros-crypto/*`; crate tests | Add more negative and serialization tests |
+| Kernel boot + shell | IMPLEMENTED | `kernel/src/main.rs`; `kernel/src/shell/*`; headless BIOS smoke in CI | Keep build/image/QEMU diagnostics reliable |
+| Kernel memory + heap | IMPLEMENTED | `kernel/src/memory/*`; `kernel/src/memory/heap.rs` | Current heap is 8 MiB; keep docs aligned |
+| WarFS core + disk persistence | PARTIAL | `kernel/src/fs/mod.rs`; `kernel/src/disk/*`; shell FS commands | Real WarFS exists, but it is not the blueprint filesystem and still needs broader persistence tests |
+| WarExec minimal ABI | INTEGRATED | `kernel/src/exec/*`; `kernel/src/exec/smoke.rs`; `docs/WAREXEC_MINIMAL_ABI.md` | Keep the ABI narrow; do not imply general Linux compatibility |
+| Kernel generic HAL / device registry | PARTIAL | `kernel/src/hal/*`; shell hardware commands | This is generic hardware plumbing, not a shipped QHAL |
+| Kernel networking stack | PARTIAL | `kernel/src/net/*`; DHCP/DNS/TCP/HTTP paths; shell `net`, `curl`, `wget`, `ibm` | Real code path exists, but syscall networking is still stubbed and deterministic network smoke should expand |
+| Kernel TLS / HTTPS | EXPERIMENTAL | `kernel/src/net/tls/mod.rs` | Traffic is encrypted, but certificate validation is not implemented |
+| Kernel IBM Runtime path | EXPERIMENTAL | `kernel/src/net/ibm.rs`; shell `ibm` commands | Depends on the experimental kernel TLS path; userspace remains the primary supported route |
+| WarShield Pass 1 hardening | INTEGRATED | `kernel/src/security/*`; `kernel/src/main.rs`; `kernel/src/net/tcp.rs` | Current scope is audit hooks, outbound TCP firewall decisions, ASLR load-path integration, W^X loader enforcement, and selected capability gates |
+| Audit coverage | PARTIAL | login/logout in `kernel/src/auth/login.rs` and `kernel/src/shell/commands.rs`; file mutation hooks in `kernel/src/fs/mod.rs` | Coverage is not full-system yet; treat it as current hook coverage, not complete provenance |
+| Capability enforcement | PARTIAL | `kernel/src/security/capabilities.rs`; shell checks on power, user, FS, security profile, and firewall mutations | No broad userspace capability ABI is exposed yet |
+| Package manager + signature path | PARTIAL | `kernel/src/pkg/*`; `kernel/src/pkg/signature.rs` | Bootstrap package verification is digest-based, not a real ML-DSA trust chain |
+| QKD / quantum security demos | EXPERIMENTAL | `kernel/src/security/crypt/qkd.rs`; shell `qkd bb84` | Simulated BB84 only; no real quantum link or QKD transport exists |
+| Linux-numbered syscall surface | SCAFFOLDED | `kernel/src/exec/syscall.rs`; `kernel/src/exec/syscalls/*` | Numbers are reused for convenience only; many handlers still return `ENOSYS` |
+| Kernel networking syscalls | SCAFFOLDED | `kernel/src/exec/syscalls/network.rs` | Socket/connect/send/recv/DNS/HTTPS syscalls are currently unsupported |
+| Linux compatibility layer | SCAFFOLDED | `kernel/src/exec/compat.rs` | Keep public claims narrow until libc/process semantics are real |
+| QRM | PLANNED ONLY | No dedicated module in source tree | Blueprint direction only |
+| QAPS | PARTIAL | `kernel/src/exec/scheduler.rs` has a quantum priority / time slice | Not coherence-aware scheduling |
+| UMA-Q | PLANNED ONLY | No unified quantum/classical memory subsystem in source tree | Blueprint direction only |
+| QuantumIPC | PLANNED ONLY | No IPC subsystem beyond stubs | Blueprint direction only |
+| QHAL | PLANNED ONLY | Shell status says `QHAL drivers: None loaded` | Generic HAL should not be confused with QHAL |
+| QISA / WarQIR | PLANNED ONLY | No source modules; QASM exists instead | Keep QASM-first truth explicit |
+| AI subsystem | PLANNED ONLY | `kernel/src/exec/syscalls/ai.rs` is stubbed | Blueprint direction only |
+| QuantumNet | PLANNED ONLY | No quantum network stack; shell reports unavailable | Keep separate from the current classical network stack |
+| Secure boot / PQ boot chain | PLANNED ONLY | No verifying boot chain in `kernel/` tooling | Do not market this until it exists |

@@ -1,7 +1,7 @@
 pub mod connection_track;
 pub mod rules;
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use spin::Mutex;
@@ -66,6 +66,7 @@ impl WarGuard {
             };
             if self.tracker.is_established_response(src_ip, dst_ip, src_port, dst_port, proto_num) {
                 self.stats.allowed += 1;
+                log_firewall_decision(0, Action::Allow, src_ip, dst_port);
                 return Action::Allow;
             }
         }
@@ -74,6 +75,7 @@ impl WarGuard {
         for rule in &mut self.rules {
             if rule.matches(direction, protocol, dst_port) {
                 rule.hit_count += 1;
+                log_firewall_decision(rule.id, rule.action, src_ip, dst_port);
                 match rule.action {
                     Action::Allow => {
                         self.stats.allowed += 1;
@@ -101,6 +103,7 @@ impl WarGuard {
             Direction::Inbound => self.default_inbound,
             Direction::Outbound => self.default_outbound,
         };
+        log_firewall_decision(0, default, src_ip, dst_port);
         match default {
             Action::Allow => self.stats.allowed += 1,
             Action::Deny => self.stats.denied += 1,
@@ -226,4 +229,15 @@ pub fn format_status() -> String {
         g.stats.allowed,
         g.stats.denied,
     )
+}
+
+fn log_firewall_decision(rule_id: u32, action: Action, src_ip: u32, dst_port: u16) {
+    crate::security::audit::log_event(
+        crate::security::audit::events::AuditEvent::FirewallMatch {
+            rule_id,
+            action: action.to_string(),
+            src_ip,
+            dst_port,
+        },
+    );
 }

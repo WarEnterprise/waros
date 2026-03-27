@@ -47,7 +47,7 @@ The repository currently implements a subset of this blueprint:
 
 - `waros-quantum`: statevector + MPS simulation, QASM, QEC helpers, Shor/VQE/QAOA/QPE/Simon demos, and Python bindings.
 - `waros-crypto`: ML-KEM, ML-DSA, SLH-DSA, SHA-3 / SHAKE, and simulated QRNG helpers.
-- `waros-kernel`: bootable x86_64 kernel with framebuffer console, PS/2 keyboard shell, in-kernel quantum simulator, WarFS RAM filesystem, cooperative task scheduler scaffolding, and COM2 serial networking primitives.
+- `waros-kernel`: bootable x86_64 kernel with framebuffer console, PS/2 keyboard shell, in-kernel quantum simulator, WarFS with RAM plus virtio-blk persistence modes, a narrow WarExec ABI, experimental classical networking/TLS/IBM paths, and WarShield Pass 1 hardening.
 
 Everything below remains the architectural target. Unless a subsystem is clearly reflected by code in the repository, treat the section as roadmap rather than shipped functionality.
 
@@ -2502,6 +2502,10 @@ Phase 4: Pure WarOS environment
 [x] GDT, IDT, PIC remap, timer IRQ, and keyboard IRQ handlers
 [x] Bitmap-based physical frame allocator and kernel heap initialization
 [x] PS/2 keyboard input buffering and minimal interactive WarShell
+[x] WarFS RAM mode with virtio-blk persistence when available
+[x] Narrow WarExec static-ELF ABI with headless smoke proofs for read, stat, readdir, path, wait, and create/write flows
+[x] Experimental DHCP/DNS/TCP/HTTP/TLS kernel networking path
+[x] WarShield Pass 1 integration: audit hooks, outbound TCP firewall hook, ASLR, loader W^X, capability gates
 [x] Kernel-local `no_std` quantum simulator with shell commands (`qalloc`, `qrun`, `qstate`, `qmeasure`, `qcircuit`, `qinfo`)
 [x] Built-in Bell, GHZ, Grover, teleportation, QFT, Deutsch, Bernstein-Vazirani, and superdense coding demos
 [x] Additional kernel demos for Shor factoring, VQE hydrogen energy, and QAOA MaxCut
@@ -2534,12 +2538,13 @@ IMPLEMENTED                              PLANNED
   - algorithms module
   - Qiskit-style compatibility layer
 
-[waros-kernel]                           [filesystem]
-  - x86_64 BIOS/UEFI images              [multitasking]
-  - GDT, IDT, PIC, paging, heap          [networking]
-  - Keyboard, serial, framebuffer        [USB drivers]
-  - 20+ shell commands                   [ARM64 port]
-  - In-kernel quantum simulator          [real QPU QHAL]
+[waros-kernel]                           [broad Linux compatibility]
+  - x86_64 BIOS/UEFI images              [secure boot chain]
+  - GDT, IDT, PIC, paging, heap          [real QPU drivers / QHAL]
+  - Keyboard, serial, framebuffer        [broad syscall networking]
+  - WarFS + disk-backed persistence      [ARM64 port]
+  - Narrow WarExec smoke ABI             [QuantumIPC / QuantumNet]
+  - In-kernel quantum simulator
 ```
 
 ### Phase 1: Quantum Core (Months 7-12)

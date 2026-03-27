@@ -360,11 +360,11 @@ fn cmd_help(topic: Option<&str>) {
     kprintln!("  exec <path>      ps              top             nice <pri> <cmd>");
     kprintln!("  jobs             wait <pid>      kill <pid>      warpkg <subcmd>");
     kprint_colored!(Colors::DIM, "  WarExec is experimental: static ELF entry, stack-based argc/argv, stdout/stderr write,\n");
-    kprint_colored!(Colors::DIM, "  narrow read-only per-FD open/read/close, regular-file stat/fstat metadata,\n");
-    kprint_colored!(Colors::DIM, "  deterministic directory iteration, monotonic heap growth, and in-place exec replacement\n");
-    kprint_colored!(Colors::DIM, "  paths are smoke-tested, with deterministic bad-pointer rejection on the current ABI surface;\n");
+    kprint_colored!(Colors::DIM, "  narrow absolute-path open/read/close, stat/fstat, readdir, create-new write+close commit,\n");
+    kprint_colored!(Colors::DIM, "  monotonic brk heap growth, exited-child wait4, and in-place exec replacement are smoke-tested,\n");
+    kprint_colored!(Colors::DIM, "  with bounded user-pointer validation, stack ASLR, and loader W^X enforcement on the current ABI surface;\n");
     kprint_colored!(Colors::DIM, "  broader libc, fork, Linux-like exec semantics,\n");
-    kprint_colored!(Colors::DIM, "  and dynamic-linking compatibility are not claimed.\n");
+    kprint_colored!(Colors::DIM, "  socket/syscall networking, and dynamic-linking compatibility are not claimed.\n");
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Tools\n");
@@ -1552,10 +1552,10 @@ fn cmd_exec(args: &[&str]) {
     let Some(path) = args.first().copied() else {
         kprintln!("Usage: exec <path> [args]");
         kprintln!("  Supports the current minimal WarExec ABI only: static ELF entry, stack-based argc/argv,");
-        kprintln!("  stdout/stderr write, exit, one narrow read-only open/read/close file path,");
-        kprintln!("  monotonic heap growth through brk(0)/brk(new_end), and");
-        kprintln!("  a minimal in-place exec replacement path with empty envp.");
-        kprintln!("  The current ABI also enforces bounded user-pointer and string validation with deterministic");
+        kprintln!("  stdout/stderr write, absolute-path open/read/close, stat/fstat, readdir,");
+        kprintln!("  create-new write with close-time commit, monotonic heap growth through brk(0)/brk(new_end),");
+        kprintln!("  deterministic wait4 exited-child observation, and a minimal in-place exec replacement path.");
+        kprintln!("  The current ABI also applies stack ASLR, loader W^X checks, and bounded user-pointer/string validation with deterministic");
         kprintln!("  negative error returns on bad addresses.");
         return;
     };
