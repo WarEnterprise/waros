@@ -119,6 +119,7 @@ optional = true
 version = "0.8.0-rc.2"
 features = [
     "derive",
+    "heapless",
     "oid",
     "time",
 ]

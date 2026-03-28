@@ -177,6 +177,13 @@ pub fn ensure_shell_process() -> u32 {
     let pid = process_table.create_process(process).unwrap_or(1);
     process_table.shell_pid = Some(pid);
     drop(process_table);
+    crate::security::audit::log_event(
+        crate::security::audit::events::AuditEvent::ProcessSpawned {
+            pid,
+            name: String::from("waros-shell"),
+            uid,
+        },
+    );
     SCHEDULER.lock().set_current_pid(Some(pid));
     pid
 }
@@ -195,6 +202,9 @@ pub fn mark_exit(pid: u32, exit_code: i32) {
         process.exit_code = Some(exit_code);
     }
     SCHEDULER.lock().dequeue(pid);
+    crate::security::audit::log_event(
+        crate::security::audit::events::AuditEvent::ProcessExited { pid, exit_code },
+    );
 }
 
 pub fn current_pid() -> Option<u32> {
@@ -301,6 +311,9 @@ pub fn kill_process(pid: u32, exit_code: i32) -> Result<(), ExecError> {
     process.exit_code = Some(exit_code);
     drop(process_table);
     SCHEDULER.lock().dequeue(pid);
+    crate::security::audit::log_event(
+        crate::security::audit::events::AuditEvent::ProcessExited { pid, exit_code },
+    );
     Ok(())
 }
 
@@ -378,6 +391,13 @@ pub fn spawn_shell_command(command_line: &str, priority: Priority) -> Result<u32
         effective_capabilities: crate::security::capabilities::spawn_capabilities(parent_pid, uid),
     };
     let pid = PROCESS_TABLE.lock().create_process(process)?;
+    crate::security::audit::log_event(
+        crate::security::audit::events::AuditEvent::ProcessSpawned {
+            pid,
+            name: command.clone(),
+            uid,
+        },
+    );
     SCHEDULER.lock().enqueue(pid, priority);
 
     let command_for_task = command.clone();

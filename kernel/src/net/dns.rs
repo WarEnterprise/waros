@@ -47,6 +47,23 @@ impl DnsResolver {
             .network_config
             .and_then(|config| config.dns_server)
             .ok_or(NetError::InitializationFailed("no DNS server configured"))?;
+        {
+            use crate::security::firewall;
+            use crate::security::firewall::rules::{Action, Direction, Protocol};
+
+            let action = firewall::process_packet(
+                Direction::Outbound,
+                Protocol::Udp,
+                local_ipv4_u32(stack),
+                u32::from_be_bytes(server.0),
+                0,
+                53,
+            );
+            if action == Action::Deny {
+                crate::serial_println!("[WarGuard] DENY outbound DNS to {}", server);
+                return Err(NetError::ProtocolError(String::from("firewall: outbound DNS denied")));
+            }
+        }
         let servers = [IpAddress::Ipv4(server.as_smoltcp())];
         let query_handle = stack
             .sockets
@@ -111,4 +128,11 @@ impl DnsResolver {
 
 fn remove_socket(sockets: &mut smoltcp::iface::SocketSet<'static>, handle: SocketHandle) {
     let _ = sockets.remove(handle);
+}
+
+fn local_ipv4_u32(stack: &NetworkSubsystem) -> u32 {
+    stack
+        .network_config
+        .map(|config| u32::from_be_bytes(config.ip.0))
+        .unwrap_or(0)
 }

@@ -232,11 +232,21 @@ pub fn verify_package_bytes(
     bytes: &[u8],
 ) -> Result<VerifiedPackage, PkgError> {
     if sha256_hex(bytes) != package.sha256 {
+        log_package_verification(package, "deny", "checksum-mismatch");
         return Err(PkgError::ChecksumMismatch);
     }
 
-    let bundle: WarPackBundle = serde_json::from_slice(bytes).map_err(|_| PkgError::ExtractFailed)?;
-    signature::verify_bootstrap_bundle(&bundle).map_err(map_verify_error)?;
+    let bundle: WarPackBundle = match serde_json::from_slice(bytes) {
+        Ok(bundle) => bundle,
+        Err(_) => {
+            log_package_verification(package, "deny", "extract-failed");
+            return Err(PkgError::ExtractFailed);
+        }
+    };
+    if let Err(error) = signature::verify_bootstrap_bundle(&bundle) {
+        log_package_verification(package, "deny", verify_error_reason(&error));
+        return Err(map_verify_error(error));
+    }
 
     let manifest = &bundle.signed_manifest.manifest;
     if manifest.name != package.name
@@ -244,9 +254,11 @@ pub fn verify_package_bytes(
         || manifest.description != package.description
         || manifest.dependencies != package.dependencies
     {
+        log_package_verification(package, "deny", "metadata-mismatch");
         return Err(PkgError::MetadataMismatch);
     }
 
+    log_package_verification(package, "allow", "verified");
     Ok(VerifiedPackage {
         signed_by: bundle.signed_manifest.signature.key_id.clone(),
         signature_scheme: bundle.signed_manifest.signature.scheme.clone(),
@@ -310,9 +322,39 @@ fn require_pkg_install() -> Result<(), PkgError> {
     capabilities::session_require(Capabilities::PKG_INSTALL).map_err(|_| PkgError::PermissionDenied)
 }
 
+fn log_package_verification(package: &PackageInfo, outcome: &str, reason: &str) {
+    crate::security::audit::log_event(
+        crate::security::audit::events::AuditEvent::PackageVerification {
+            name: package.name.clone(),
+            version: package.version.clone(),
+            outcome: outcome.into(),
+            reason: reason.into(),
+        },
+    );
+}
+
 fn map_verify_error(error: signature::VerifyError) -> PkgError {
     match error {
         signature::VerifyError::SignatureMissing => PkgError::UnsignedPackage,
         _ => PkgError::SignatureInvalid,
+    }
+}
+
+fn verify_error_reason(error: &signature::VerifyError) -> &'static str {
+    match error {
+        signature::VerifyError::SignatureMissing => "signature-missing",
+        signature::VerifyError::UnsupportedSignatureScheme => "unsupported-signature-scheme",
+        signature::VerifyError::UnknownTrustRoot => "unknown-trust-root",
+        signature::VerifyError::InvalidPublicKey => "invalid-public-key",
+        signature::VerifyError::InvalidSignatureEncoding => "invalid-signature-encoding",
+        signature::VerifyError::SignatureMismatch => "signature-mismatch",
+        signature::VerifyError::CanonicalEncodingFailed => "canonical-encoding-failed",
+        signature::VerifyError::DuplicatePayload(_) => "duplicate-payload",
+        signature::VerifyError::PayloadMissing(_) => "payload-missing",
+        signature::VerifyError::UnexpectedPayload(_) => "unexpected-payload",
+        signature::VerifyError::PayloadDigestMismatch(_) => "payload-digest-mismatch",
+        signature::VerifyError::PayloadSizeMismatch(_) => "payload-size-mismatch",
+        signature::VerifyError::FilePayloadMissing(_) => "file-payload-missing",
+        signature::VerifyError::FileSizeMismatch(_) => "file-size-mismatch",
     }
 }

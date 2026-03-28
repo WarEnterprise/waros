@@ -23,6 +23,7 @@ pub struct TcpConnection {
     pub remote_port: u16,
     pub local_port: u16,
     pub state: TcpState,
+    inbound_firewall_verified: bool,
 }
 
 impl TcpConnection {
@@ -32,21 +33,20 @@ impl TcpConnection {
         remote_port: u16,
         timeout_ms: u64,
     ) -> Result<Self, NetError> {
+        let local_port = stack.allocate_local_port();
+
         // WarGuard firewall check: outbound TCP
         {
             use crate::security::firewall;
             use crate::security::firewall::rules::{Action, Direction, Protocol};
 
-            let src_ip = stack
-                .network_config
-                .map(|c| u32::from_be_bytes(c.ip.0))
-                .unwrap_or(0);
+            let src_ip = local_ipv4_u32(stack);
             let action = firewall::process_packet(
                 Direction::Outbound,
                 Protocol::Tcp,
                 src_ip,
                 u32::from_be_bytes(remote_ip.0),
-                0,
+                local_port,
                 remote_port,
             );
             if action == Action::Deny {
@@ -66,7 +66,6 @@ impl TcpConnection {
             tcp::SocketBuffer::new(vec![0; TCP_SOCKET_BUFFER_SIZE]),
         );
         let handle = stack.sockets.add(socket);
-        let local_port = stack.allocate_local_port();
 
         {
             let (iface, sockets) = (&mut stack.iface, &mut stack.sockets);
@@ -95,12 +94,22 @@ impl TcpConnection {
                     .sockets
                     .get_mut::<tcp::Socket>(handle)
                     .set_nagle_enabled(false);
+                crate::security::audit::log_event(
+                    crate::security::audit::events::AuditEvent::NetworkConnection {
+                        src_ip: local_ipv4_u32(stack),
+                        src_port: local_port,
+                        dst_ip: u32::from_be_bytes(remote_ip.0),
+                        dst_port: remote_port,
+                        protocol: alloc::string::String::from("TCP"),
+                    },
+                );
                 return Ok(Self {
                     handle,
                     remote_ip,
                     remote_port,
                     local_port,
                     state: TcpState::Established,
+                    inbound_firewall_verified: false,
                 });
             }
             if stack.now_ms() >= deadline {
@@ -188,6 +197,9 @@ impl TcpConnection {
             };
 
             if received != usize::MAX {
+                if received > 0 {
+                    self.verify_inbound_firewall(stack)?;
+                }
                 return Ok(received);
             }
             if stack.now_ms() >= deadline {
@@ -224,6 +236,9 @@ impl TcpConnection {
             };
 
             if let Some(chunk) = state {
+                if !chunk.is_empty() {
+                    self.verify_inbound_firewall(stack)?;
+                }
                 response.extend_from_slice(&chunk);
             } else if stack.now_ms() >= deadline {
                 return Err(NetError::InitializationFailed("TCP receive timed out"));
@@ -252,4 +267,43 @@ impl TcpConnection {
         let _ = stack.sockets.remove(self.handle);
         Ok(())
     }
+
+    fn verify_inbound_firewall(&mut self, stack: &mut NetworkSubsystem) -> Result<(), NetError> {
+        if self.inbound_firewall_verified {
+            return Ok(());
+        }
+
+        use crate::security::firewall;
+        use crate::security::firewall::rules::{Action, Direction, Protocol};
+
+        let action = firewall::process_packet(
+            Direction::Inbound,
+            Protocol::Tcp,
+            u32::from_be_bytes(self.remote_ip.0),
+            local_ipv4_u32(stack),
+            self.remote_port,
+            self.local_port,
+        );
+        if action == Action::Deny {
+            crate::serial_println!(
+                "[WarGuard] DENY inbound TCP response from {}:{} to local {}",
+                self.remote_ip,
+                self.remote_port,
+                self.local_port
+            );
+            return Err(NetError::ProtocolError(alloc::string::String::from(
+                "firewall: inbound TCP denied",
+            )));
+        }
+
+        self.inbound_firewall_verified = true;
+        Ok(())
+    }
+}
+
+fn local_ipv4_u32(stack: &NetworkSubsystem) -> u32 {
+    stack
+        .network_config
+        .map(|config| u32::from_be_bytes(config.ip.0))
+        .unwrap_or(0)
 }

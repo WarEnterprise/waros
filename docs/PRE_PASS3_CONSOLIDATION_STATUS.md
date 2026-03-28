@@ -1,6 +1,7 @@
 # WarOS Pre-Pass-3 Consolidation Status
 
 This note captures the repository baseline after WarShield Pass 2 and the short consolidation pass that followed it.
+Historical note: Pass 3 has now been integrated. For current repository truth, see [POST_WARSHIELD_PASS3_STATUS.md](POST_WARSHIELD_PASS3_STATUS.md).
 
 ## Validated now
 

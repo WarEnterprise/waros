@@ -19,6 +19,26 @@ pub fn send_udp(
     payload: &[u8],
     timeout_ms: u64,
 ) -> Result<Option<UdpResponse>, NetError> {
+    {
+        use crate::security::firewall;
+        use crate::security::firewall::rules::{Action, Direction, Protocol};
+
+        let action = firewall::process_packet(
+            Direction::Outbound,
+            Protocol::Udp,
+            local_ipv4_u32(stack),
+            u32::from_be_bytes(dst_ip.0),
+            src_port,
+            dst_port,
+        );
+        if action == Action::Deny {
+            crate::serial_println!("[WarGuard] DENY outbound UDP to {}:{}", dst_ip, dst_port);
+            return Err(NetError::ProtocolError(alloc::string::String::from(
+                "firewall: outbound UDP denied",
+            )));
+        }
+    }
+
     let socket = udp::Socket::new(
         udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 4], vec![0; 2048]),
         udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 4], vec![0; 2048]),
@@ -55,6 +75,31 @@ pub fn send_udp(
             let source = match metadata.endpoint.addr {
                 smoltcp::wire::IpAddress::Ipv4(ip) => Ipv4Addr::from_smoltcp(ip),
             };
+            {
+                use crate::security::firewall;
+                use crate::security::firewall::rules::{Action, Direction, Protocol};
+
+                let action = firewall::process_packet(
+                    Direction::Inbound,
+                    Protocol::Udp,
+                    u32::from_be_bytes(source.0),
+                    local_ipv4_u32(stack),
+                    metadata.endpoint.port,
+                    src_port,
+                );
+                if action == Action::Deny {
+                    let _ = stack.sockets.remove(handle);
+                    crate::serial_println!(
+                        "[WarGuard] DENY inbound UDP from {}:{} to local {}",
+                        source,
+                        metadata.endpoint.port,
+                        src_port
+                    );
+                    return Err(NetError::ProtocolError(alloc::string::String::from(
+                        "firewall: inbound UDP denied",
+                    )));
+                }
+            }
             let mut payload = vec![0u8; size];
             payload.copy_from_slice(&buffer[..size]);
             let _ = stack.sockets.remove(handle);
@@ -70,4 +115,11 @@ pub fn send_udp(
             return Ok(None);
         }
     }
+}
+
+fn local_ipv4_u32(stack: &NetworkSubsystem) -> u32 {
+    stack
+        .network_config
+        .map(|config| u32::from_be_bytes(config.ip.0))
+        .unwrap_or(0)
 }

@@ -1,26 +1,109 @@
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::arch::x86_64::{__cpuid, _rdrand64_step};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::marker::PhantomData;
 
 use embedded_io::{ErrorKind, ErrorType, Read, Write};
 use embedded_tls::blocking::{
-    Aes128GcmSha256, TlsConfig, TlsConnection as EmbeddedTlsConnection, TlsContext,
-    TlsError as EmbeddedTlsError, UnsecureProvider,
+    Aes128GcmSha256, Certificate, CertificateEntryRef, CertificateRef, CryptoProvider, Sha256,
+    TlsClock, TlsConfig, TlsConnection as EmbeddedTlsConnection, TlsContext,
+    TlsError as EmbeddedTlsError, TlsVerifier,
 };
-use rand_core::{CryptoRng, RngCore};
+use embedded_tls::pki::CertVerifier;
+use rand_core::{CryptoRng, CryptoRngCore, RngCore};
+use sha2::Digest;
+use spin::Lazy;
 
-use crate::display::console::Colors;
-use crate::{kprint_colored, kprintln, serial_println, KERNEL_VERSION};
+use crate::{serial_println, KERNEL_VERSION};
 
 use super::http::{parse_response, HttpResponse, UrlParts};
 use super::tcp::TcpConnection;
 use super::{ipv4::Ipv4Addr, NetError, NetworkSubsystem};
 
 const TLS_RECORD_BUFFER_SIZE: usize = 16_640;
+const TLS_CERTIFICATE_STORE_SIZE: usize = 4_096;
 const TLS_IO_TIMEOUT_MS: u64 = 15_000;
+const TLS_TRUST_ROOT_COUNT: usize = 2;
+const SUPPORTED_TLS_HOSTS: [&str; 3] = [
+    "iam.cloud.ibm.com",
+    "quantum.cloud.ibm.com",
+    "warenterprise.com",
+];
 
-static TLS_WARNING_EMITTED: AtomicBool = AtomicBool::new(false);
+const DIGICERT_GLOBAL_ROOT_G3_HEX: &str = include_str!("anchors/digicert_global_root_g3.hex");
+const GLOBALSIGN_ECC_ROOT_R4_HEX: &str = include_str!("anchors/globalsign_ecc_root_r4.hex");
+const PROOF_WARENTERPRISE_LEAF_HEX: &str = include_str!("proof/warenterprise_leaf.hex");
+const PROOF_WE1_INTERMEDIATE_HEX: &str = include_str!("proof/we1_intermediate.hex");
+
+static DIGICERT_GLOBAL_ROOT_G3: Lazy<Vec<u8>> =
+    Lazy::new(|| decode_hex_bytes(DIGICERT_GLOBAL_ROOT_G3_HEX));
+static GLOBALSIGN_ECC_ROOT_R4: Lazy<Vec<u8>> =
+    Lazy::new(|| decode_hex_bytes(GLOBALSIGN_ECC_ROOT_R4_HEX));
+static PROOF_WARENTERPRISE_LEAF: Lazy<Vec<u8>> =
+    Lazy::new(|| decode_hex_bytes(PROOF_WARENTERPRISE_LEAF_HEX));
+static PROOF_WE1_INTERMEDIATE: Lazy<Vec<u8>> =
+    Lazy::new(|| decode_hex_bytes(PROOF_WE1_INTERMEDIATE_HEX));
+
+#[derive(Clone, Copy)]
+struct HostTrustAnchor {
+    label: &'static str,
+    der: &'static [u8],
+}
+
+struct KernelTlsClock;
+
+impl TlsClock for KernelTlsClock {
+    fn now() -> Option<u64> {
+        None
+    }
+}
+
+struct KernelTlsSignature;
+
+impl AsRef<[u8]> for KernelTlsSignature {
+    fn as_ref(&self) -> &[u8] {
+        &[]
+    }
+}
+
+struct KernelTlsProvider<CipherSuite>
+where
+    CipherSuite: embedded_tls::blocking::TlsCipherSuite,
+{
+    rng: KernelRng,
+    verifier: CertVerifier<CipherSuite, KernelTlsClock, TLS_CERTIFICATE_STORE_SIZE>,
+    _marker: PhantomData<CipherSuite>,
+}
+
+impl<CipherSuite> KernelTlsProvider<CipherSuite>
+where
+    CipherSuite: embedded_tls::blocking::TlsCipherSuite,
+{
+    fn new(rng: KernelRng) -> Self {
+        Self {
+            rng,
+            verifier: CertVerifier::new(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<CipherSuite> CryptoProvider for KernelTlsProvider<CipherSuite>
+where
+    CipherSuite: embedded_tls::blocking::TlsCipherSuite,
+{
+    type CipherSuite = CipherSuite;
+    type Signature = KernelTlsSignature;
+
+    fn rng(&mut self) -> impl CryptoRngCore {
+        &mut self.rng
+    }
+
+    fn verifier(&mut self) -> Result<&mut impl TlsVerifier<Self::CipherSuite>, EmbeddedTlsError> {
+        Ok(&mut self.verifier)
+    }
+}
 
 pub struct TlsConnection;
 
@@ -32,7 +115,18 @@ impl TlsConnection {
         extra_headers: &[(&str, &str)],
         body: Option<(&str, &[u8])>,
     ) -> Result<HttpResponse, NetError> {
-        emit_unverified_warning_once();
+        let Some(anchor) = trust_anchor_for_host(&parts.host) else {
+            log_tls_validation_event(
+                &parts.host,
+                "none",
+                "deny",
+                "unsupported-host-under-embedded-policy",
+            );
+            return Err(NetError::ProtocolError(alloc::format!(
+                "TLS validation unavailable for host {} under current embedded trust policy",
+                parts.host
+            )));
+        };
 
         serial_println!("[TLS] Resolving DNS for {}...", parts.host);
         let remote_ip = stack.resolve_host(&parts.host)?;
@@ -43,12 +137,17 @@ impl TlsConnection {
         serial_println!("[TLS] TCP connected");
         let mut read_record_buffer = vec![0u8; TLS_RECORD_BUFFER_SIZE];
         let mut write_record_buffer = vec![0u8; TLS_RECORD_BUFFER_SIZE];
-        let config = TlsConfig::new().with_server_name(&parts.host);
+        let config = TlsConfig::new()
+            .with_ca(Certificate::X509(anchor.der))
+            .with_server_name(&parts.host);
         let rng = KernelRng::new();
         serial_println!("[TLS] Preparing ClientHello...");
         serial_println!("[TLS]   SNI: {}", parts.host);
         serial_println!("[TLS]   Cipher suites: TLS_AES_128_GCM_SHA256");
         serial_println!("[TLS]   Key exchange: secp256r1 (embedded-tls)");
+        serial_println!("[TLS]   Trust anchor: {}", anchor.label);
+        serial_println!("[TLS]   Hostname check: SAN/CN");
+        serial_println!("[TLS]   Time validity: no RTC-backed expiry check");
         serial_println!(
             "[TLS]   Read buffer: {} bytes | Write buffer: {} bytes",
             read_record_buffer.len(),
@@ -62,7 +161,7 @@ impl TlsConnection {
                 "PIT-seeded xorshift fallback"
             }
         );
-        let provider = UnsecureProvider::new::<Aes128GcmSha256>(rng);
+        let provider = KernelTlsProvider::<Aes128GcmSha256>::new(rng);
 
         let mut tls = EmbeddedTlsConnection::<_, Aes128GcmSha256>::new(
             stream,
@@ -70,12 +169,18 @@ impl TlsConnection {
             &mut write_record_buffer,
         );
         serial_println!("[TLS] Starting embedded-tls handshake...");
-        tls.open(TlsContext::new(&config, provider))
-            .map_err(|error| {
-                serial_println!("[TLS] Handshake failed: {}", error);
-                tls_error("TLS handshake failed", error)
-            })?;
-        serial_println!("[TLS] TLS 1.3 handshake COMPLETE — connection established");
+        if let Err(error) = tls.open(TlsContext::new(&config, provider)) {
+            serial_println!("[TLS] Handshake failed: {}", error);
+            log_tls_validation_event(
+                &parts.host,
+                anchor.label,
+                "deny",
+                &alloc::format!("handshake-failed:{error}"),
+            );
+            return Err(tls_error("TLS handshake failed", error));
+        }
+        log_tls_validation_event(&parts.host, anchor.label, "allow", "handshake-certificate-accepted");
+        serial_println!("[TLS] TLS 1.3 handshake complete");
 
         let mut request = alloc::format!(
             "{method} {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: WarOS/{}\r\nConnection: close\r\n",
@@ -124,15 +229,166 @@ impl TlsConnection {
     }
 }
 
-fn emit_unverified_warning_once() {
-    if TLS_WARNING_EMITTED
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_ok()
+#[must_use]
+pub fn supported_hosts_summary() -> String {
+    let mut summary = String::new();
+    for host in SUPPORTED_TLS_HOSTS {
+        if !summary.is_empty() {
+            summary.push_str(", ");
+        }
+        summary.push_str(host);
+    }
+    summary
+}
+
+#[must_use]
+pub fn trust_policy_summary() -> String {
+    alloc::format!(
+        "{} embedded root(s); supported hosts: {}; SAN/CN hostname checks; no RTC-backed expiry check",
+        TLS_TRUST_ROOT_COUNT,
+        supported_hosts_summary()
+    )
+}
+
+pub fn run_validation_proof() -> Result<(), &'static str> {
+    let anchor = trust_anchor_for_host("warenterprise.com").ok_or("TLS proof root missing")?;
+
+    let mut verifier =
+        CertVerifier::<Aes128GcmSha256, KernelTlsClock, TLS_CERTIFICATE_STORE_SIZE>::new();
+    verifier
+        .set_hostname_verification("warenterprise.com")
+        .map_err(|_| "TLS proof hostname setup failed")?;
+    let trusted_chain =
+        build_certificate_chain(PROOF_WARENTERPRISE_LEAF.as_slice(), PROOF_WE1_INTERMEDIATE.as_slice())
+            .map_err(|_| "TLS proof chain build failed")?;
+    verifier
+        .verify_certificate(
+            &Sha256::new(),
+            &Some(Certificate::X509(anchor.der)),
+            trusted_chain,
+        )
+        .map_err(|error| {
+            serial_println!(
+                "[INFO] WarShield TLS proof: trusted certificate chain rejected ({})",
+                tls_error_label(error)
+            );
+            "trusted certificate chain rejected"
+        })?;
+    log_tls_validation_event("warenterprise.com", anchor.label, "allow", "proof-trusted-chain");
+    crate::serial_println!("[PROOF] TLS: trusted certificate chain accepted");
+
+    let mut verifier =
+        CertVerifier::<Aes128GcmSha256, KernelTlsClock, TLS_CERTIFICATE_STORE_SIZE>::new();
+    verifier
+        .set_hostname_verification("wrong.example")
+        .map_err(|_| "TLS proof reject-host setup failed")?;
+    let rejected_chain =
+        build_certificate_chain(PROOF_WARENTERPRISE_LEAF.as_slice(), PROOF_WE1_INTERMEDIATE.as_slice())
+            .map_err(|_| "TLS proof reject chain build failed")?;
+    match verifier.verify_certificate(
+        &Sha256::new(),
+        &Some(Certificate::X509(anchor.der)),
+        rejected_chain,
+    ) {
+        Err(EmbeddedTlsError::InvalidCertificate) => {
+            log_tls_validation_event(
+                "wrong.example",
+                anchor.label,
+                "deny",
+                "proof-hostname-mismatch",
+            );
+            crate::serial_println!("[PROOF] TLS: invalid host rejected");
+            Ok(())
+        }
+        Err(_) => Err("invalid certificate path rejected with wrong error"),
+        Ok(()) => Err("invalid certificate path unexpectedly accepted"),
+    }
+}
+
+fn tls_error_label(error: EmbeddedTlsError) -> &'static str {
+    match error {
+        EmbeddedTlsError::InvalidCertificate => "invalid-certificate",
+        EmbeddedTlsError::DecodeError => "decode-error",
+        EmbeddedTlsError::InvalidSignature => "invalid-signature",
+        EmbeddedTlsError::InvalidSignatureScheme => "invalid-signature-scheme",
+        EmbeddedTlsError::ParseError(_) => "parse-error",
+        EmbeddedTlsError::InsufficientSpace => "insufficient-space",
+        _ => "other",
+    }
+}
+
+fn trust_anchor_for_host(host: &str) -> Option<HostTrustAnchor> {
+    if host.eq_ignore_ascii_case("iam.cloud.ibm.com") {
+        return (!DIGICERT_GLOBAL_ROOT_G3.is_empty()).then_some(HostTrustAnchor {
+            label: "DigiCert Global Root G3",
+            der: DIGICERT_GLOBAL_ROOT_G3.as_slice(),
+        });
+    }
+    if host.eq_ignore_ascii_case("quantum.cloud.ibm.com")
+        || host.eq_ignore_ascii_case("warenterprise.com")
     {
-        kprint_colored!(Colors::YELLOW, "[WarOS] WARNING: ");
-        kprintln!(
-            "TLS certificate validation not implemented. Connection encrypted but not verified."
-        );
+        return (!GLOBALSIGN_ECC_ROOT_R4.is_empty()).then_some(HostTrustAnchor {
+            label: "GlobalSign ECC Root CA - R4",
+            der: GLOBALSIGN_ECC_ROOT_R4.as_slice(),
+        });
+    }
+    None
+}
+
+fn build_certificate_chain<'a>(
+    leaf: &'a [u8],
+    intermediate: &'a [u8],
+) -> Result<CertificateRef<'a>, EmbeddedTlsError> {
+    let mut chain = CertificateRef::with_context(&[]);
+    chain.add(CertificateEntryRef::X509(leaf))?;
+    chain.add(CertificateEntryRef::X509(intermediate))?;
+    Ok(chain)
+}
+
+fn log_tls_validation_event(host: &str, anchor: &str, outcome: &str, detail: &str) {
+    crate::security::audit::log_event(
+        crate::security::audit::events::AuditEvent::TlsValidation {
+            host: host.into(),
+            anchor: anchor.into(),
+            outcome: outcome.into(),
+            detail: detail.into(),
+        },
+    );
+}
+
+fn decode_hex_bytes(text: &str) -> Vec<u8> {
+    let mut filtered = Vec::new();
+    for byte in text.bytes() {
+        if !byte.is_ascii_whitespace() {
+            filtered.push(byte);
+        }
+    }
+
+    if !filtered.len().is_multiple_of(2) {
+        return Vec::new();
+    }
+
+    let mut output = Vec::with_capacity(filtered.len() / 2);
+    let mut index = 0usize;
+    while index < filtered.len() {
+        let Some(high) = hex_nibble(filtered[index]) else {
+            return Vec::new();
+        };
+        let Some(low) = hex_nibble(filtered[index + 1]) else {
+            return Vec::new();
+        };
+        output.push((high << 4) | low);
+        index += 2;
+    }
+    output
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 

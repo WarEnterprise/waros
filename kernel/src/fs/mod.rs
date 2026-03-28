@@ -123,6 +123,63 @@ impl WarFS {
         self.write_as(name, &[], current_uid, current_role, permissions)
     }
 
+    pub fn seed_system(
+        &mut self,
+        name: &str,
+        data: &[u8],
+        readonly: bool,
+    ) -> Result<(), FsError> {
+        if data.len() > MAX_FILE_SIZE {
+            return Err(FsError::FileTooLarge);
+        }
+
+        let canonical = canonical_path(name)?;
+        if canonical == "/" {
+            return Err(FsError::InvalidFilename);
+        }
+
+        let now = interrupts::tick_count();
+        let used_without_target = self
+            .files
+            .iter()
+            .filter(|entry| entry.name != canonical)
+            .map(|entry| entry.data.len())
+            .sum::<usize>();
+        if used_without_target.saturating_add(data.len()) > TOTAL_CAPACITY {
+            return Err(FsError::FilesystemFull);
+        }
+
+        if let Some(entry) = self.find_mut(&canonical) {
+            entry.data.clear();
+            entry.data.extend_from_slice(data);
+            entry.modified_at = now;
+            entry.readonly = readonly;
+            entry.owner_uid = 0;
+            entry.permissions = FilePermissions::system();
+        } else {
+            if self.files.len() >= self.max_files {
+                return Err(FsError::FilesystemFull);
+            }
+
+            self.files.push(FileEntry {
+                name: canonical.clone(),
+                data: data.to_vec(),
+                created_at: now,
+                modified_at: now,
+                readonly,
+                owner_uid: 0,
+                permissions: FilePermissions::system(),
+            });
+            self.files.sort_by(|left, right| left.name.cmp(&right.name));
+        }
+
+        if let Some(entry) = self.find(&canonical) {
+            crate::disk::maybe_sync_file_entry(entry);
+        }
+
+        Ok(())
+    }
+
     pub fn read(&self, name: &str) -> Result<&[u8], FsError> {
         self.read_as(name, 0, UserRole::Admin)
     }
@@ -473,6 +530,28 @@ pub fn init() {
     drop(FILESYSTEM.lock());
 }
 
+fn seed_system_path(
+    filesystem: &mut WarFS,
+    path: &str,
+    data: &[u8],
+    readonly: bool,
+) -> Result<(), FsError> {
+    filesystem.seed_system(path, data, readonly).map_err(|error| {
+        crate::serial_println!("[ERR] WarFS seed {}: {}", path, error);
+        error
+    })
+}
+
+fn clear_seed_output(filesystem: &mut WarFS, path: &str) -> Result<(), FsError> {
+    match filesystem.delete(path) {
+        Ok(()) | Err(FsError::FileNotFound) => Ok(()),
+        Err(error) => {
+            crate::serial_println!("[ERR] WarFS reset {}: {}", path, error);
+            Err(error)
+        }
+    }
+}
+
 pub fn seed_system_files() -> Result<(), FsError> {
     let persistence_line = if crate::disk::is_available() {
         "Persistent disk: active (virtio-blk backing store).\n"
@@ -508,100 +587,140 @@ Filesystem: {} files max, {} KiB max per file\n",
     );
 
     let mut filesystem = FILESYSTEM.lock();
-    filesystem.write_system("/readme.txt", readme.as_bytes(), true)?;
-    filesystem.write_system("/sysinfo.txt", sysinfo.as_bytes(), true)?;
+    seed_system_path(&mut filesystem, "/readme.txt", readme.as_bytes(), true)?;
+    seed_system_path(&mut filesystem, "/sysinfo.txt", sysinfo.as_bytes(), true)?;
     let smoke_elf = crate::exec::smoke::elf_bytes();
-    filesystem.write_system(crate::exec::smoke::SMOKE_ELF_PATH, &smoke_elf, true)?;
-    filesystem.write_system(
+    seed_system_path(&mut filesystem, crate::exec::smoke::SMOKE_ELF_PATH, &smoke_elf, true)?;
+    seed_system_path(
+        &mut filesystem,
         crate::exec::smoke::ABI_READ_SMOKE_FILE_PATH,
         crate::exec::smoke::ABI_READ_SMOKE_FILE_CONTENT.as_bytes(),
         true,
     )?;
     let abi_read_elf = crate::exec::smoke::abi_read_elf_bytes();
-    filesystem.write_system(crate::exec::smoke::ABI_READ_SMOKE_ELF_PATH, &abi_read_elf, true)?;
-    filesystem.write_system(
+    seed_system_path(
+        &mut filesystem,
+        crate::exec::smoke::ABI_READ_SMOKE_ELF_PATH,
+        &abi_read_elf,
+        true,
+    )?;
+    seed_system_path(
+        &mut filesystem,
         crate::exec::smoke::ABI_OFFSET_SMOKE_FILE_PATH,
         crate::exec::smoke::ABI_OFFSET_SMOKE_FILE_CONTENT.as_bytes(),
         true,
     )?;
     let abi_offset_elf = crate::exec::smoke::abi_offset_elf_bytes();
-    filesystem.write_system(
+    seed_system_path(
+        &mut filesystem,
         crate::exec::smoke::ABI_OFFSET_SMOKE_ELF_PATH,
         &abi_offset_elf,
         true,
     )?;
     let abi_argv_elf = crate::exec::smoke::abi_argv_elf_bytes();
-    filesystem.write_system(crate::exec::smoke::ABI_ARGV_SMOKE_ELF_PATH, &abi_argv_elf, true)?;
+    seed_system_path(
+        &mut filesystem,
+        crate::exec::smoke::ABI_ARGV_SMOKE_ELF_PATH,
+        &abi_argv_elf,
+        true,
+    )?;
     let abi_exec_parent_elf = crate::exec::smoke::abi_exec_parent_elf_bytes();
-    filesystem.write_system(
+    seed_system_path(
+        &mut filesystem,
         crate::exec::smoke::ABI_EXEC_PARENT_ELF_PATH,
         &abi_exec_parent_elf,
         true,
     )?;
     let abi_exec_child_elf = crate::exec::smoke::abi_exec_child_elf_bytes();
-    filesystem.write_system(
+    seed_system_path(
+        &mut filesystem,
         crate::exec::smoke::ABI_EXEC_CHILD_ELF_PATH,
         &abi_exec_child_elf,
         true,
     )?;
     let abi_heap_elf = crate::exec::smoke::abi_heap_elf_bytes();
-    filesystem.write_system(crate::exec::smoke::ABI_HEAP_SMOKE_ELF_PATH, &abi_heap_elf, true)?;
+    seed_system_path(
+        &mut filesystem,
+        crate::exec::smoke::ABI_HEAP_SMOKE_ELF_PATH,
+        &abi_heap_elf,
+        true,
+    )?;
     let abi_fault_elf = crate::exec::smoke::abi_fault_elf_bytes();
-    filesystem.write_system(
+    seed_system_path(
+        &mut filesystem,
         crate::exec::smoke::ABI_FAULT_SMOKE_ELF_PATH,
         &abi_fault_elf,
         true,
     )?;
     let abi_wait_parent_elf = crate::exec::smoke::abi_wait_parent_elf_bytes();
-    filesystem.write_system(
+    seed_system_path(
+        &mut filesystem,
         crate::exec::smoke::ABI_WAIT_PARENT_ELF_PATH,
         &abi_wait_parent_elf,
         true,
     )?;
     let abi_wait_child_elf = crate::exec::smoke::abi_wait_child_elf_bytes();
-    filesystem.write_system(
+    seed_system_path(
+        &mut filesystem,
         crate::exec::smoke::ABI_WAIT_CHILD_ELF_PATH,
         &abi_wait_child_elf,
         true,
     )?;
     let abi_stat_elf = crate::exec::smoke::abi_stat_elf_bytes();
-    filesystem.write_system(crate::exec::smoke::ABI_STAT_SMOKE_ELF_PATH, &abi_stat_elf, true)?;
-    filesystem.write_system(
+    seed_system_path(
+        &mut filesystem,
+        crate::exec::smoke::ABI_STAT_SMOKE_ELF_PATH,
+        &abi_stat_elf,
+        true,
+    )?;
+    seed_system_path(
+        &mut filesystem,
         &directory_marker_path(crate::exec::smoke::ABI_READDIR_SMOKE_DIR_PATH),
         &[],
         true,
     )?;
-    filesystem.write_system(
+    seed_system_path(
+        &mut filesystem,
         "/abi/readdir-proof/alpha.txt",
         b"alpha dirent proof\n",
         true,
     )?;
-    filesystem.write_system(
+    seed_system_path(
+        &mut filesystem,
         "/abi/readdir-proof/beta.txt",
         b"beta dirent proof\n",
         true,
     )?;
-    filesystem.write_system(
+    seed_system_path(
+        &mut filesystem,
         "/abi/readdir-proof/gamma.txt",
         b"gamma dirent proof\n",
         true,
     )?;
     let abi_readdir_elf = crate::exec::smoke::abi_readdir_elf_bytes();
-    filesystem.write_system(
+    seed_system_path(
+        &mut filesystem,
         crate::exec::smoke::ABI_READDIR_SMOKE_ELF_PATH,
         &abi_readdir_elf,
         true,
     )?;
     let abi_path_elf = crate::exec::smoke::abi_path_elf_bytes();
-    filesystem.write_system(crate::exec::smoke::ABI_PATH_SMOKE_ELF_PATH, &abi_path_elf, true)?;
-    filesystem.write_system(
+    seed_system_path(
+        &mut filesystem,
+        crate::exec::smoke::ABI_PATH_SMOKE_ELF_PATH,
+        &abi_path_elf,
+        true,
+    )?;
+    seed_system_path(
+        &mut filesystem,
         &directory_marker_path(crate::exec::smoke::ABI_WRITE_SMOKE_DIR_PATH),
         &[],
         true,
     )?;
-    let _ = filesystem.delete(crate::exec::smoke::ABI_WRITE_SMOKE_FILE_PATH);
+    clear_seed_output(&mut filesystem, crate::exec::smoke::ABI_WRITE_SMOKE_FILE_PATH)?;
     let abi_write_elf = crate::exec::smoke::abi_write_elf_bytes();
-    filesystem.write_system(
+    seed_system_path(
+        &mut filesystem,
         crate::exec::smoke::ABI_WRITE_SMOKE_ELF_PATH,
         &abi_write_elf,
         true,

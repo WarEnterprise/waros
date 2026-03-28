@@ -74,4 +74,5 @@ That scope is deliberate. WarShield Pass 2 closes the placeholder-grade package 
 - The kernel seeds a small signed local repository into WarFS during boot.
 - `warpkg verify <name>` and `warpkg install <name>` both verify the same signed bundle format before any install/apply step.
 - `warpkg update` uses the current kernel HTTP/TLS path when available and falls back to the seeded local index if the remote fetch fails.
-- Because kernel TLS still lacks certificate validation, remote index refresh remains experimental even though the bundle-signature path itself is real.
+- Remote index refresh now uses the narrow validated kernel TLS path for supported hosts only.
+- That HTTPS trust model remains intentionally small: embedded roots, hostname checks, no RTC-backed expiry validation, no rotation, and no revocation.

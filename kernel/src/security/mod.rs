@@ -56,11 +56,16 @@ pub fn init() {
 
     // WarShield integration proof markers (smoke-visible on serial)
     crate::serial_println!("[PROOF] WarShield: audit hooks wired (login, fs, logout)");
-    crate::serial_println!("[PROOF] WarShield: firewall hook wired (TCP connect)");
+    crate::serial_println!(
+        "[PROOF] WarShield: firewall hooks wired (TCP connect + inbound response, UDP/DNS egress, ICMP ping)"
+    );
+    crate::serial_println!(
+        "[PROOF] WarShield: TLS validation wired (embedded trust anchors for supported hosts; no RTC expiry)"
+    );
     crate::serial_println!("[PROOF] WarShield: ASLR wired (stack randomization, 8-bit entropy)");
     crate::serial_println!("[PROOF] WarShield: W^X enforced (loader rejects W+X, verify_wx post-check)");
     crate::serial_println!("[PROOF] WarShield: capabilities wired (halt/reboot/useradd/userdel/format/profile)");
-    crate::serial_println!("[PROOF] WarShield: pass 1 foundation complete");
+    crate::serial_println!("[PROOF] WarShield: runtime hardening foundation ready for Pass 3 proofs");
 }
 
 fn boot_ok_security(message: &str, _start_ticks: u64) {
@@ -103,6 +108,8 @@ pub fn format_status() -> String {
     let capability_model =
         "shell session maps explicitly to a shell process; spawn inherits parent effective set; exec preserves or narrows only";
     let warpkg_root = crate::pkg::trust_root_summary();
+    let tls_hosts = crate::net::tls::supported_hosts_summary();
+    let tls_policy = crate::net::tls::trust_policy_summary();
 
     format!(
         "WarShield Security Status:\n\
@@ -128,10 +135,12 @@ pub fn format_status() -> String {
           \n    Key store:   no kernel PQ key store exposed\
           \n\
           \n  Kernel TLS:\
-          \n    HTTPS path:  encrypted, no certificate validation\
+          \n    HTTPS path:  certificate-validated for supported hosts\
+          \n    Hosts:       {}\
+          \n    Policy:      {}\
           \n\
           \n  WarPkg:\
-          \n    Verify path: signed manifest + payload digests\
+          \n    Verify path: signed bundle manifest + payload digests\
          \n    Trust root:  {}\
          \n\
          \n  Capabilities:\
@@ -153,6 +162,8 @@ pub fn format_status() -> String {
         vault_count,
         violations.len(),
         encrypted,
+        tls_hosts,
+        tls_policy,
         warpkg_root,
         capability_model,
         qkd_keys,

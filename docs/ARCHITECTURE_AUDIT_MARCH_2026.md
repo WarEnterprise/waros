@@ -1,5 +1,5 @@
 # WarOS Architecture Audit
-## Post-WarShield Pass 2 Narrow Security Integration Review (March 2026)
+## Post-WarShield Pass 3 Narrow Runtime Hardening Review (March 2026)
 
 ## 1. Executive Summary
 
@@ -21,16 +21,17 @@ That said, WarOS is still not the full system described by `BLUEPRINT.md`. The b
 | Kernel boot + shell | IMPLEMENTED | `kernel/src/main.rs`; `kernel/src/shell/*`; headless BIOS smoke | Real QEMU-bootable prototype, not a production OS |
 | WarFS + virtio-blk persistence | PARTIAL | `kernel/src/fs/mod.rs`; `kernel/src/disk/*` | Real custom FS, but not the blueprint filesystem model |
 | WarExec minimal ABI | INTEGRATED | `kernel/src/exec/*`; `kernel/src/exec/smoke.rs`; ABI doc | Real, narrow, static-ELF-only userspace path with explicit non-goals |
-| Kernel networking | PARTIAL | `kernel/src/net/*`; shell `net`, `curl`, `wget`, `ibm` | Real TCP/HTTP/TLS code path exists, but networking syscalls are still stubbed |
-| Kernel TLS / IBM path | EXPERIMENTAL | `kernel/src/net/tls/mod.rs`; `kernel/src/net/ibm.rs` | Encryption exists; certificate validation does not |
-| WarShield Pass 1 + Pass 2 | INTEGRATED | `kernel/src/security/*`; `kernel/src/pkg/*`; `crates/waros-pkg/*`; shell help/status | Real hardening pass, but still a narrow research-kernel security model |
+| Kernel networking | PARTIAL | `kernel/src/net/*`; shell `net`, `curl`, `wget`, `ibm` | Real DHCP/DNS/TCP/HTTP/TLS path exists, but networking syscalls are still stubbed |
+| Kernel TLS / IBM path | PARTIAL | `kernel/src/net/tls/mod.rs`; `kernel/src/net/ibm.rs` | Supported HTTPS hosts now validate against embedded roots, but there is no RTC-backed expiry check or general CA store |
+| WarShield Pass 1 + Pass 2 + Pass 3 | INTEGRATED | `kernel/src/security/*`; `kernel/src/pkg/*`; `crates/waros-pkg/*`; shell help/status | Real hardening pass, but still a narrow research-kernel security model |
 
 ## 3. WarShield Pass 1 and Pass 2 Integration Review
 
 ### Integrated and visible today
 
-- Audit hooks are wired for login success/failure, logout, and current file-mutation paths in WarFS (`create`, `modify`, `delete`).
-- The outbound TCP firewall decision hook is wired into `TcpConnection::connect`, and firewall decisions are now visible through the audit/log path as well as serial diagnostics.
+- Audit hooks are wired for login success/failure, logout, current file-mutation paths in WarFS (`create`, `modify`, `delete`), package verification/install decisions, TLS validation decisions, firewall decisions, and current process spawn/exec/exit transitions.
+- The firewall path is now deeper than the original outbound TCP hook: `TcpConnection::connect` uses a real outbound decision, inbound TCP responses are checked once per connection, UDP send/response paths are checked, DNS egress is checked explicitly, and ICMP ping/reply is checked.
+- Kernel TLS now validates supported HTTPS hosts against embedded trust anchors with deterministic allow/deny outcomes and hostname verification.
 - ASLR is integrated into the current WarExec load path. Stack randomization is part of the current process-start behavior.
 - W^X is enforced on the current WarExec loader path. Writable-and-executable user segments are rejected, load-time mappings stay NX while being populated, and final user stack and heap mappings are NX.
 - Capability checks are enforced on selected sensitive shell and system operations, including power control, user administration, filesystem formatting, security profile changes, firewall mutation, and package installation or removal.
@@ -39,10 +40,10 @@ That said, WarOS is still not the full system described by `BLUEPRINT.md`. The b
 
 ### Limits that still matter for release-facing honesty
 
-- Audit coverage is not full-system provenance. Today it is hook-based coverage, not complete security telemetry across every read, open, denial, or device path.
-- The firewall hook is currently on outbound TCP connection setup. This is not yet a complete packet-filtering or socket-policy framework.
+- Audit coverage is still not full-system provenance. Today it is deterministic hook coverage across selected security-relevant paths, not complete telemetry across every read, open, denial, or device path.
+- The firewall path is still intentionally narrow. Current coverage is TCP connect plus first inbound response, UDP send/response, DNS egress, and ICMP ping/reply, not a full packet-filtering or IDS/IPS platform.
 - W^X enforcement today is about the WarExec userspace loader path, not a claim that every kernel and userspace mapping policy is comprehensively hardened.
-- Kernel TLS remains "encrypted but not verified". The repo must not present kernel HTTPS or kernel IBM Runtime access as release-grade security.
+- Kernel TLS is now validated for supported hosts, but it is still not a release-grade or browser-grade trust model. There is no RTC-backed expiry check, no rotation, no revocation, and no general CA store.
 - The package trust model is intentionally narrow: one embedded bootstrap ML-DSA root, no key rotation, no revocation, no delegated repository metadata, and no secure-boot linkage.
 - Capability enforcement is now deterministic across current process-creation paths, but there is still no broad userspace capability syscall ABI or POSIX credential model.
 
@@ -56,7 +57,7 @@ That said, WarOS is still not the full system described by `BLUEPRINT.md`. The b
 | WarFS | PARTIAL | `kernel/src/fs/mod.rs` | Path, stat/fstat, readdir, and create/write contracts are real in the narrow ABI; broader filesystem semantics are not |
 | WarExec | INTEGRATED | `kernel/src/exec/*`; smoke ELFs seeded in WarFS | Twelve CI-smoke-proven static ELF paths; no `fork`, no dynamic linker, no broad libc |
 | Networking syscalls | SCAFFOLDED | `kernel/src/exec/syscalls/network.rs` | Numeric syscall surface exists; handlers still return `ENOSYS` |
-| Classical network stack | PARTIAL | `kernel/src/net/*` | Real DHCP/DNS/TCP/HTTP/TLS code path, still needs stronger automated coverage |
+| Classical network stack | PARTIAL | `kernel/src/net/*` | Real DHCP/DNS/TCP/HTTP/TLS code path with narrow runtime hardening, still needs stronger automated coverage |
 | Kernel IBM client | EXPERIMENTAL | `kernel/src/net/ibm.rs`; shell `ibm` | Present in-kernel, but userspace is still the primary supported route |
 | Kernel quantum simulator | IMPLEMENTED | `kernel/src/quantum/*`; shell `qalloc`, `qrun`, `qstate`, `qmeasure` | Simulation only, classical hardware only |
 | QKD path | EXPERIMENTAL | `kernel/src/security/crypt/qkd.rs`; shell `qkd bb84` | Simulated BB84 only; no real quantum link |
@@ -83,11 +84,12 @@ What current CI and repository evidence actually prove:
 - kernel build and image creation
 - headless BIOS kernel boot smoke
 - seeded WarExec smoke binaries and the current minimal ABI proofs
-- deterministic WarPkg signed-manifest accept/reject proof during kernel boot
+- deterministic kernel TLS trusted/rejected certificate proof during kernel boot
+- deterministic WarPkg signed-bundle accept/reject proof during kernel boot
 - deterministic capability inherit-only and deny-after-drop proof during kernel boot
 - Python binding build and test coverage
 
-Recent local QEMU validation beyond CI also confirmed a reused persistent-disk boot path: WarFS system seeding was idempotent, the WarPkg proof passed, the capability proof passed, the current ABI proof ladder reached shell, and the shell came online after the full proof sequence.
+Recent local QEMU validation beyond CI also confirmed a reused persistent-disk boot path: WarFS system seeding was idempotent, the TLS proof passed, the WarPkg proof passed, the capability proof passed, the current ABI proof ladder reached shell, and the shell came online after the full proof sequence.
 
 Claims that are safe today:
 
@@ -109,6 +111,7 @@ These items are consistent with the current stage and should stay separate from 
 - keep README, status docs, and shell help aligned with the current kernel and ABI truth
 - expand deterministic kernel network smoke coverage around DHCP, DNS, HTTP/TLS, and firewall logging
 - add trust-root rotation, revocation, or richer repository metadata only behind a separate, narrow design pass
+- add RTC-backed certificate time validation only behind a separate clock/trust-source design
 - broaden audit coverage only behind narrow, testable steps instead of making larger security claims first
 - keep the capability model explicit if process creation expands; do not introduce broad POSIX credential semantics by accident
 - keep the HAL/QHAL naming boundary explicit so roadmap language does not get mistaken for shipped quantum-driver support

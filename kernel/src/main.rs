@@ -295,6 +295,24 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     boot_ok("Keyboard driver active");
     boot_ok("Quantum subsystem ready (18 qubits max)");
 
+    boot_notice("WarShield TLS proof: validating trusted and rejected certificate paths");
+    match cpu_interrupts::without_interrupts(net::tls::run_validation_proof) {
+        Ok(()) => boot_ok_fmt(
+            format_args!(
+                "WarShield TLS proof: certificate validation wired ({})",
+                net::tls::trust_policy_summary()
+            ),
+            format_args!(
+                "WarShield TLS proof: certificate validation wired ({})",
+                net::tls::trust_policy_summary()
+            ),
+        ),
+        Err(error) => {
+            let message = alloc::format!("WarShield TLS proof: {}", error);
+            boot_notice(message.as_str());
+        }
+    }
+
     let boot_complete_ms = boot_elapsed_ms();
     BOOT_COMPLETE_MS.store(boot_complete_ms, Ordering::Relaxed);
     fs::seed_system_files().map_err(|_| "failed to seed filesystem system files")?;
