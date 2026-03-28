@@ -14,11 +14,27 @@ use crate::parse_buffer::ParseError;
 use const_oid::ObjectIdentifier;
 use core::marker::PhantomData;
 use der::Decode;
+use der::Sequence;
+use der::asn1::{Ia5StringRef, OctetStringRef, SequenceOf};
 use digest::Digest;
 use heapless::{String, Vec};
 
 const HOSTNAME_MAXLEN: usize = 64;
 const COMMON_NAME_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.4.3");
+const SUBJECT_ALT_NAME_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.17");
+
+#[derive(Sequence)]
+struct ExtensionRef<'a> {
+    extn_id: ObjectIdentifier,
+    critical: Option<bool>,
+    extn_value: &'a OctetStringRef,
+}
+
+#[derive(der::Choice)]
+enum GeneralName<'a> {
+    #[asn1(context_specific = "2", tag_mode = "IMPLICIT")]
+    DnsName(Ia5StringRef<'a>),
+}
 
 pub struct CertificateChain<'a> {
     prev: Option<&'a CertificateEntryRef<'a>>,
@@ -117,16 +133,13 @@ where
             return Err(TlsError::Unimplemented);
         };
 
+        #[allow(unused_variables)]
         let mut cn = None;
         for (p, q) in CertificateChain::new(&ca.into(), &cert) {
             cn = verify_certificate(p, q, Clock::now())?;
         }
-        if self.host.ne(&cn) {
-            error!(
-                "Hostname ({:?}) does not match CommonName ({:?})",
-                self.host, cn
-            );
-            return Err(TlsError::InvalidCertificate);
+        if let Some(hostname) = self.host.as_deref() {
+            verify_host_name(&cert, hostname, cn.as_deref())?;
         }
 
         self.certificate.replace(cert.try_into()?);
@@ -263,6 +276,77 @@ fn verify_signature(
         return Err(TlsError::InvalidSignature);
     }
     Ok(())
+}
+
+fn verify_host_name(
+    certificate: &ServerCertificate,
+    hostname: &str,
+    common_name: Option<&str>,
+) -> Result<(), TlsError> {
+    let Some(CertificateEntryRef::X509(certificate)) = certificate.entries.first() else {
+        return Err(TlsError::DecodeError);
+    };
+
+    let certificate =
+        DecodedCertificate::from_der(certificate).map_err(|_| TlsError::DecodeError)?;
+
+    if certificate_has_matching_san(&certificate, hostname)? {
+        return Ok(());
+    }
+
+    if common_name.is_some_and(|cn| dns_name_matches(cn, hostname)) {
+        return Ok(());
+    }
+
+    warn!(
+        "Hostname {:?} does not match SAN/CN {:?}",
+        hostname, common_name
+    );
+    Err(TlsError::InvalidCertificate)
+}
+
+fn certificate_has_matching_san(
+    certificate: &DecodedCertificate<'_>,
+    hostname: &str,
+) -> Result<bool, TlsError> {
+    let Some(extensions) = certificate.tbs_certificate.extensions.as_ref() else {
+        return Ok(false);
+    };
+
+    let extensions = extensions
+        .decode_as::<SequenceOf<ExtensionRef<'_>, 16>>()
+        .map_err(|_| TlsError::DecodeError)?;
+    for extension in extensions.iter() {
+        if extension.extn_id != SUBJECT_ALT_NAME_OID {
+            continue;
+        }
+
+        let names = SequenceOf::<GeneralName<'_>, 16>::from_der(extension.extn_value.as_bytes())
+            .map_err(|_| TlsError::DecodeError)?;
+        for name in names.iter() {
+            let GeneralName::DnsName(dns_name) = name;
+            if dns_name_matches(dns_name.as_str(), hostname) {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+
+    Ok(false)
+}
+
+fn dns_name_matches(pattern: &str, hostname: &str) -> bool {
+    if pattern.eq_ignore_ascii_case(hostname) {
+        return true;
+    }
+
+    let Some(suffix) = pattern.strip_prefix("*.") else {
+        return false;
+    };
+    let Some((_, hostname_suffix)) = hostname.split_once('.') else {
+        return false;
+    };
+    hostname_suffix.eq_ignore_ascii_case(suffix)
 }
 
 fn get_certificate_tlv_bytes<'a>(input: &[u8]) -> der::Result<&[u8]> {

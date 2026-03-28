@@ -16,6 +16,26 @@ pub fn ping(
     seq_no: u16,
     timeout_ms: u64,
 ) -> Result<PingReply, NetError> {
+    {
+        use crate::security::firewall;
+        use crate::security::firewall::rules::{Action, Direction, Protocol};
+
+        let action = firewall::process_packet(
+            Direction::Outbound,
+            Protocol::Icmp,
+            local_ipv4_u32(stack),
+            u32::from_be_bytes(target.0),
+            0,
+            0,
+        );
+        if action == Action::Deny {
+            crate::serial_println!("[WarGuard] DENY outbound ICMP to {}", target);
+            return Err(NetError::ProtocolError(alloc::string::String::from(
+                "firewall: outbound ICMP denied",
+            )));
+        }
+    }
+
     let socket = icmp::Socket::new(
         icmp::PacketBuffer::new(alloc::vec![icmp::PacketMetadata::EMPTY], alloc::vec![0; 256]),
         icmp::PacketBuffer::new(alloc::vec![icmp::PacketMetadata::EMPTY], alloc::vec![0; 256]),
@@ -51,6 +71,7 @@ pub fn ping(
     let deadline = stack.now_ms().saturating_add(timeout_ms);
     loop {
         stack.poll_network();
+        let local_ip = local_ipv4_u32(stack);
         let reply = {
             let checksum_caps = smoltcp::phy::ChecksumCapabilities::default();
             let socket = stack.sockets.get_mut::<icmp::Socket>(handle);
@@ -71,11 +92,28 @@ pub fn ping(
                         let source = match endpoint {
                             IpAddress::Ipv4(ip) => Ipv4Addr::from_smoltcp(ip),
                         };
-                        Some(PingReply {
-                            source,
-                            seq_no: reply_seq,
-                            payload_len: data.len(),
-                        })
+                        use crate::security::firewall;
+                        use crate::security::firewall::rules::{Action, Direction, Protocol};
+
+                        let action = firewall::process_packet(
+                            Direction::Inbound,
+                            Protocol::Icmp,
+                            u32::from_be_bytes(source.0),
+                            local_ip,
+                            0,
+                            0,
+                        );
+                        if action == Action::Deny {
+                            Some(Err(NetError::ProtocolError(alloc::string::String::from(
+                                "firewall: inbound ICMP denied",
+                            ))))
+                        } else {
+                            Some(Ok(PingReply {
+                                source,
+                                seq_no: reply_seq,
+                                payload_len: data.len(),
+                            }))
+                        }
                     }
                     _ => None,
                 }
@@ -86,11 +124,18 @@ pub fn ping(
 
         if let Some(reply) = reply {
             let _ = stack.sockets.remove(handle);
-            return Ok(reply);
+            return reply;
         }
         if stack.now_ms() >= deadline {
             let _ = stack.sockets.remove(handle);
             return Err(NetError::InitializationFailed("ICMP request timed out"));
         }
     }
+}
+
+fn local_ipv4_u32(stack: &NetworkSubsystem) -> u32 {
+    stack
+        .network_config
+        .map(|config| u32::from_be_bytes(config.ip.0))
+        .unwrap_or(0)
 }

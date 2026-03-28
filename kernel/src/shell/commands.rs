@@ -320,14 +320,16 @@ fn cmd_help(topic: Option<&str>) {
         kprintln!("  capabilities                       Show the current process capability set");
         kprintln!("  capabilities drop <CAP> [CAP...]   One-way drop on the current process");
         kprintln!("  audit [log|stats]                  Show current audit-hook output");
-        kprintln!("  firewall [status|rules|log]        Show outbound TCP firewall-hook state");
+        kprintln!("  firewall [status|rules|log]        Show current WarGuard coverage, counters, and rules");
         kprintln!("  warpkg list|info|verify <name>     Inspect the seeded signed package repository");
         kprintln!("  warpkg install|remove <name>       Require PKG_INSTALL; install verifies before apply");
         kprintln!("  qkd bb84 [n]                       Run the simulated BB84 demo");
         kprintln!();
         kprintln!("Current limits:");
-        kprintln!("  - kernel TLS encrypts traffic but does not validate certificates");
+        kprintln!("  - kernel TLS validates only the current embedded-host set; unsupported HTTPS hosts are rejected");
+        kprintln!("  - kernel TLS verifies hostnames and trust anchors, but does not enforce RTC-backed certificate expiry");
         kprintln!("  - WarPkg uses one embedded bootstrap ML-DSA root; no rotation or revocation yet");
+        kprintln!("  - WarGuard coverage is still narrow: TCP connect + inbound response, UDP/DNS egress, and ICMP ping/reply");
         kprintln!("  - Server currently shares Standard enforcement; Paranoid also builds the WarVault database");
         kprintln!("  - capability drops are one-way for the current process under the current spawn/exec model");
         return;

@@ -12,6 +12,17 @@ use rules::{Action, Direction, FirewallRule, Protocol, default_rules};
 pub struct FirewallStats {
     pub allowed: u64,
     pub denied: u64,
+    pub inbound_allowed: u64,
+    pub inbound_denied: u64,
+    pub outbound_allowed: u64,
+    pub outbound_denied: u64,
+    pub tcp_allowed: u64,
+    pub tcp_denied: u64,
+    pub udp_allowed: u64,
+    pub udp_denied: u64,
+    pub icmp_allowed: u64,
+    pub icmp_denied: u64,
+    pub stateful_allows: u64,
 }
 
 pub struct WarGuard {
@@ -39,8 +50,68 @@ impl WarGuard {
             stats: FirewallStats {
                 allowed: 0,
                 denied: 0,
+                inbound_allowed: 0,
+                inbound_denied: 0,
+                outbound_allowed: 0,
+                outbound_denied: 0,
+                tcp_allowed: 0,
+                tcp_denied: 0,
+                udp_allowed: 0,
+                udp_denied: 0,
+                icmp_allowed: 0,
+                icmp_denied: 0,
+                stateful_allows: 0,
             },
             next_rule_id: next_id,
+        }
+    }
+
+    fn record_decision(
+        &mut self,
+        direction: Direction,
+        protocol: Protocol,
+        action: Action,
+        stateful: bool,
+    ) {
+        match action {
+            Action::Allow => {
+                self.stats.allowed += 1;
+                match direction {
+                    Direction::Inbound => self.stats.inbound_allowed += 1,
+                    Direction::Outbound => self.stats.outbound_allowed += 1,
+                }
+                match protocol {
+                    Protocol::Tcp => self.stats.tcp_allowed += 1,
+                    Protocol::Udp => self.stats.udp_allowed += 1,
+                    Protocol::Icmp => self.stats.icmp_allowed += 1,
+                    Protocol::Any => {}
+                }
+                if stateful {
+                    self.stats.stateful_allows += 1;
+                }
+            }
+            Action::Deny => {
+                self.stats.denied += 1;
+                match direction {
+                    Direction::Inbound => self.stats.inbound_denied += 1,
+                    Direction::Outbound => self.stats.outbound_denied += 1,
+                }
+                match protocol {
+                    Protocol::Tcp => self.stats.tcp_denied += 1,
+                    Protocol::Udp => self.stats.udp_denied += 1,
+                    Protocol::Icmp => self.stats.icmp_denied += 1,
+                    Protocol::Any => {}
+                }
+            }
+        }
+    }
+
+    fn protocol_number(protocol: Protocol) -> u8 {
+        match protocol {
+            Protocol::Tcp => 6,
+            Protocol::Udp => 17,
+            Protocol::Icmp => 1,
+            Protocol::Any => 0,
         }
     }
 
@@ -59,14 +130,20 @@ impl WarGuard {
 
         // Stateful: allow established responses
         if direction == Direction::Inbound {
-            let proto_num = match protocol {
-                Protocol::Tcp => 6,
-                Protocol::Udp => 17,
-                _ => 0,
-            };
+            let proto_num = Self::protocol_number(protocol);
             if self.tracker.is_established_response(src_ip, dst_ip, src_port, dst_port, proto_num) {
-                self.stats.allowed += 1;
-                log_firewall_decision(0, Action::Allow, src_ip, dst_port);
+                self.record_decision(direction, protocol, Action::Allow, true);
+                log_firewall_decision(
+                    0,
+                    direction,
+                    protocol,
+                    Action::Allow,
+                    "stateful-response",
+                    src_ip,
+                    dst_ip,
+                    src_port,
+                    dst_port,
+                );
                 return Action::Allow;
             }
         }
@@ -75,23 +152,29 @@ impl WarGuard {
         for rule in &mut self.rules {
             if rule.matches(direction, protocol, dst_port) {
                 rule.hit_count += 1;
-                log_firewall_decision(rule.id, rule.action, src_ip, dst_port);
+                log_firewall_decision(
+                    rule.id,
+                    direction,
+                    protocol,
+                    rule.action,
+                    &rule.description,
+                    src_ip,
+                    dst_ip,
+                    src_port,
+                    dst_port,
+                );
                 match rule.action {
                     Action::Allow => {
-                        self.stats.allowed += 1;
+                        self.record_decision(direction, protocol, Action::Allow, false);
                         // Track outbound for stateful matching
                         if direction == Direction::Outbound {
-                            let proto_num = match protocol {
-                                Protocol::Tcp => 6,
-                                Protocol::Udp => 17,
-                                _ => 0,
-                            };
+                            let proto_num = Self::protocol_number(protocol);
                             self.tracker.track_outbound(src_ip, dst_ip, src_port, dst_port, proto_num);
                         }
                         return Action::Allow;
                     }
                     Action::Deny => {
-                        self.stats.denied += 1;
+                        self.record_decision(direction, protocol, Action::Deny, false);
                         return Action::Deny;
                     }
                 }
@@ -103,11 +186,18 @@ impl WarGuard {
             Direction::Inbound => self.default_inbound,
             Direction::Outbound => self.default_outbound,
         };
-        log_firewall_decision(0, default, src_ip, dst_port);
-        match default {
-            Action::Allow => self.stats.allowed += 1,
-            Action::Deny => self.stats.denied += 1,
-        }
+        self.record_decision(direction, protocol, default, false);
+        log_firewall_decision(
+            0,
+            direction,
+            protocol,
+            default,
+            "default-policy",
+            src_ip,
+            dst_ip,
+            src_port,
+            dst_port,
+        );
         default
     }
 
@@ -222,21 +312,47 @@ pub fn format_status() -> String {
         return String::from("  Firewall not initialized\n");
     };
     format!(
-        "    State:       {}\n    Rules:       {} active\n    Connections: {} tracked\n    Allowed:     {}  Denied: {}",
+        "    State:       {}\n    Rules:       {} active\n    Connections: {} tracked\n    Coverage:    TCP connect + inbound response, UDP send/response, DNS egress, ICMP ping/reply\n    Allowed:     {}  Denied: {}\n    Inbound:     allow {}  deny {}\n    Outbound:    allow {}  deny {}\n    TCP:         allow {}  deny {}\n    UDP:         allow {}  deny {}\n    ICMP:        allow {}  deny {}\n    Stateful:    {} response(s) allowed",
         if g.enabled { "enabled" } else { "disabled" },
         g.rules.len(),
         g.tracker.active_count(),
         g.stats.allowed,
         g.stats.denied,
+        g.stats.inbound_allowed,
+        g.stats.inbound_denied,
+        g.stats.outbound_allowed,
+        g.stats.outbound_denied,
+        g.stats.tcp_allowed,
+        g.stats.tcp_denied,
+        g.stats.udp_allowed,
+        g.stats.udp_denied,
+        g.stats.icmp_allowed,
+        g.stats.icmp_denied,
+        g.stats.stateful_allows,
     )
 }
 
-fn log_firewall_decision(rule_id: u32, action: Action, src_ip: u32, dst_port: u16) {
+fn log_firewall_decision(
+    rule_id: u32,
+    direction: Direction,
+    protocol: Protocol,
+    action: Action,
+    reason: &str,
+    src_ip: u32,
+    dst_ip: u32,
+    src_port: u16,
+    dst_port: u16,
+) {
     crate::security::audit::log_event(
         crate::security::audit::events::AuditEvent::FirewallMatch {
             rule_id,
+            direction: direction.to_string(),
+            protocol: protocol.to_string(),
             action: action.to_string(),
+            reason: reason.to_string(),
             src_ip,
+            dst_ip,
+            src_port,
             dst_port,
         },
     );

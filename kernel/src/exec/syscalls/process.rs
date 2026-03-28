@@ -118,6 +118,7 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
     let Some(process) = process_table.get_mut(pid) else {
         return EPERM;
     };
+    let new_capabilities = crate::security::capabilities::exec_capabilities(old_capabilities, uid);
     process.context = context;
     process.page_table_phys = new_cr3;
     process.address_space = address_space;
@@ -125,11 +126,19 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
     process.name = path_str.rsplit('/').next().unwrap_or(path_str.as_str()).into();
     process.image_path = path_str;
     process.image_kind = ProcessImageKind::Elf;
-    process.effective_capabilities =
-        crate::security::capabilities::exec_capabilities(old_capabilities, uid);
+    process.effective_capabilities = new_capabilities;
     process.env.clear();
     process.exit_code = None;
     process.state = ProcessState::Running;
+    crate::security::audit::log_event(
+        crate::security::audit::events::AuditEvent::ProcessExec {
+            pid,
+            path: process.image_path.clone(),
+            uid,
+            caps_before: crate::security::capabilities::summarize_capabilities(old_capabilities),
+            caps_after: crate::security::capabilities::summarize_capabilities(new_capabilities),
+        },
+    );
     drop(process_table);
 
     if let Err(error) = loader::teardown_process_image(old_page_table_phys, &old_address_space) {

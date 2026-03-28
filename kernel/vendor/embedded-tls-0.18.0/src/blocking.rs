@@ -16,6 +16,7 @@ use portable_atomic::AtomicBool;
 
 pub use crate::TlsError;
 pub use crate::config::*;
+pub use crate::handshake::certificate::{CertificateEntryRef, CertificateRef};
 
 /// Type representing a TLS connection. An instance of this type can
 /// be used to establish a TLS connection, write and read encrypted data over this connection,

@@ -11,9 +11,44 @@ pub enum AuditEvent {
     FileAccessDenied { path: String, uid: u16, operation: String },
     ProcessSpawned { pid: u32, name: String, uid: u16 },
     ProcessExited { pid: u32, exit_code: i32 },
+    ProcessExec {
+        pid: u32,
+        path: String,
+        uid: u16,
+        caps_before: String,
+        caps_after: String,
+    },
     CapabilityDenied { pid: u32, capability: String },
-    FirewallMatch { rule_id: u32, action: String, src_ip: u32, dst_port: u16 },
-    NetworkConnection { src_ip: u32, dst_ip: u32, dst_port: u16, protocol: String },
+    FirewallMatch {
+        rule_id: u32,
+        direction: String,
+        protocol: String,
+        action: String,
+        reason: String,
+        src_ip: u32,
+        dst_ip: u32,
+        src_port: u16,
+        dst_port: u16,
+    },
+    NetworkConnection {
+        src_ip: u32,
+        src_port: u16,
+        dst_ip: u32,
+        dst_port: u16,
+        protocol: String,
+    },
+    TlsValidation {
+        host: String,
+        anchor: String,
+        outcome: String,
+        detail: String,
+    },
+    PackageVerification {
+        name: String,
+        version: String,
+        outcome: String,
+        reason: String,
+    },
     PackageInstalled { name: String, version: String, uid: u16 },
     QuantumRegisterAllocated { pid: u32, qubits: u8 },
     SecurityPolicyChanged { change: String, uid: u16 },
@@ -51,14 +86,71 @@ impl core::fmt::Display for AuditEvent {
             Self::ProcessExited { pid, exit_code } => {
                 write!(f, "PROC_EXIT pid={} code={}", pid, exit_code)
             }
+            Self::ProcessExec {
+                pid,
+                path,
+                uid,
+                caps_before,
+                caps_after,
+            } => write!(
+                f,
+                "PROC_EXEC pid={} uid={} path={} caps_before={} caps_after={}",
+                pid, uid, path, caps_before, caps_after
+            ),
             Self::CapabilityDenied { pid, capability } => {
                 write!(f, "CAP_DENIED pid={} cap={}", pid, capability)
             }
-            Self::FirewallMatch { rule_id, action, src_ip, dst_port } => {
-                write!(f, "FW_MATCH rule={} action={} src={} dport={}", rule_id, action, src_ip, dst_port)
+            Self::FirewallMatch {
+                rule_id,
+                direction,
+                protocol,
+                action,
+                reason,
+                src_ip,
+                dst_ip,
+                src_port,
+                dst_port,
+            } => write!(
+                f,
+                "FW_MATCH rule={} dir={} proto={} action={} reason={} src={} sport={} dst={} dport={}",
+                rule_id, direction, protocol, action, reason, src_ip, src_port, dst_ip, dst_port
+            ),
+            Self::NetworkConnection {
+                src_ip,
+                src_port,
+                dst_ip,
+                dst_port,
+                protocol,
+            } => {
+                write!(
+                    f,
+                    "NET_CONN src={} sport={} dst={} dport={} proto={}",
+                    src_ip, src_port, dst_ip, dst_port, protocol
+                )
             }
-            Self::NetworkConnection { src_ip, dst_ip, dst_port, protocol } => {
-                write!(f, "NET_CONN src={} dst={} dport={} proto={}", src_ip, dst_ip, dst_port, protocol)
+            Self::TlsValidation {
+                host,
+                anchor,
+                outcome,
+                detail,
+            } => {
+                write!(
+                    f,
+                    "TLS_VALIDATE host={} anchor={} outcome={} detail={}",
+                    host, anchor, outcome, detail
+                )
+            }
+            Self::PackageVerification {
+                name,
+                version,
+                outcome,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "PKG_VERIFY name={} ver={} outcome={} reason={}",
+                    name, version, outcome, reason
+                )
             }
             Self::PackageInstalled { name, version, uid } => {
                 write!(f, "PKG_INSTALL name={} ver={} uid={}", name, version, uid)
@@ -90,11 +182,14 @@ pub fn event_category(event: &AuditEvent) -> &'static str {
         | AuditEvent::FileDeleted { .. }
         | AuditEvent::FileAccessDenied { .. } => "file",
         AuditEvent::ProcessSpawned { .. }
+        | AuditEvent::ProcessExec { .. }
         | AuditEvent::ProcessExited { .. } => "process",
         AuditEvent::CapabilityDenied { .. } => "capability",
         AuditEvent::FirewallMatch { .. }
+        | AuditEvent::TlsValidation { .. }
         | AuditEvent::NetworkConnection { .. } => "network",
-        AuditEvent::PackageInstalled { .. } => "package",
+        AuditEvent::PackageVerification { .. }
+        | AuditEvent::PackageInstalled { .. } => "package",
         AuditEvent::QuantumRegisterAllocated { .. } => "quantum",
         AuditEvent::SecurityPolicyChanged { .. } => "security",
         AuditEvent::IntegrityViolation { .. } => "integrity",

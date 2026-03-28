@@ -2,6 +2,7 @@
 
 This document is the short current-stage summary for the repository after the WarShield Pass 2 merge.
 The current pre-Pass-3 consolidation baseline is summarized in [PRE_PASS3_CONSOLIDATION_STATUS.md](PRE_PASS3_CONSOLIDATION_STATUS.md).
+Historical note: Pass 3 has now closed the kernel TLS certificate-validation gap with a narrow embedded-root model and expanded firewall/audit runtime hardening.
 
 ## Repository truth
 
@@ -13,7 +14,7 @@ The current pre-Pass-3 consolidation baseline is summarized in [PRE_PASS3_CONSOL
 
 Integrated today:
 
-- WarPkg verifies a signed manifest plus payload digests before package install or apply.
+- WarPkg verifies a signed bundle manifest plus payload digests before package install or apply.
 - The current WarPkg trust anchor is one embedded bootstrap ML-DSA root.
 - Unsigned, tampered, or metadata-mismatched packages are rejected deterministically.
 - Shell/session privilege maps explicitly to a shell process instead of acting as ambient unchecked state.
@@ -25,7 +26,7 @@ Integrated today:
 
 - The package trust model is intentionally narrow: one bootstrap root, no rotation, no revocation, and no delegated repository metadata.
 - Capability semantics remain narrow: there is still no broad userspace capability syscall ABI, no `fork` ABI, and no POSIX credential model.
-- Kernel TLS still encrypts traffic without validating server certificates.
+- Kernel TLS still encrypts traffic without validating server certificates. Historical note: this specific gap was closed by Pass 3 with a narrow supported-host trust model.
 - Kernel HTTP/HTTPS/IBM Runtime paths therefore remain experimental.
 - QKD in the kernel is still a simulated BB84 demo, not a real quantum network path.
 

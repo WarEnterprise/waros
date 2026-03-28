@@ -198,6 +198,16 @@ pub fn drop_capabilities(caps: Capabilities) {
         let mut process_table = crate::exec::PROCESS_TABLE.lock();
         if let Some(process) = process_table.get_mut(pid) {
             process.effective_capabilities.remove(caps);
+            crate::security::audit::log_event(
+                crate::security::audit::events::AuditEvent::SecurityPolicyChanged {
+                    change: alloc::format!(
+                        "cap_drop pid={} now={}",
+                        pid,
+                        summarize_capabilities(process.effective_capabilities)
+                    ),
+                    uid: process.uid,
+                },
+            );
         }
     }
 }
@@ -226,6 +236,23 @@ pub fn all_capability_names() -> [&'static str; 22] {
         index += 1;
     }
     names
+}
+
+#[must_use]
+pub fn summarize_capabilities(caps: Capabilities) -> String {
+    let mut summary = String::new();
+    for (capability, name) in &ALL_CAPABILITIES {
+        if caps.contains(*capability) {
+            if !summary.is_empty() {
+                summary.push(',');
+            }
+            summary.push_str(name);
+        }
+    }
+    if summary.is_empty() {
+        summary.push_str("none");
+    }
+    summary
 }
 
 pub fn run_transition_proof() -> Result<(), &'static str> {

@@ -148,6 +148,13 @@ pub fn spawn_process(
 
     let process = result?;
     let pid = PROCESS_TABLE.lock().create_process(process)?;
+    crate::security::audit::log_event(
+        crate::security::audit::events::AuditEvent::ProcessSpawned {
+            pid,
+            name: file_name(path),
+            uid,
+        },
+    );
     SCHEDULER.lock().enqueue(pid, priority);
     Ok(pid)
 }
