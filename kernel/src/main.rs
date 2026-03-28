@@ -306,11 +306,11 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     match cpu_interrupts::without_interrupts(pkg::smoke::run_signature_proof) {
         Ok(()) => boot_ok_fmt(
             format_args!(
-                "WarPkg proof: signed manifest verification wired ({})",
+                "WarPkg proof: signed bundle verification wired ({})",
                 pkg::trust_root_summary()
             ),
             format_args!(
-                "WarPkg proof: signed manifest verification wired ({})",
+                "WarPkg proof: signed bundle verification wired ({})",
                 pkg::trust_root_summary()
             ),
         ),

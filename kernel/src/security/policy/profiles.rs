@@ -34,10 +34,10 @@ impl SecurityProfile {
 
     pub fn description(self) -> &'static str {
         match self {
-            Self::Minimal => "ASLR + basic firewall (development)",
-            Self::Standard => "ASLR + W^X + firewall + audit (default)",
-            Self::Server => "Standard + strict firewall + rate limiting",
-            Self::Paranoid => "Everything maxed + file integrity + full audit",
+            Self::Minimal => "ASLR + outbound TCP firewall hook (development)",
+            Self::Standard => "Minimal + audit hooks + loader W^X + capability gates (default)",
+            Self::Server => "Standard hooks and controls (no extra server-only enforcement yet)",
+            Self::Paranoid => "Standard + WarVault database build on apply",
         }
     }
 }

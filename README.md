@@ -94,7 +94,7 @@ Notes:
 
 - `kernel/tools/create_image.*` produces BIOS and UEFI disk images under `kernel/target/`.
 - `kernel/tools/run_qemu_pair.*` starts a two-node serial-link setup for `net send`, `net qsend`, and `ping` experiments.
-- `help quantum`, `help fs`, `security status`, `warpkg verify hello-world`, and `capabilities` are the fastest ways to inspect the current kernel command surface.
+- `help quantum`, `help fs`, `help security`, `security status`, `warpkg verify hello-world`, and `capabilities` are the fastest ways to inspect the current kernel command surface.
 - WarFS seeds `/readme.txt`, `/sysinfo.txt`, and the current WarExec smoke binaries at boot.
 
 ## Validation
@@ -118,10 +118,12 @@ sh ./tools/boot_smoke.sh
 
 The current CI proves workspace build/test/clippy/doc generation, kernel build plus image creation, a headless BIOS kernel boot smoke, and Python binding tests.
 The current kernel boot path also carries deterministic proofs for signed WarPkg verification and inherit-only capability narrowing.
+Recent local QEMU validation on a reused persistent disk also confirmed idempotent WarFS system seeding, the WarPkg proof, the capability proof, the full WarExec ABI proof ladder, and shell arrival.
 
 ## Documentation
 
 - [BLUEPRINT.md](BLUEPRINT.md)
+- [docs/PRE_PASS3_CONSOLIDATION_STATUS.md](docs/PRE_PASS3_CONSOLIDATION_STATUS.md)
 - [docs/POST_WARSHIELD_PASS2_STATUS.md](docs/POST_WARSHIELD_PASS2_STATUS.md)
 - [docs/WARPKG_SIGNING.md](docs/WARPKG_SIGNING.md)
 - [docs/IMPLEMENTATION_STATUS_MATRIX.md](docs/IMPLEMENTATION_STATUS_MATRIX.md)

@@ -80,7 +80,7 @@ pub fn format_status() -> String {
 
     let profile = policy::profiles::current();
     let aslr_status = if aslr::is_enabled() {
-        "enabled (stack/heap/mmap randomization)"
+        "enabled (stack randomization on WarExec load path)"
     } else {
         "disabled"
     };
@@ -123,12 +123,15 @@ pub fn format_status() -> String {
          \n    Files:       {} monitored\
          \n    Violations:  {}\
          \n\
-         \n  WarCrypt:\
-         \n    Encrypted:   {} file(s)\
-         \n    Key store:   no kernel PQ key store exposed\
-         \n\
-         \n  WarPkg:\
-         \n    Verify path: signed manifest + payload digests\
+          \n  WarCrypt:\
+          \n    Encrypted:   {} file(s)\
+          \n    Key store:   no kernel PQ key store exposed\
+          \n\
+          \n  Kernel TLS:\
+          \n    HTTPS path:  encrypted, no certificate validation\
+          \n\
+          \n  WarPkg:\
+          \n    Verify path: signed manifest + payload digests\
          \n    Trust root:  {}\
          \n\
          \n  Capabilities:\

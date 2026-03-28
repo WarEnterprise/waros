@@ -313,6 +313,25 @@ fn cmd_help(topic: Option<&str>) {
         kprintln!("  format         Format the mounted disk");
         return;
     }
+    if matches!(topic, Some("security")) {
+        kprint_colored!(Colors::CYAN, "WarShield / WarPkg Commands\n");
+        kprintln!("  security status                    Show the current WarShield scope and limits");
+        kprintln!("  security profile [name]            Show or apply the current profile preset");
+        kprintln!("  capabilities                       Show the current process capability set");
+        kprintln!("  capabilities drop <CAP> [CAP...]   One-way drop on the current process");
+        kprintln!("  audit [log|stats]                  Show current audit-hook output");
+        kprintln!("  firewall [status|rules|log]        Show outbound TCP firewall-hook state");
+        kprintln!("  warpkg list|info|verify <name>     Inspect the seeded signed package repository");
+        kprintln!("  warpkg install|remove <name>       Require PKG_INSTALL; install verifies before apply");
+        kprintln!("  qkd bb84 [n]                       Run the simulated BB84 demo");
+        kprintln!();
+        kprintln!("Current limits:");
+        kprintln!("  - kernel TLS encrypts traffic but does not validate certificates");
+        kprintln!("  - WarPkg uses one embedded bootstrap ML-DSA root; no rotation or revocation yet");
+        kprintln!("  - Server currently shares Standard enforcement; Paranoid also builds the WarVault database");
+        kprintln!("  - capability drops are one-way for the current process under the current spawn/exec model");
+        return;
+    }
 
     kprint_colored!(
         Colors::CYAN,
@@ -386,7 +405,7 @@ fn cmd_help(topic: Option<&str>) {
     kprintln!();
     kprint_colored!(
         Colors::DIM,
-        "Type 'help quantum' or 'help fs' for focused command details.\n"
+        "Type 'help quantum', 'help fs', or 'help security' for focused command details.\n"
     );
 }
 
@@ -2848,10 +2867,18 @@ fn cmd_security(args: &[&str]) {
                 let current = security::policy::profiles::current();
                 kprintln!("Current: {} — {}", current.name(), current.description());
                 kprintln!("Available profiles:");
-                kprintln!("  minimal  — ASLR + basic firewall (development)");
-                kprintln!("  standard — ASLR + W^X + firewall + audit (default)");
-                kprintln!("  server   — standard + strict firewall + rate limiting");
-                kprintln!("  paranoid — everything maxed + file integrity + full audit");
+                for profile in [
+                    security::policy::profiles::SecurityProfile::Minimal,
+                    security::policy::profiles::SecurityProfile::Standard,
+                    security::policy::profiles::SecurityProfile::Server,
+                    security::policy::profiles::SecurityProfile::Paranoid,
+                ] {
+                    kprintln!(
+                        "  {:<8} — {}",
+                        profile.name().to_ascii_lowercase(),
+                        profile.description()
+                    );
+                }
             }
         }
         Some(other) => {
@@ -2870,6 +2897,7 @@ fn cmd_capabilities(args: &[&str]) {
                 kprint_colored!(Colors::CYAN, "Process Capabilities");
                 kprintln!(" (pid {})", pid);
                 kprintln!("{}", security::capabilities::format_capabilities(caps));
+                kprintln!("  Drops are one-way for the current process under the current spawn/exec model.");
             } else {
                 kprintln!("No process context");
             }
