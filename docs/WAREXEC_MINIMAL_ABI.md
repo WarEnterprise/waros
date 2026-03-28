@@ -2,7 +2,7 @@
 
 WarOS does not currently provide a Linux userspace ABI.
 The kernel reuses selected x86_64 Linux syscall numbers for convenience only.
-Today, WarExec is an experimental minimal ABI with twelve CI-proven static ELF paths plus a narrow execution-hardening envelope from WarShield Pass 1 and Pass 2:
+Today, WarExec is an experimental minimal ABI with twelve CI-proven static ELF paths plus a narrow execution-hardening envelope from WarShield Pass 1 and Pass 2. WarShield Pass 4 adds offline update and recovery shell plumbing around the kernel, but it does not add new proven WarExec syscalls or widen the current userspace ABI:
 
 - `/bin/warexec-smoke.elf`
   proves ELF load, stdout write, and exit

@@ -1,5 +1,7 @@
 # WarOS Current Status After WarShield Pass 3
 
+Historical note: Pass 4 is now integrated. For current repository truth, see [POST_WARSHIELD_PASS4_STATUS.md](POST_WARSHIELD_PASS4_STATUS.md).
+
 WarShield Pass 3 is now integrated as a narrow runtime-hardening pass.
 
 ## Repository truth

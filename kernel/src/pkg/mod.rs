@@ -16,6 +16,7 @@ pub mod registry;
 pub mod resolver;
 pub mod signature;
 pub mod smoke;
+pub mod update;
 
 use installer::{install as install_package, remove as remove_package};
 use manifest::WarPackBundle;
@@ -89,6 +90,14 @@ pub enum PkgError {
     ExtractFailed,
     InstallFailed,
     NetworkError,
+    BundleUnavailable,
+    UpdateBusy,
+    NoStagedBundle,
+    NoPendingUpdate,
+    BootConfirmationRequired,
+    RollbackUnavailable,
+    RecoveryBlocked,
+    StateCorrupted,
 }
 
 impl core::fmt::Display for PkgError {
@@ -109,6 +118,24 @@ impl core::fmt::Display for PkgError {
             Self::ExtractFailed => formatter.write_str("package extraction failed"),
             Self::InstallFailed => formatter.write_str("package installation failed"),
             Self::NetworkError => formatter.write_str("network error while updating package index"),
+            Self::BundleUnavailable => {
+                formatter.write_str("offline bundle path could not be read")
+            }
+            Self::UpdateBusy => {
+                formatter.write_str("an update is already pending confirmation or recovery handling")
+            }
+            Self::NoStagedBundle => formatter.write_str("no staged update bundle is available"),
+            Self::NoPendingUpdate => formatter.write_str("no pending applied update exists"),
+            Self::BootConfirmationRequired => formatter.write_str(
+                "pending update has not reached shell-ready yet; boot it and confirm after shell-ready",
+            ),
+            Self::RollbackUnavailable => {
+                formatter.write_str("no rollback record is available for the current update")
+            }
+            Self::RecoveryBlocked => formatter.write_str(
+                "recovery cannot be cleared while an update is still pending or failed",
+            ),
+            Self::StateCorrupted => formatter.write_str("update state metadata is corrupted"),
         }
     }
 }
@@ -217,6 +244,7 @@ impl PackageManager {
 pub fn init() -> Result<(), PkgError> {
     seed_repository()?;
     *PACKAGE_MANAGER.lock() = PackageManager::new(DEFAULT_REPO_URL);
+    update::ensure_state_file()?;
     Ok(())
 }
 
@@ -259,6 +287,50 @@ pub fn verify_package_bytes(
     }
 
     log_package_verification(package, "allow", "verified");
+    Ok(VerifiedPackage {
+        signed_by: bundle.signed_manifest.signature.key_id.clone(),
+        signature_scheme: bundle.signed_manifest.signature.scheme.clone(),
+        bundle,
+    })
+}
+
+pub fn verify_local_bundle_bytes(bytes: &[u8]) -> Result<VerifiedPackage, PkgError> {
+    let bundle: WarPackBundle = match serde_json::from_slice(bytes) {
+        Ok(bundle) => bundle,
+        Err(_) => {
+            crate::security::audit::log_event(
+                crate::security::audit::events::AuditEvent::PackageVerification {
+                    name: String::from("<local>"),
+                    version: String::from("unknown"),
+                    outcome: String::from("deny"),
+                    reason: String::from("extract-failed"),
+                },
+            );
+            return Err(PkgError::ExtractFailed);
+        }
+    };
+
+    let manifest = &bundle.signed_manifest.manifest;
+    if let Err(error) = signature::verify_bootstrap_bundle(&bundle) {
+        crate::security::audit::log_event(
+            crate::security::audit::events::AuditEvent::PackageVerification {
+                name: manifest.name.clone(),
+                version: manifest.version.clone(),
+                outcome: String::from("deny"),
+                reason: String::from(verify_error_reason(&error)),
+            },
+        );
+        return Err(map_verify_error(error));
+    }
+
+    crate::security::audit::log_event(
+        crate::security::audit::events::AuditEvent::PackageVerification {
+            name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            outcome: String::from("allow"),
+            reason: String::from("verified"),
+        },
+    );
     Ok(VerifiedPackage {
         signed_by: bundle.signed_manifest.signature.key_id.clone(),
         signature_scheme: bundle.signed_manifest.signature.scheme.clone(),
@@ -318,7 +390,7 @@ fn seed_repository() -> Result<(), PkgError> {
     Ok(())
 }
 
-fn require_pkg_install() -> Result<(), PkgError> {
+pub(crate) fn require_pkg_install() -> Result<(), PkgError> {
     capabilities::session_require(Capabilities::PKG_INSTALL).map_err(|_| PkgError::PermissionDenied)
 }
 

@@ -587,6 +587,27 @@ Filesystem: {} files max, {} KiB max per file\n",
     );
 
     let mut filesystem = FILESYSTEM.lock();
+    seed_system_path(&mut filesystem, &directory_marker_path("/var"), &[], true)?;
+    seed_system_path(&mut filesystem, &directory_marker_path("/var/pkg"), &[], true)?;
+    seed_system_path(
+        &mut filesystem,
+        &directory_marker_path("/var/pkg/staged"),
+        &[],
+        true,
+    )?;
+    seed_system_path(
+        &mut filesystem,
+        &directory_marker_path("/var/pkg/rollback"),
+        &[],
+        true,
+    )?;
+    seed_system_path(&mut filesystem, &directory_marker_path("/recovery"), &[], true)?;
+    seed_system_path(
+        &mut filesystem,
+        "/recovery/README.txt",
+        b"WarOS recovery shell.\nUse 'recovery status' to inspect update health, 'recovery confirm' to confirm a pending boot, and 'recovery rollback' to restore the pre-apply state.\n",
+        true,
+    )?;
     seed_system_path(&mut filesystem, "/readme.txt", readme.as_bytes(), true)?;
     seed_system_path(&mut filesystem, "/sysinfo.txt", sysinfo.as_bytes(), true)?;
     let smoke_elf = crate::exec::smoke::elf_bytes();

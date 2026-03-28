@@ -264,7 +264,7 @@ pub fn execute_command(command_line: &str) {
         "alias" => cmd_alias(command_line),
         "unalias" => cmd_unalias(&parts[1..]),
         "panic" => cmd_panic(),
-        "reboot" => cmd_reboot(),
+        "reboot" => cmd_reboot(&parts[1..]),
         "halt" => cmd_halt(),
         "waros" => cmd_waros(),
         // WarShield security commands
@@ -276,6 +276,7 @@ pub fn execute_command(command_line: &str) {
         "encrypt" => cmd_encrypt(&parts[1..]),
         "decrypt" => cmd_decrypt(&parts[1..]),
         "qkd" => cmd_qkd(&parts[1..]),
+        "recovery" => cmd_recovery(&parts[1..]),
         unknown => cmd_unknown(unknown),
     }
 }
@@ -321,17 +322,38 @@ fn cmd_help(topic: Option<&str>) {
         kprintln!("  capabilities drop <CAP> [CAP...]   One-way drop on the current process");
         kprintln!("  audit [log|stats]                  Show current audit-hook output");
         kprintln!("  firewall [status|rules|log]        Show current WarGuard coverage, counters, and rules");
-        kprintln!("  warpkg list|info|verify <name>     Inspect the seeded signed package repository");
-        kprintln!("  warpkg install|remove <name>       Require PKG_INSTALL; install verifies before apply");
+        kprintln!("  warpkg status                      Show offline update / recovery state");
+        kprintln!("  warpkg stage|apply <bundle>        Explicit offline signed-bundle update path");
+        kprintln!("  warpkg confirm|reject|rollback     Complete or recover a pending update");
+        kprintln!("  warpkg proof                       Run the controlled offline update proof path");
+        kprintln!("  recovery [status|enter|resume|confirm|reject|rollback]");
         kprintln!("  qkd bb84 [n]                       Run the simulated BB84 demo");
         kprintln!();
         kprintln!("Current limits:");
         kprintln!("  - kernel TLS validates only the current embedded-host set; unsupported HTTPS hosts are rejected");
         kprintln!("  - kernel TLS verifies hostnames and trust anchors, but does not enforce RTC-backed certificate expiry");
         kprintln!("  - WarPkg uses one embedded bootstrap ML-DSA root; no rotation or revocation yet");
+        kprintln!("  - offline updates are local bundle stage/apply only; there is no remote control plane or auto-update service");
+        kprintln!("  - rollback is currently single-slot preparation backed by explicit file snapshots, not full A/B switching");
         kprintln!("  - WarGuard coverage is still narrow: TCP connect + inbound response, UDP/DNS egress, and ICMP ping/reply");
         kprintln!("  - Server currently shares Standard enforcement; Paranoid also builds the WarVault database");
         kprintln!("  - capability drops are one-way for the current process under the current spawn/exec model");
+        return;
+    }
+    if matches!(topic, Some("recovery")) {
+        kprint_colored!(Colors::CYAN, "Recovery Commands\n");
+        kprintln!("  recovery status              Show the persisted update / boot health state");
+        kprintln!("  recovery enter               Request recovery mode for the next boot");
+        kprintln!("  recovery resume              Clear a manual recovery request when safe");
+        kprintln!("  recovery confirm             Confirm a shell-ready post-update boot");
+        kprintln!("  recovery reject [reason]     Mark the pending update failed and keep recovery active");
+        kprintln!("  recovery rollback            Restore the pre-apply filesystem snapshot");
+        kprintln!("  reboot recovery              Reboot directly into the recovery shell");
+        kprintln!();
+        kprintln!("Current model:");
+        kprintln!("  - recovery is a narrow administrative shell, not a separate rescue OS");
+        kprintln!("  - pending updates require shell-ready plus explicit confirmation");
+        kprintln!("  - failed or unconfirmed post-update boots request recovery automatically");
         return;
     }
 
@@ -398,16 +420,16 @@ fn cmd_help(topic: Option<&str>) {
     kprint_colored!(Colors::PURPLE, "Security (WarShield)\n");
     kprintln!("  security [status|profile <p>]   capabilities [drop <CAP>...]   audit [log|stats]");
     kprintln!("  firewall [status|rules|add|remove|log]          integrity [build|check]");
-    kprintln!("  encrypt <file>  decrypt <file>  qkd bb84 [n]");
+    kprintln!("  encrypt <file>  decrypt <file>  qkd bb84 [n]    recovery <subcmd>");
     kprintln!();
 
     kprint_colored!(Colors::PURPLE, "Control\n");
-    kprintln!("  clear           halt            reboot          panic");
+    kprintln!("  clear           halt            reboot [recovery] panic");
     kprintln!("  waros           help <topic>");
     kprintln!();
     kprint_colored!(
         Colors::DIM,
-        "Type 'help quantum', 'help fs', or 'help security' for focused command details.\n"
+        "Type 'help quantum', 'help fs', 'help security', or 'help recovery' for focused command details.\n"
     );
 }
 
@@ -2589,11 +2611,20 @@ fn cmd_panic() {
     panic!("User-triggered test panic via 'panic' command");
 }
 
-fn cmd_reboot() {
+fn cmd_reboot(args: &[&str]) {
     if let Err(_) = security::capabilities::session_require(security::capabilities::Capabilities::SYS_POWER) {
         kprint_colored!(Colors::RED, "[WarOS] ");
         kprintln!("Permission denied. Requires SYS_POWER capability.");
         return;
+    }
+    if matches!(args.first(), Some(&"recovery")) {
+        if let Err(error) = pkg::update::request_recovery("operator requested reboot into recovery") {
+            kprint_colored!(Colors::RED, "[WarOS] ");
+            kprintln!("Failed to request recovery: {}", error);
+            return;
+        }
+        kprintln!("Recovery requested for next boot.");
+        serial_println!("Recovery requested for next boot.");
     }
     kprintln!("Rebooting system.");
     serial_println!("Rebooting system.");
@@ -2616,6 +2647,109 @@ fn cmd_waros() {
     kprintln!("War Enterprise - Building the future of computing");
     kprintln!("warenterprise.com/waros");
     kprintln!("github.com/WarEnterprise/waros");
+}
+
+fn cmd_recovery(args: &[&str]) {
+    match args.first().copied() {
+        Some("status") | None => {
+            kprintln!("{}", pkg::update::status_report());
+        }
+        Some("enter") => {
+            if security::capabilities::session_require(
+                security::capabilities::Capabilities::PKG_INSTALL,
+            )
+            .is_err()
+            {
+                kprint_colored!(Colors::RED, "[Recovery] ");
+                kprintln!("PKG_INSTALL capability required");
+                return;
+            }
+            match pkg::update::request_recovery("operator requested recovery mode") {
+                Ok(()) => {
+                    kprint_colored!(Colors::GREEN, "[Recovery] ");
+                    kprintln!("recovery requested. Use 'reboot recovery' or reboot normally.");
+                }
+                Err(error) => {
+                    kprint_colored!(Colors::RED, "[Recovery] ");
+                    kprintln!("{}", error);
+                }
+            }
+        }
+        Some("resume") => {
+            if security::capabilities::session_require(
+                security::capabilities::Capabilities::PKG_INSTALL,
+            )
+            .is_err()
+            {
+                kprint_colored!(Colors::RED, "[Recovery] ");
+                kprintln!("PKG_INSTALL capability required");
+                return;
+            }
+            match pkg::update::clear_recovery_request() {
+                Ok(()) => {
+                    kprint_colored!(Colors::GREEN, "[Recovery] ");
+                    kprintln!("manual recovery request cleared.");
+                }
+                Err(error) => {
+                    kprint_colored!(Colors::RED, "[Recovery] ");
+                    kprintln!("{}", error);
+                }
+            }
+        }
+        Some("confirm") => match pkg::update::confirm_pending_update() {
+            Ok(transaction) => {
+                kprint_colored!(Colors::GREEN, "[Recovery] ");
+                kprintln!(
+                    "{} {} confirmed. Normal boot may resume.",
+                    transaction.package_name,
+                    transaction.to_version
+                );
+            }
+            Err(error) => {
+                kprint_colored!(Colors::RED, "[Recovery] ");
+                kprintln!("{}", error);
+            }
+        },
+        Some("reject") => {
+            let reason = args
+                .get(1..)
+                .filter(|parts| !parts.is_empty())
+                .map(|parts| parts.join(" "))
+                .unwrap_or_else(|| String::from("operator rejected pending update"));
+            match pkg::update::reject_pending_update(&reason) {
+                Ok(transaction) => {
+                    kprint_colored!(Colors::YELLOW, "[Recovery] ");
+                    kprintln!(
+                        "{} {} marked failed. Recovery remains active.",
+                        transaction.package_name,
+                        transaction.to_version
+                    );
+                }
+                Err(error) => {
+                    kprint_colored!(Colors::RED, "[Recovery] ");
+                    kprintln!("{}", error);
+                }
+            }
+        }
+        Some("rollback") => match pkg::update::rollback_current_update() {
+            Ok(transaction) => {
+                kprint_colored!(Colors::GREEN, "[Recovery] ");
+                kprintln!(
+                    "{} {} rolled back to the pre-apply state.",
+                    transaction.package_name,
+                    transaction.to_version
+                );
+            }
+            Err(error) => {
+                kprint_colored!(Colors::RED, "[Recovery] ");
+                kprintln!("{}", error);
+            }
+        },
+        Some(other) => {
+            kprintln!("Unknown subcommand: {}", other);
+            kprintln!("Usage: recovery [status|enter|resume|confirm|reject [reason]|rollback]");
+        }
+    }
 }
 
 fn cmd_unknown(command: &str) {
