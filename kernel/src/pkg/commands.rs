@@ -93,7 +93,7 @@ pub fn handle(args: &[&str]) {
             match with_manager(|manager| manager.verify(name)) {
                 Ok(()) => {
                     kprint_colored!(Colors::GREEN, "[WarPkg] ");
-                    kprintln!("{name} verified against the signed manifest.");
+                    kprintln!("{name} verified against the signed manifest and payload digests.");
                 }
                 Err(error) => report_error(error),
             }
@@ -112,7 +112,10 @@ fn print_help() {
     kprintln!("  warpkg list");
     kprintln!("  warpkg info <name>");
     kprintln!("  warpkg verify <name>");
-    kprintln!("  Install and remove require PKG_INSTALL. Packages install only after signed-manifest verification.");
+    kprintln!("  update uses the current kernel HTTP/TLS path when available and falls back to the seeded local index.");
+    kprintln!("  install and remove require PKG_INSTALL.");
+    kprintln!("  install and verify reject unsigned, tampered, or metadata-mismatched bundles.");
+    kprintln!("  trust model: one embedded bootstrap ML-DSA root; no rotation or revocation yet.");
 }
 
 fn print_search_results(results: &[PackageInfo]) {

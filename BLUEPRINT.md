@@ -47,9 +47,9 @@ The repository currently implements a subset of this blueprint:
 
 - `waros-quantum`: statevector + MPS simulation, QASM, QEC helpers, Shor/VQE/QAOA/QPE/Simon demos, and Python bindings.
 - `waros-crypto`: ML-KEM, ML-DSA, SLH-DSA, SHA-3 / SHAKE, and simulated QRNG helpers.
-- `waros-kernel`: bootable x86_64 kernel with framebuffer console, PS/2 keyboard shell, in-kernel quantum simulator, WarFS with RAM plus virtio-blk persistence modes, a narrow WarExec ABI, experimental classical networking/TLS/IBM paths, and WarShield Pass 1 hardening.
+- `waros-kernel`: bootable x86_64 kernel with framebuffer console, PS/2 keyboard shell, in-kernel quantum simulator, WarFS with RAM plus virtio-blk persistence modes, a narrow WarExec ABI, experimental classical networking/TLS/IBM paths, and integrated WarShield Pass 1 plus Pass 2 hardening.
 
-Everything below remains the architectural target. Unless a subsystem is clearly reflected by code in the repository, treat the section as roadmap rather than shipped functionality.
+Everything below remains the architectural target. Unless a subsystem is clearly reflected by code in the repository, treat the section as roadmap rather than shipped functionality. Some sections intentionally describe the intended end-state in present tense; when they conflict with current code, trust the implementation-status docs and the repository tree.
 
 ---
 
@@ -71,14 +71,14 @@ Simultaneously, no quantum-only OS makes sense today because:
 ### 1.2 The WarOS Answer
 
 WarOS is a **hybrid microkernel operating system** that treats quantum and classical
-resources as first-class citizens under a unified abstraction. It is:
+resources as first-class citizens under a unified abstraction. Its current blueprint target is:
 
 - **Quantum-Native**: Qubits, quantum gates, entanglement, and quantum memory are
   kernel-level primitives, not userspace libraries
-- **Classically Complete**: Runs on pure classical hardware with full POSIX compatibility
+- **Classically Complete**: Targets pure classical hardware with broad classical compatibility
   and quantum simulation fallback
-- **Security-First**: Post-quantum cryptography at every layer; quantum key distribution
-  native support; formal verification of critical paths
+- **Security-First**: Targets post-quantum cryptography at every layer, quantum key distribution
+  support, and formal verification of critical paths
 - **AI-Integrated**: Native ML/AI subsystem for quantum error correction optimization,
   resource prediction, and adaptive scheduling
 - **Open Architecture**: Modular, extensible, open-source from day one
@@ -2505,7 +2505,7 @@ Phase 4: Pure WarOS environment
 [x] WarFS RAM mode with virtio-blk persistence when available
 [x] Narrow WarExec static-ELF ABI with headless smoke proofs for read, stat, readdir, path, wait, and create/write flows
 [x] Experimental DHCP/DNS/TCP/HTTP/TLS kernel networking path
-[x] WarShield Pass 1 integration: audit hooks, outbound TCP firewall hook, ASLR, loader W^X, capability gates
+[x] WarShield Pass 1 + Pass 2 integration: audit hooks, outbound TCP firewall hook, stack ASLR on the WarExec load path, loader W^X, capability transitions, and signed WarPkg verification
 [x] Kernel-local `no_std` quantum simulator with shell commands (`qalloc`, `qrun`, `qstate`, `qmeasure`, `qcircuit`, `qinfo`)
 [x] Built-in Bell, GHZ, Grover, teleportation, QFT, Deutsch, Bernstein-Vazirani, and superdense coding demos
 [x] Additional kernel demos for Shor factoring, VQE hydrogen energy, and QAOA MaxCut

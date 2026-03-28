@@ -142,7 +142,7 @@ The following behavior is part of the currently proven minimal ABI:
 WarShield Pass 1 and Pass 2 added execution hardening around the current WarExec path. These are implementation facts about the current kernel, not a claim of broad Linux compatibility:
 
 - new WarExec stacks are randomized at load time through the current ASLR path
-- heap and mmap base randomization also exist today as implementation details, but they should not yet be treated as stable ABI promises
+- the current ASLR integration on the proven ABI path is stack randomization at load time
 - PT_LOAD segments are populated through temporary writable NX mappings and then tightened to their final permissions
 - the loader rejects writable-and-executable user segments and verifies the final mapped segment set before entry
 - user stack and heap mappings are NX in the current implementation

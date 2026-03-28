@@ -12,14 +12,23 @@ WarShield Pass 2 gives WarPkg a narrow but real end-to-end signature path.
 
 ## What is signed
 
-The current signed manifest binds:
+The current signed manifest binds the whole current `Manifest` structure plus the expected payload digests. In the current tree that includes:
 
 - package name
 - version
 - description
+- author
+- license
+- minimum supported WarOS version
+- package category
 - dependency list
-- one entry per payload with:
+- one manifest file entry per installed file with:
   - path
+  - source
+  - executable flag
+  - byte length
+- one entry per payload with:
+  - source
   - byte length
   - SHA3-256 digest
 
@@ -59,3 +68,10 @@ This is intentionally a small trust model:
 - no secure-boot linkage
 
 That scope is deliberate. WarShield Pass 2 closes the placeholder-grade package verification gap without redesigning the full package ecosystem.
+
+## Operational reality
+
+- The kernel seeds a small signed local repository into WarFS during boot.
+- `warpkg verify <name>` and `warpkg install <name>` both verify the same signed bundle format before any install/apply step.
+- `warpkg update` uses the current kernel HTTP/TLS path when available and falls back to the seeded local index if the remote fetch fails.
+- Because kernel TLS still lacks certificate validation, remote index refresh remains experimental even though the bundle-signature path itself is real.

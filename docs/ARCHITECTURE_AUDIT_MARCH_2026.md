@@ -31,7 +31,7 @@ That said, WarOS is still not the full system described by `BLUEPRINT.md`. The b
 
 - Audit hooks are wired for login success/failure, logout, and current file-mutation paths in WarFS (`create`, `modify`, `delete`).
 - The outbound TCP firewall decision hook is wired into `TcpConnection::connect`, and firewall decisions are now visible through the audit/log path as well as serial diagnostics.
-- ASLR is integrated into the current WarExec load path. Stack randomization is part of the current process-start behavior; heap and mmap base randomization also exist as current implementation details.
+- ASLR is integrated into the current WarExec load path. Stack randomization is part of the current process-start behavior.
 - W^X is enforced on the current WarExec loader path. Writable-and-executable user segments are rejected, load-time mappings stay NX while being populated, and final user stack and heap mappings are NX.
 - Capability checks are enforced on selected sensitive shell and system operations, including power control, user administration, filesystem formatting, security profile changes, firewall mutation, and package installation or removal.
 - WarPkg now verifies a signed JSON bundle before install or apply. Verification covers the package-index transport digest, a canonical signed manifest, and signed per-payload digests under one embedded bootstrap ML-DSA trust root.
@@ -86,6 +86,8 @@ What current CI and repository evidence actually prove:
 - deterministic WarPkg signed-manifest accept/reject proof during kernel boot
 - deterministic capability inherit-only and deny-after-drop proof during kernel boot
 - Python binding build and test coverage
+
+Recent local QEMU validation beyond CI also confirmed a reused persistent-disk boot path: WarFS system seeding was idempotent, the WarPkg proof passed, the capability proof passed, the current ABI proof ladder reached shell, and the shell came online after the full proof sequence.
 
 Claims that are safe today:
 

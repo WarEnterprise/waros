@@ -1,6 +1,7 @@
 # WarOS Current Status After WarShield Pass 2
 
 This document is the short current-stage summary for the repository after the WarShield Pass 2 merge.
+The current pre-Pass-3 consolidation baseline is summarized in [PRE_PASS3_CONSOLIDATION_STATUS.md](PRE_PASS3_CONSOLIDATION_STATUS.md).
 
 ## Repository truth
 
@@ -27,6 +28,12 @@ Integrated today:
 - Kernel TLS still encrypts traffic without validating server certificates.
 - Kernel HTTP/HTTPS/IBM Runtime paths therefore remain experimental.
 - QKD in the kernel is still a simulated BB84 demo, not a real quantum network path.
+
+## Validated baseline
+
+- Current local QEMU validation has shown reused persistent-disk boot with successful WarFS system seeding.
+- Kernel boot now reaches the deterministic WarPkg signed-bundle proof and the capability deny-after-drop proof without regressing the earlier boot path.
+- The current WarExec ABI proof ladder still reaches shell after the Pass 2 proofs complete.
 
 ## Current release-readiness message
 

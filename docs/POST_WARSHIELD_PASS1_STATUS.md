@@ -2,6 +2,7 @@
 
 This document is retained as a historical snapshot from immediately after the WarShield Pass 1 merge.
 Current repository status after Pass 2 is summarized in [POST_WARSHIELD_PASS2_STATUS.md](POST_WARSHIELD_PASS2_STATUS.md).
+Package-signing and TLS caveats below reflect the pre-Pass-2 state and are retained for historical context only.
 
 This document is the short stage summary for the repository after the WarShield Pass 1 merge.
 
