@@ -22,7 +22,11 @@ fn prompt() {
 
     let path = session::current_prompt_path();
     kprint_colored!(Colors::DIM, "[");
-    kprint_colored!(Colors::CYAN, "WarOS");
+    if session::is_recovery_session() {
+        kprint_colored!(Colors::YELLOW, "WarOS recovery");
+    } else {
+        kprint_colored!(Colors::CYAN, "WarOS");
+    }
     kprint_colored!(Colors::DIM, " ");
     if user.role == crate::auth::UserRole::Admin {
         kprint_colored!(Colors::RED, "{}", user.username);

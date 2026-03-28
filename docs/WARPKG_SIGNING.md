@@ -74,5 +74,9 @@ That scope is deliberate. WarShield Pass 2 closes the placeholder-grade package 
 - The kernel seeds a small signed local repository into WarFS during boot.
 - `warpkg verify <name>` and `warpkg install <name>` both verify the same signed bundle format before any install/apply step.
 - `warpkg update` uses the current kernel HTTP/TLS path when available and falls back to the seeded local index if the remote fetch fails.
+- Pass 4 adds an explicit offline update/apply path: `warpkg stage <bundle>`, `warpkg apply <bundle|staged>`, `warpkg confirm`, `warpkg reject`, and `warpkg rollback`.
+- Pass 4 persists update-health metadata in `/var/pkg/update-state.json` and keeps staged bundles and rollback snapshots under `/var/pkg/staged` and `/var/pkg/rollback`.
+- Post-apply boots are intentionally confirmation-gated: boot must reach shell-ready and then be confirmed explicitly, otherwise the next boot marks the update failed and requests recovery.
+- Recovery remains narrow and local: a privileged recovery shell can inspect state, confirm/reject the pending update, or restore the captured rollback snapshot.
 - Remote index refresh now uses the narrow validated kernel TLS path for supported hosts only.
 - That HTTPS trust model remains intentionally small: embedded roots, hostname checks, no RTC-backed expiry validation, no rotation, and no revocation.

@@ -65,7 +65,9 @@ pub fn init() {
     crate::serial_println!("[PROOF] WarShield: ASLR wired (stack randomization, 8-bit entropy)");
     crate::serial_println!("[PROOF] WarShield: W^X enforced (loader rejects W+X, verify_wx post-check)");
     crate::serial_println!("[PROOF] WarShield: capabilities wired (halt/reboot/useradd/userdel/format/profile)");
-    crate::serial_println!("[PROOF] WarShield: runtime hardening foundation ready for Pass 3 proofs");
+    crate::serial_println!(
+        "[PROOF] WarShield: runtime hardening + resilience foundation ready for Pass 4 proofs"
+    );
 }
 
 fn boot_ok_security(message: &str, _start_ticks: u64) {
@@ -108,6 +110,7 @@ pub fn format_status() -> String {
     let capability_model =
         "shell session maps explicitly to a shell process; spawn inherits parent effective set; exec preserves or narrows only";
     let warpkg_root = crate::pkg::trust_root_summary();
+    let warpkg_update_state = crate::pkg::update::short_status();
     let tls_hosts = crate::net::tls::supported_hosts_summary();
     let tls_policy = crate::net::tls::trust_policy_summary();
 
@@ -142,6 +145,8 @@ pub fn format_status() -> String {
           \n  WarPkg:\
           \n    Verify path: signed bundle manifest + payload digests\
          \n    Trust root:  {}\
+         \n    Update path: explicit local stage/apply only\
+         \n    State:       {}\
          \n\
          \n  Capabilities:\
          \n    Model:       {}\
@@ -165,6 +170,7 @@ pub fn format_status() -> String {
         tls_hosts,
         tls_policy,
         warpkg_root,
+        warpkg_update_state,
         capability_model,
         qkd_keys,
     )

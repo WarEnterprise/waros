@@ -47,9 +47,9 @@ The repository currently implements a subset of this blueprint:
 
 - `waros-quantum`: statevector + MPS simulation, QASM, QEC helpers, Shor/VQE/QAOA/QPE/Simon demos, and Python bindings.
 - `waros-crypto`: ML-KEM, ML-DSA, SLH-DSA, SHA-3 / SHAKE, and simulated QRNG helpers.
-- `waros-kernel`: bootable x86_64 kernel with framebuffer console, PS/2 keyboard shell, in-kernel quantum simulator, WarFS with RAM plus virtio-blk persistence modes, a narrow WarExec ABI, experimental classical networking/TLS/IBM paths, and integrated WarShield Pass 1 through Pass 3 hardening.
+- `waros-kernel`: bootable x86_64 kernel with framebuffer console, PS/2 keyboard shell, in-kernel quantum simulator, WarFS with RAM plus virtio-blk persistence modes, a narrow WarExec ABI, experimental classical networking/TLS/IBM paths, integrated WarShield Pass 1 through Pass 4 hardening, and a narrow offline-update plus recovery foundation.
 
-Everything below remains the architectural target. Unless a subsystem is clearly reflected by code in the repository, treat the section as roadmap rather than shipped functionality. Some sections intentionally describe the intended end-state in present tense; when they conflict with current code, trust the implementation-status docs and the repository tree.
+Everything below remains the architectural target. Unless a subsystem is clearly reflected by code in the repository, treat the section as roadmap rather than shipped functionality. Some sections intentionally describe the intended end-state in present tense; when they conflict with current code, trust the implementation-status docs and the repository tree. That boundary matters especially for deployability: current code has explicit local signed-bundle apply, boot-health confirmation, and a minimal recovery shell, but it does not yet ship a remote control plane, secure boot, or full A/B update architecture.
 
 ---
 

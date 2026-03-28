@@ -59,10 +59,34 @@ impl Session {
             self.cwd.clone()
         }
     }
+
+    #[must_use]
+    pub fn is_recovery(&self) -> bool {
+        self.user.username == "recovery"
+    }
 }
 
 pub fn start(user: UserAccount) {
     *CURRENT_SESSION.lock() = Some(Session::new(user));
+}
+
+pub fn start_recovery() {
+    let now = crate::arch::x86_64::interrupts::tick_count();
+    *CURRENT_SESSION.lock() = Some(Session {
+        user: UserAccount {
+            uid: 0,
+            username: String::from("recovery"),
+            password_hash: [0; 32],
+            salt: [0; 16],
+            role: UserRole::Admin,
+            home_dir: String::from("/recovery"),
+            active: true,
+            created_at: now,
+            last_login: now,
+        },
+        cwd: String::from("/recovery"),
+        started_at: now,
+    });
 }
 
 pub fn logout() {
@@ -142,6 +166,14 @@ pub fn current_cwd() -> String {
         .as_ref()
         .map(|session| session.cwd.clone())
         .unwrap_or_else(|| String::from("/"))
+}
+
+#[must_use]
+pub fn is_recovery_session() -> bool {
+    CURRENT_SESSION
+        .lock()
+        .as_ref()
+        .is_some_and(Session::is_recovery)
 }
 
 pub fn set_cwd(path: &str) {

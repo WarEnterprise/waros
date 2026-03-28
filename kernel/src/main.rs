@@ -52,6 +52,13 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
 
     loop {
+        if pkg::update::should_enter_recovery() {
+            auth::session::start_recovery();
+            boot_notice("Recovery shell active. Use 'recovery status' to inspect update health.");
+            shell::run();
+            continue;
+        }
+
         let user = if auth::first_boot_pending() {
             let user = auth::login::first_boot_setup();
             auth::clear_first_boot_pending();
@@ -319,6 +326,12 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     boot_ok("WarFS system files seeded");
     pkg::init().map_err(|_| "failed to seed package repository")?;
     boot_ok("WarPkg bootstrap repository ready");
+    let boot_health = pkg::update::prepare_boot();
+    let update_summary = alloc::format!("WarPkg update health: {}", boot_health.summary);
+    boot_notice(update_summary.as_str());
+    if boot_health.recovery_requested {
+        boot_notice("Recovery mode will be entered after boot because update health requires operator action");
+    }
 
     boot_notice("WarPkg proof: verifying signed bundle and tamper rejection");
     match cpu_interrupts::without_interrupts(pkg::smoke::run_signature_proof) {
@@ -335,6 +348,27 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
         Err(error) => {
             let message = alloc::format!("WarPkg proof: {}", error);
             boot_notice(message.as_str());
+        }
+    }
+
+    match pkg::update::proof_available() {
+        Ok(true) => {
+            boot_notice(
+                "WarPkg Pass 4 proof: exercising offline update, boot health, rollback, tamper rejection, and recovery status",
+            );
+            match cpu_interrupts::without_interrupts(pkg::smoke::run_offline_update_proof) {
+                Ok(()) => boot_ok("WarPkg Pass 4 proof passed"),
+                Err(error) => {
+                    let message = alloc::format!("WarPkg Pass 4 proof: {}", error);
+                    boot_notice(message.as_str());
+                }
+            }
+        }
+        Ok(false) => {
+            boot_notice("WarPkg Pass 4 proof skipped: active update or recovery state present");
+        }
+        Err(_) => {
+            boot_notice("WarPkg Pass 4 proof skipped: update state unavailable");
         }
     }
 
@@ -738,6 +772,9 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     display::branding::boot_complete_animation();
     display::branding::show_separator();
     kprint_colored!(Colors::DIM, "Boot complete in {} ms.\n", boot_complete_ms);
+    if let Ok(Some(message)) = pkg::update::note_shell_ready() {
+        boot_notice(message.as_str());
+    }
     boot_notice("WarOS shell online. Type 'help' for available commands.");
     kprintln!();
     Ok(())

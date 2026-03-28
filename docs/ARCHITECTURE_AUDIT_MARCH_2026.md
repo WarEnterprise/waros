@@ -1,5 +1,5 @@
 # WarOS Architecture Audit
-## Post-WarShield Pass 3 Narrow Runtime Hardening Review (March 2026)
+## Post-WarShield Pass 4 Operational Resilience Review (March 2026)
 
 ## 1. Executive Summary
 
@@ -8,7 +8,7 @@ WarOS is still best described as two concrete things in one repository:
 - a strong classical-hosted quantum and post-quantum software stack in the top-level Rust workspace
 - a bootable x86_64 `no_std` kernel prototype in `kernel/`
 
-The kernel is no longer just bootstrap scaffolding. It now boots under QEMU, mounts WarFS with virtio-blk persistence when present, exposes a real shell, carries a narrow but smoke-proven WarExec ELF ABI, and has WarShield Pass 1 plus Pass 2 merged into the current boot and shell experience.
+The kernel is no longer just bootstrap scaffolding. It now boots under QEMU, mounts WarFS with virtio-blk persistence when present, exposes a real shell, carries a narrow but smoke-proven WarExec ELF ABI, and has WarShield Pass 1 through Pass 4 merged into the current boot and shell experience.
 
 That said, WarOS is still not the full system described by `BLUEPRINT.md`. The blueprint remains direction. Current repository truth must stay limited to the proved SDK, kernel, and WarShield surfaces that actually exist today.
 
@@ -23,9 +23,9 @@ That said, WarOS is still not the full system described by `BLUEPRINT.md`. The b
 | WarExec minimal ABI | INTEGRATED | `kernel/src/exec/*`; `kernel/src/exec/smoke.rs`; ABI doc | Real, narrow, static-ELF-only userspace path with explicit non-goals |
 | Kernel networking | PARTIAL | `kernel/src/net/*`; shell `net`, `curl`, `wget`, `ibm` | Real DHCP/DNS/TCP/HTTP/TLS path exists, but networking syscalls are still stubbed |
 | Kernel TLS / IBM path | PARTIAL | `kernel/src/net/tls/mod.rs`; `kernel/src/net/ibm.rs` | Supported HTTPS hosts now validate against embedded roots, but there is no RTC-backed expiry check or general CA store |
-| WarShield Pass 1 + Pass 2 + Pass 3 | INTEGRATED | `kernel/src/security/*`; `kernel/src/pkg/*`; `crates/waros-pkg/*`; shell help/status | Real hardening pass, but still a narrow research-kernel security model |
+| WarShield Pass 1 + Pass 2 + Pass 3 + Pass 4 | INTEGRATED | `kernel/src/security/*`; `kernel/src/pkg/*`; `crates/waros-pkg/*`; shell help/status | Real hardening and resilience pass, but still a narrow research-kernel security model |
 
-## 3. WarShield Pass 1 and Pass 2 Integration Review
+## 3. WarShield Pass 1 Through Pass 4 Integration Review
 
 ### Integrated and visible today
 
@@ -37,6 +37,9 @@ That said, WarOS is still not the full system described by `BLUEPRINT.md`. The b
 - Capability checks are enforced on selected sensitive shell and system operations, including power control, user administration, filesystem formatting, security profile changes, firewall mutation, and package installation or removal.
 - WarPkg now verifies a signed JSON bundle before install or apply. Verification covers the package-index transport digest, a canonical signed manifest, and signed per-payload digests under one embedded bootstrap ML-DSA trust root.
 - Capability transitions are now explicit and deterministic: shell/session privilege maps to a shell process, spawned children inherit the parent effective set intersected with the target-UID baseline, and `execve` preserves or narrows only.
+- WarPkg now exposes a real explicit offline update path: a local signed bundle can be staged or applied, the exact installed bytes are re-verified, and invalid/tampered/unsigned bundles are rejected deterministically.
+- Boot health now records pending-confirmation, shell-ready observation, failure, and rollback-prepared state in persisted metadata under `/var/pkg/update-state.json`.
+- Recovery mode is now a real shell entry path. When update health requires operator action, boot enters a narrow administrative recovery shell rooted at `/recovery` instead of pretending a full rescue OS exists.
 
 ### Limits that still matter for release-facing honesty
 
@@ -46,6 +49,8 @@ That said, WarOS is still not the full system described by `BLUEPRINT.md`. The b
 - Kernel TLS is now validated for supported hosts, but it is still not a release-grade or browser-grade trust model. There is no RTC-backed expiry check, no rotation, no revocation, and no general CA store.
 - The package trust model is intentionally narrow: one embedded bootstrap ML-DSA root, no key rotation, no revocation, no delegated repository metadata, and no secure-boot linkage.
 - Capability enforcement is now deterministic across current process-creation paths, but there is still no broad userspace capability syscall ABI or POSIX credential model.
+- Update resiliency is intentionally narrow: current rollback is single-slot snapshot restoration for the current package apply path, not full A/B switching.
+- Recovery is intentionally narrow: it is a privileged shell path for status, confirm/reject, and rollback handling, not a separate recovery kernel or installation environment.
 
 ## 4. Current Kernel and ABI Boundaries
 
@@ -87,6 +92,7 @@ What current CI and repository evidence actually prove:
 - deterministic kernel TLS trusted/rejected certificate proof during kernel boot
 - deterministic WarPkg signed-bundle accept/reject proof during kernel boot
 - deterministic capability inherit-only and deny-after-drop proof during kernel boot
+- explicit persisted update-health markers during boot plus shell-visible `warpkg status`, `recovery status`, and `warpkg proof` surfaces for Pass 4 review
 - Python binding build and test coverage
 
 Recent local QEMU validation beyond CI also confirmed a reused persistent-disk boot path: WarFS system seeding was idempotent, the TLS proof passed, the WarPkg proof passed, the capability proof passed, the current ABI proof ladder reached shell, and the shell came online after the full proof sequence.
@@ -104,14 +110,15 @@ Claims that are still unsafe today:
 - real QHAL, real QPU drivers, or real quantum networking
 - release-grade kernel IBM Runtime security
 
-## 7. Recommended Near-Term Work Beyond Pass 2
+## 7. Recommended Near-Term Work Beyond Pass 4
 
-These items are consistent with the current stage and should stay separate from WarShield Pass 2:
+These items are consistent with the current stage and should stay separate from WarShield Pass 4:
 
 - keep README, status docs, and shell help aligned with the current kernel and ABI truth
 - expand deterministic kernel network smoke coverage around DHCP, DNS, HTTP/TLS, and firewall logging
-- add trust-root rotation, revocation, or richer repository metadata only behind a separate, narrow design pass
+- add trust-root rotation, revocation, richer repository metadata, or remote update orchestration only behind separate narrow design passes
 - add RTC-backed certificate time validation only behind a separate clock/trust-source design
+- add true multi-slot rollback or secure-boot-anchored update recovery only behind a separate storage/boot design
 - broaden audit coverage only behind narrow, testable steps instead of making larger security claims first
 - keep the capability model explicit if process creation expands; do not introduce broad POSIX credential semantics by accident
 - keep the HAL/QHAL naming boundary explicit so roadmap language does not get mistaken for shipped quantum-driver support
