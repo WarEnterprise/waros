@@ -1,6 +1,7 @@
 use bootloader_api::BootInfo;
 use x86_64::VirtAddr;
 
+pub mod trace;
 pub mod uefi;
 
 /// Information extracted from the bootloader's boot info for early kernel init.
@@ -8,6 +9,7 @@ pub struct BootContext<'a> {
     pub framebuffer: &'a mut bootloader_api::info::FrameBuffer,
     pub memory_regions: &'a bootloader_api::info::MemoryRegions,
     pub physical_memory_offset: VirtAddr,
+    pub rsdp_addr: Option<u64>,
 }
 
 /// Translate bootloader-provided state into a simpler kernel-owned view.
@@ -21,10 +23,12 @@ pub fn bootstrap(boot_info: &'static mut BootInfo) -> Result<BootContext<'static
         .as_ref()
         .copied()
         .ok_or("bootloader physical memory mapping is unavailable")?;
+    let rsdp_addr = boot_info.rsdp_addr.as_ref().copied();
 
     Ok(BootContext {
         framebuffer,
         memory_regions: &boot_info.memory_regions,
         physical_memory_offset: VirtAddr::new(physical_memory_offset),
+        rsdp_addr,
     })
 }

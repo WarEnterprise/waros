@@ -5,7 +5,9 @@ use x86_64::structures::idt::{InterruptStackFrame, PageFaultErrorCode};
 
 use crate::arch::x86_64::pic::{self, InterruptIndex};
 use crate::arch::x86_64::port;
+use crate::boot::trace;
 use crate::drivers::keyboard;
+use crate::memory;
 use crate::serial_println;
 
 static TICKS: AtomicU64 = AtomicU64::new(0);
@@ -57,14 +59,32 @@ pub extern "x86-interrupt" fn page_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: PageFaultErrorCode,
 ) {
-    let accessed_address = Cr2::read();
+    let accessed_address_raw = Cr2::read_raw();
+    trace::record_page_fault(accessed_address_raw);
     serial_println!("[EXCEPTION] PAGE FAULT");
-    serial_println!("  accessed address: {:?}", accessed_address);
+    match Cr2::read() {
+        Ok(accessed_address) => serial_println!("  accessed address: {:?}", accessed_address),
+        Err(_) => serial_println!("  accessed address: non-canonical 0x{accessed_address_raw:016X}"),
+    }
     serial_println!("  error code: {:?}", error_code);
+    if let Some(classification) = memory::classify_direct_map_address(accessed_address_raw) {
+        serial_println!(
+            "  direct-map physical: 0x{:016X}",
+            classification.physical_address
+        );
+        if let Some(region) = classification.region {
+            serial_println!(
+                "  physical region: {} [0x{:016X}-0x{:016X})",
+                memory::memory_region_kind_name(region.kind),
+                region.start,
+                region.end
+            );
+        }
+    }
     serial_println!("{:#?}", stack_frame);
     panic!(
-        "Page fault while accessing {:?} with error {:?}",
-        accessed_address, error_code
+        "Page fault while accessing 0x{accessed_address_raw:016X} with error {:?}",
+        error_code
     );
 }
 

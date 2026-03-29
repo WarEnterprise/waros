@@ -32,6 +32,7 @@ use bootloader_api::config::{BootloaderConfig, Mapping};
 use bootloader_api::{entry_point, BootInfo};
 use x86_64::instructions::interrupts as cpu_interrupts;
 
+use crate::boot::trace::{self, BootStage, BreadcrumbTag};
 use crate::display::console::Colors;
 
 pub const KERNEL_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -75,14 +76,24 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str> {
     drivers::serial::init();
     serial_println!("WarOS: entering kernel bootstrap");
+    trace::set_stage(BootStage::KernelEntry, BreadcrumbTag::KernelEntry);
     arch::x86_64::fpu::init();
 
     let boot_context = boot::bootstrap(boot_data)?;
+    trace::set_stage(BootStage::BootHandoff, BreadcrumbTag::BootContext);
+    memory::register_boot_memory_regions(boot_context.memory_regions);
     memory::register_physical_memory_mapping(boot_context.physical_memory_offset);
+    trace::record_physical_memory_mapping(
+        boot_context.physical_memory_offset.as_u64(),
+        memory::max_physical_address(),
+    );
+    trace::record_rsdp_addr(boot_context.rsdp_addr);
+    trace::record_tag(BreadcrumbTag::PhysMapRegistered);
     let framebuffer_info = boot::uefi::framebuffer_info(boot_context.framebuffer);
 
     display::console::init(boot_context.framebuffer);
     display::branding::show_banner();
+    trace::record_tag(BreadcrumbTag::ConsoleReady);
 
     boot_ok("Serial debug on COM1");
     boot_ok("FPU/SSE initialized");
@@ -102,28 +113,34 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     );
 
     arch::x86_64::gdt::init();
+    trace::set_stage(BootStage::DescriptorTables, BreadcrumbTag::GdtLoaded);
     boot_ok("GDT loaded");
 
     exec::syscall::init();
+    trace::record_tag(BreadcrumbTag::SyscallReady);
     boot_ok("WarSyscall initialized");
 
     arch::x86_64::idt::init();
+    trace::record_tag(BreadcrumbTag::IdtLoaded);
     boot_ok("IDT loaded (exceptions + timer + keyboard)");
 
     unsafe {
         // SAFETY: The PIC is initialized once during early boot before interrupts are enabled.
         arch::x86_64::pic::init();
     }
+    trace::record_tag(BreadcrumbTag::PicReady);
     boot_ok("PIC remapped (IRQ 32-47)");
 
     arch::x86_64::pit::init();
+    trace::record_tag(BreadcrumbTag::PitReady);
     boot_ok_fmt(
         format_args!("PIT timer: {} Hz", arch::x86_64::pit::PIT_FREQUENCY_HZ),
         format_args!("PIT timer: {} Hz", arch::x86_64::pit::PIT_FREQUENCY_HZ),
     );
-    cpu_interrupts::enable();
 
+    trace::set_stage(BootStage::Memory, BreadcrumbTag::MemoryMapRegistered);
     memory::init(boot_context.memory_regions)?;
+    trace::record_tag(BreadcrumbTag::PhysicalAllocatorReady);
     let stats = memory::stats();
     boot_ok_fmt(
         format_args!(
@@ -143,6 +160,7 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
         // through `boot_info.physical_memory_offset`, which `boot::bootstrap` validated.
         memory::paging::init(boot_context.physical_memory_offset)
     };
+    trace::record_tag(BreadcrumbTag::PagingMapperReady);
     boot_ok("Paging: 4-level page tables active");
 
     {
@@ -159,6 +177,7 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
             return Err("kernel heap initialization failed");
         }
     }
+    trace::record_tag(BreadcrumbTag::HeapReady);
     boot_ok_fmt(
         format_args!(
             "Kernel heap: {} MiB allocated",
@@ -173,16 +192,20 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     hal::init_registry();
     hal::register_core_devices(framebuffer_info.width as u32, framebuffer_info.height as u32);
     hal::display::register_framebuffer(framebuffer_info);
+    trace::record_tag(BreadcrumbTag::HalReady);
     boot_ok("WarHAL device registry initialized");
 
     fs::init();
+    trace::record_tag(BreadcrumbTag::FsReady);
     boot_ok("WarFS: filesystem core ready");
 
-    match hal::acpi::init_global() {
+    trace::set_stage(BootStage::Acpi, BreadcrumbTag::AcpiInit);
+    match hal::acpi::init_global(boot_context.rsdp_addr) {
         Ok(_) => boot_ok("ACPI: power management available"),
         Err(error) => boot_notice(alloc::format!("ACPI: not available ({:?})", error).as_str()),
     }
 
+    trace::set_stage(BootStage::Storage, BreadcrumbTag::DiskReady);
     let disk_report = {
         let mut filesystem = fs::FILESYSTEM.lock();
         disk::init(&mut filesystem)
@@ -216,6 +239,7 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
             boot_notice(message.as_str());
         }
     }
+    trace::record_tag(BreadcrumbTag::AuthReady);
     let auth_report = auth::init().map_err(|_| "user database initialization failed")?;
     if auth_report.first_boot {
         boot_ok("User database initialized (root account seeded)");
@@ -228,18 +252,23 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     }
 
     task::init();
+    trace::set_stage(BootStage::Exec, BreadcrumbTag::TaskReady);
     boot_ok("Task scheduler: cooperative background tasks ready");
     exec::init();
+    trace::record_tag(BreadcrumbTag::ExecReady);
     boot_ok("WarExec core ready");
 
     security::init();
+    trace::record_tag(BreadcrumbTag::SecurityReady);
 
+    trace::set_stage(BootStage::Hardware, BreadcrumbTag::NetInit);
     let network = net::init().map_err(|_| "network initialization failed")?;
     let pci_inventory = net::pci_devices();
     hal::bus::pci::enumerate_and_register(&pci_inventory);
     if hal::storage::register_active_storage().is_some() {
         boot_ok("WarHAL: persistent storage registered");
     }
+    trace::record_tag(BreadcrumbTag::UsbProbe);
     let usb_controllers = hal::usb::probe_controllers();
     hal::net::register_detected_nics();
     boot_ok_fmt(
@@ -299,9 +328,13 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
 
     drivers::keyboard::init();
     hal::input::init();
+    trace::set_stage(BootStage::Input, BreadcrumbTag::InputReady);
+    cpu_interrupts::enable();
+    trace::record_tag(BreadcrumbTag::InterruptsEnabled);
     boot_ok("Keyboard driver active");
     boot_ok("Quantum subsystem ready (18 qubits max)");
 
+    trace::set_stage(BootStage::Proofs, BreadcrumbTag::ProofsActive);
     boot_notice("WarShield TLS proof: validating trusted and rejected certificate paths");
     match cpu_interrupts::without_interrupts(net::tls::run_validation_proof) {
         Ok(()) => boot_ok_fmt(
@@ -775,6 +808,7 @@ fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str>
     if let Ok(Some(message)) = pkg::update::note_shell_ready() {
         boot_notice(message.as_str());
     }
+    trace::set_stage(BootStage::Shell, BreadcrumbTag::ShellReady);
     boot_notice("WarOS shell online. Type 'help' for available commands.");
     kprintln!();
     Ok(())

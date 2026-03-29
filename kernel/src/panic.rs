@@ -4,6 +4,7 @@ use core::panic::PanicInfo;
 use ::x86_64::instructions::interrupts;
 
 use crate::arch::x86_64;
+use crate::boot::trace;
 use crate::display::console::{Colors, CONSOLE};
 use crate::serial_println;
 
@@ -31,6 +32,8 @@ fn panic(info: &PanicInfo<'_>) -> ! {
             }
 
             let _ = console.write_str("\n");
+            let _ = trace::write_panic_breadcrumbs(console);
+            let _ = console.write_str("\n");
             console.set_color(Colors::DIM);
             let _ = console.write_str("  System halted. Please reboot.\n");
             let _ = console.write_str("================================================================================\n");
@@ -40,5 +43,6 @@ fn panic(info: &PanicInfo<'_>) -> ! {
 
     serial_println!("\n=== KERNEL PANIC ===");
     serial_println!("{}", info);
+    trace::write_serial_panic_breadcrumbs();
     x86_64::hlt_loop()
 }
