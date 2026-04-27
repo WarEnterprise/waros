@@ -117,7 +117,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         let first_boot = auth::first_boot_pending();
         interactive::progress("auth-select-done");
 
-        let user = if first_boot {
+        let mut completed_first_boot_setup = false;
+        let user = if let Some(user) = boot_smoke_autologin_user(first_boot) {
+            user
+        } else if first_boot {
+            completed_first_boot_setup = true;
             interactive::progress("first-boot-setup-enter");
             auth::login::first_boot_setup()
         } else {
@@ -131,7 +135,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             if cpu_interrupts::are_enabled() { "on" } else { "off" }
         );
 
-        if first_boot {
+        if completed_first_boot_setup {
             auth::clear_first_boot_pending();
             serial_println!(
                 "[TRACE] auth: first-boot account ready user={} first_boot_pending=forced-false",
@@ -145,7 +149,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         );
         auth::session::start(user.clone());
 
-        if first_boot {
+        if completed_first_boot_setup {
             serial_println!(
                 "[TRACE] auth: rendering first-boot session handoff for {}",
                 user.username
@@ -164,6 +168,28 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         exec::reset_shell_process();
         shell::history::clear();
     }
+}
+
+#[cfg(waros_boot_smoke)]
+fn boot_smoke_autologin_user(first_boot: bool) -> Option<auth::UserAccount> {
+    let user = auth::USER_DB.lock().find_by_name("root").cloned();
+    if let Some(user) = user.as_ref() {
+        auth::clear_first_boot_pending();
+        serial_println!(
+            "[CI] boot-smoke auto-login user={} uid={} first_boot={}",
+            user.username,
+            user.uid,
+            first_boot
+        );
+    } else {
+        serial_println!("[CI] boot-smoke auto-login unavailable: root user missing");
+    }
+    user
+}
+
+#[cfg(not(waros_boot_smoke))]
+fn boot_smoke_autologin_user(_first_boot: bool) -> Option<auth::UserAccount> {
+    None
 }
 
 fn try_kernel_main(boot_data: &'static mut BootInfo) -> Result<(), &'static str> {

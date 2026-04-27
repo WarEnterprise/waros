@@ -43,6 +43,8 @@ jobs:
           sudo apt-get install -y qemu-system-x86
 
       - name: Build kernel
+        env:
+          RUSTFLAGS: "--cfg waros_boot_smoke"
         run: cd kernel && cargo +nightly build --release --target x86_64-unknown-none
 
       - name: Kernel toolchain diagnostics
@@ -56,6 +58,7 @@ jobs:
       - name: Create kernel images
         env:
           RUST_BACKTRACE: "1"
+          RUSTFLAGS: "--cfg waros_boot_smoke"
         run: |
           set -o pipefail
           bash ./kernel/tools/create_image.sh 2>&1 | tee kernel/target/create-image.log
