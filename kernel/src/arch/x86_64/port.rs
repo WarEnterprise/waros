@@ -9,6 +9,14 @@ pub fn inb(port: u16) -> u8 {
     unsafe { port.read() }
 }
 
+/// Read one 16-bit word from an x86 I/O port.
+#[must_use]
+pub fn inw(port: u16) -> u16 {
+    let mut port = Port::<u16>::new(port);
+    // SAFETY: The caller selects a well-known hardware port used by the kernel.
+    unsafe { port.read() }
+}
+
 /// Read one 32-bit word from an x86 I/O port.
 #[must_use]
 pub fn inl(port: u16) -> u32 {
@@ -22,6 +30,15 @@ pub fn outb(port: u16, value: u8) {
     let mut port = Port::<u8>::new(port);
     // SAFETY: The caller selects the I/O port. This helper is only used for well-known
     // legacy ports such as COM1, the PS/2 controller, and the PIC in the kernel.
+    unsafe {
+        port.write(value);
+    }
+}
+
+/// Write one 16-bit word to an x86 I/O port.
+pub fn outw(port: u16, value: u16) {
+    let mut port = Port::<u16>::new(port);
+    // SAFETY: The caller selects a well-known hardware port used by the kernel.
     unsafe {
         port.write(value);
     }

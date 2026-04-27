@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use spin::Mutex;
 
 use connection_track::ConnectionTracker;
-use rules::{Action, Direction, FirewallRule, Protocol, default_rules};
+use rules::{default_rules, Action, Direction, FirewallRule, Protocol};
 
 pub struct FirewallStats {
     pub allowed: u64,
@@ -131,7 +131,10 @@ impl WarGuard {
         // Stateful: allow established responses
         if direction == Direction::Inbound {
             let proto_num = Self::protocol_number(protocol);
-            if self.tracker.is_established_response(src_ip, dst_ip, src_port, dst_port, proto_num) {
+            if self
+                .tracker
+                .is_established_response(src_ip, dst_ip, src_port, dst_port, proto_num)
+            {
                 self.record_decision(direction, protocol, Action::Allow, true);
                 log_firewall_decision(
                     0,
@@ -169,7 +172,8 @@ impl WarGuard {
                         // Track outbound for stateful matching
                         if direction == Direction::Outbound {
                             let proto_num = Self::protocol_number(protocol);
-                            self.tracker.track_outbound(src_ip, dst_ip, src_port, dst_port, proto_num);
+                            self.tracker
+                                .track_outbound(src_ip, dst_ip, src_port, dst_port, proto_num);
                         }
                         return Action::Allow;
                     }
@@ -201,7 +205,14 @@ impl WarGuard {
         default
     }
 
-    pub fn add_rule(&mut self, direction: Direction, protocol: Protocol, port: Option<u16>, action: Action, description: String) -> u32 {
+    pub fn add_rule(
+        &mut self,
+        direction: Direction,
+        protocol: Protocol,
+        port: Option<u16>,
+        action: Action,
+        description: String,
+    ) -> u32 {
         let id = self.next_rule_id;
         self.next_rule_id += 1;
         // Insert before the last catch-all rule
@@ -210,15 +221,18 @@ impl WarGuard {
         } else {
             self.rules.len()
         };
-        self.rules.insert(pos, FirewallRule {
-            id,
-            direction,
-            protocol,
-            port,
-            action,
-            description,
-            hit_count: 0,
-        });
+        self.rules.insert(
+            pos,
+            FirewallRule {
+                id,
+                direction,
+                protocol,
+                port,
+                action,
+                description,
+                hit_count: 0,
+            },
+        );
         id
     }
 
@@ -253,17 +267,21 @@ pub fn process_packet(
     src_port: u16,
     dst_port: u16,
 ) -> Action {
-    WARGUARD
-        .lock()
-        .as_mut()
-        .map_or(Action::Allow, |g| g.process_packet(direction, protocol, src_ip, dst_ip, src_port, dst_port))
+    WARGUARD.lock().as_mut().map_or(Action::Allow, |g| {
+        g.process_packet(direction, protocol, src_ip, dst_ip, src_port, dst_port)
+    })
 }
 
-pub fn add_rule(direction: Direction, protocol: Protocol, port: Option<u16>, action: Action, description: String) -> u32 {
-    WARGUARD
-        .lock()
-        .as_mut()
-        .map_or(0, |g| g.add_rule(direction, protocol, port, action, description))
+pub fn add_rule(
+    direction: Direction,
+    protocol: Protocol,
+    port: Option<u16>,
+    action: Action,
+    description: String,
+) -> u32 {
+    WARGUARD.lock().as_mut().map_or(0, |g| {
+        g.add_rule(direction, protocol, port, action, description)
+    })
 }
 
 pub fn remove_rule(id: u32) -> bool {
@@ -278,7 +296,10 @@ pub fn rule_count() -> usize {
 }
 
 pub fn active_connections() -> usize {
-    WARGUARD.lock().as_ref().map_or(0, |g| g.tracker.active_count())
+    WARGUARD
+        .lock()
+        .as_ref()
+        .map_or(0, |g| g.tracker.active_count())
 }
 
 pub fn stats() -> (u64, u64) {
@@ -296,10 +317,18 @@ pub fn format_rules() -> String {
     };
     let mut out = String::new();
     for rule in &g.rules {
-        let port_str = rule.port.map_or(String::from("*"), |p| alloc::format!("{}", p));
+        let port_str = rule
+            .port
+            .map_or(String::from("*"), |p| alloc::format!("{}", p));
         out.push_str(&format!(
             "  {:>3}  {} {:>5} {:>4} port {:>5}  hits:{:<6}  {}\n",
-            rule.id, rule.action, rule.direction, rule.protocol, port_str, rule.hit_count, rule.description
+            rule.id,
+            rule.action,
+            rule.direction,
+            rule.protocol,
+            port_str,
+            rule.hit_count,
+            rule.description
         ));
     }
     out
@@ -343,17 +372,15 @@ fn log_firewall_decision(
     src_port: u16,
     dst_port: u16,
 ) {
-    crate::security::audit::log_event(
-        crate::security::audit::events::AuditEvent::FirewallMatch {
-            rule_id,
-            direction: direction.to_string(),
-            protocol: protocol.to_string(),
-            action: action.to_string(),
-            reason: reason.to_string(),
-            src_ip,
-            dst_ip,
-            src_port,
-            dst_port,
-        },
-    );
+    crate::security::audit::log_event(crate::security::audit::events::AuditEvent::FirewallMatch {
+        rule_id,
+        direction: direction.to_string(),
+        protocol: protocol.to_string(),
+        action: action.to_string(),
+        reason: reason.to_string(),
+        src_ip,
+        dst_ip,
+        src_port,
+        dst_port,
+    });
 }

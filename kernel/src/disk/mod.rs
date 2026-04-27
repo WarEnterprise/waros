@@ -83,7 +83,8 @@ impl Disk {
         count: u32,
         buffer: &mut [u8],
     ) -> Result<(), DiskError> {
-        self.cache.read_sectors(&mut self.device, sector, count, buffer)
+        self.cache
+            .read_sectors(&mut self.device, sector, count, buffer)
     }
 
     pub fn write_sectors(
@@ -92,7 +93,8 @@ impl Disk {
         count: u32,
         buffer: &[u8],
     ) -> Result<(), DiskError> {
-        self.cache.write_sectors(&mut self.device, sector, count, buffer)
+        self.cache
+            .write_sectors(&mut self.device, sector, count, buffer)
     }
 
     pub fn flush(&mut self) -> Result<(), DiskError> {
@@ -128,7 +130,9 @@ impl fmt::Display for DiskError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DeviceNotFound => formatter.write_str("no virtio-blk device found"),
-            Self::UnsupportedDevice(reason) => write!(formatter, "unsupported disk device: {reason}"),
+            Self::UnsupportedDevice(reason) => {
+                write!(formatter, "unsupported disk device: {reason}")
+            }
             Self::InitFailed(reason) => write!(formatter, "disk initialization failed: {reason}"),
             Self::OutOfMemory => formatter.write_str("disk DMA allocation failed"),
             Self::OutOfBounds => formatter.write_str("disk sector request is out of bounds"),

@@ -1,14 +1,14 @@
+use crate::auth::UserRole;
+use crate::auth::USER_DB;
 use crate::exec::elf::parse_elf;
 use crate::exec::process::{ProcessImageKind, ProcessState};
 use crate::exec::{current_pid, loader, mark_exit, PROCESS_TABLE};
-use crate::auth::UserRole;
-use crate::auth::USER_DB;
 use crate::fs;
 
 use super::{
     read_user_pointer_array_checked, read_user_string_checked, read_warexec_path_checked,
-    write_struct_to_user_checked, ECHILD, ENOENT, ENOEXEC, ENOMEM, ENOSYS, EPERM,
-    MAX_USER_STRING_LEN, WarExecPathKind,
+    write_struct_to_user_checked, WarExecPathKind, ECHILD, ENOENT, ENOEXEC, ENOMEM, ENOSYS, EPERM,
+    MAX_USER_STRING_LEN,
 };
 
 const WAIT_STATUS_EXIT_SHIFT: u32 = 8;
@@ -58,10 +58,14 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
     }
     let arg_refs: alloc::vec::Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-    let Some(pid) = current_pid() else { return EPERM; };
+    let Some(pid) = current_pid() else {
+        return EPERM;
+    };
     let (uid, old_page_table_phys, old_address_space, old_capabilities) = {
         let process_table = PROCESS_TABLE.lock();
-        let Some(proc) = process_table.get(pid) else { return EPERM; };
+        let Some(proc) = process_table.get(pid) else {
+            return EPERM;
+        };
         (
             proc.uid,
             proc.page_table_phys,
@@ -95,16 +99,23 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
         use x86_64::registers::control::{Cr3, Cr3Flags};
         use x86_64::structures::paging::PhysFrame;
         use x86_64::PhysAddr;
-        Cr3::write(PhysFrame::containing_address(PhysAddr::new(new_cr3)), Cr3Flags::empty());
+        Cr3::write(
+            PhysFrame::containing_address(PhysAddr::new(new_cr3)),
+            Cr3Flags::empty(),
+        );
     }
 
-    let map_result = loader::map_process_image_pub(&path_str, new_cr3, &elf, &elf_data, &arg_refs, &[]);
+    let map_result =
+        loader::map_process_image_pub(&path_str, new_cr3, &elf, &elf_data, &arg_refs, &[]);
 
     unsafe {
         use x86_64::registers::control::{Cr3, Cr3Flags};
         use x86_64::structures::paging::PhysFrame;
         use x86_64::PhysAddr;
-        Cr3::write(PhysFrame::containing_address(PhysAddr::new(saved_cr3)), Cr3Flags::empty());
+        Cr3::write(
+            PhysFrame::containing_address(PhysAddr::new(saved_cr3)),
+            Cr3Flags::empty(),
+        );
     }
 
     let (address_space, context, memory_pages) = match map_result {
@@ -123,22 +134,24 @@ pub fn sys_execve(path: *const u8, argv: *const *const u8, _envp: *const *const 
     process.page_table_phys = new_cr3;
     process.address_space = address_space;
     process.memory_pages = memory_pages;
-    process.name = path_str.rsplit('/').next().unwrap_or(path_str.as_str()).into();
+    process.name = path_str
+        .rsplit('/')
+        .next()
+        .unwrap_or(path_str.as_str())
+        .into();
     process.image_path = path_str;
     process.image_kind = ProcessImageKind::Elf;
     process.effective_capabilities = new_capabilities;
     process.env.clear();
     process.exit_code = None;
     process.state = ProcessState::Running;
-    crate::security::audit::log_event(
-        crate::security::audit::events::AuditEvent::ProcessExec {
-            pid,
-            path: process.image_path.clone(),
-            uid,
-            caps_before: crate::security::capabilities::summarize_capabilities(old_capabilities),
-            caps_after: crate::security::capabilities::summarize_capabilities(new_capabilities),
-        },
-    );
+    crate::security::audit::log_event(crate::security::audit::events::AuditEvent::ProcessExec {
+        pid,
+        path: process.image_path.clone(),
+        uid,
+        caps_before: crate::security::capabilities::summarize_capabilities(old_capabilities),
+        caps_after: crate::security::capabilities::summarize_capabilities(new_capabilities),
+    });
     drop(process_table);
 
     if let Err(error) = loader::teardown_process_image(old_page_table_phys, &old_address_space) {

@@ -115,8 +115,8 @@ pub fn run_offline_update_proof() -> Result<(), &'static str> {
             let bytes = manager
                 .fetch_package(&info.download_url)
                 .map_err(|_| "failed to fetch offline update proof bundle")?;
-            let mut bundle: super::manifest::WarPackBundle =
-                serde_json::from_slice(&bytes).map_err(|_| "failed to parse update proof bundle")?;
+            let mut bundle: super::manifest::WarPackBundle = serde_json::from_slice(&bytes)
+                .map_err(|_| "failed to parse update proof bundle")?;
             let Some(first_payload) = bundle.payloads.first_mut() else {
                 return Err("offline update proof payload missing");
             };
@@ -142,7 +142,9 @@ pub fn run_offline_update_proof() -> Result<(), &'static str> {
                 crate::serial_println!("[PROOF] WarPkg update: tampered offline bundle rejected");
                 Ok(())
             }
-            Err(PkgError::UpdateBusy) => Err("tampered update proof blocked by active update state"),
+            Err(PkgError::UpdateBusy) => {
+                Err("tampered update proof blocked by active update state")
+            }
             Err(_) => Err("tampered offline update rejected with wrong error"),
             Ok(_) => Err("tampered offline update unexpectedly applied"),
         }

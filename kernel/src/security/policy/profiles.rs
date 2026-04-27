@@ -4,9 +4,9 @@ use core::sync::atomic::{AtomicU8, Ordering};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum SecurityProfile {
-    Minimal  = 0,
+    Minimal = 0,
     Standard = 1,
-    Server   = 2,
+    Server = 2,
     Paranoid = 3,
 }
 

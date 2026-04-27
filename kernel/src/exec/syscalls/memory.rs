@@ -11,14 +11,7 @@ const PROT_WRITE: u32 = 0x2;
 const MAP_ANONYMOUS: u32 = 0x20;
 const PAGE_SIZE: u64 = 4096;
 
-pub fn sys_mmap(
-    _addr: u64,
-    len: u64,
-    prot: u32,
-    flags: u32,
-    _fd: u32,
-    _offset: i64,
-) -> i64 {
+pub fn sys_mmap(_addr: u64, len: u64, prot: u32, flags: u32, _fd: u32, _offset: i64) -> i64 {
     // Only support anonymous private mappings for now.
     if flags & MAP_ANONYMOUS == 0 {
         return ENOSYS;
@@ -58,7 +51,8 @@ pub fn sys_mmap(
         None => return EPERM,
     };
 
-    let mut flags_pt = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE | PageTableFlags::NO_EXECUTE;
+    let mut flags_pt =
+        PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE | PageTableFlags::NO_EXECUTE;
     if prot & PROT_WRITE != 0 {
         flags_pt |= PageTableFlags::WRITABLE;
     }
@@ -72,7 +66,9 @@ pub fn sys_mmap(
         match map_page(&mut mapper, page, frame, flags_pt, allocator) {
             Ok(()) => {
                 // SAFETY: page was just mapped.
-                unsafe { core::ptr::write_bytes(page_base as *mut u8, 0, 4096); }
+                unsafe {
+                    core::ptr::write_bytes(page_base as *mut u8, 0, 4096);
+                }
             }
             Err(_) => {
                 allocator.free_frame(frame.start_address());
@@ -120,7 +116,10 @@ pub fn sys_brk(address: u64) -> i64 {
         (
             process.address_space.initial_brk,
             process.address_space.brk,
-            process.address_space.heap_limit.min(process.address_space.stack_bottom),
+            process
+                .address_space
+                .heap_limit
+                .min(process.address_space.stack_bottom),
         )
     };
 

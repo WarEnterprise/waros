@@ -213,13 +213,8 @@ impl VirtioBlk {
             data_flags,
             STATUS_DESC_ID,
         )?;
-        self.queue.set_descriptor(
-            STATUS_DESC_ID,
-            status_phys,
-            1,
-            VIRTQ_DESC_F_WRITE,
-            0,
-        )?;
+        self.queue
+            .set_descriptor(STATUS_DESC_ID, status_phys, 1, VIRTQ_DESC_F_WRITE, 0)?;
         self.queue.add_available(HEADER_DESC_ID)?;
         self.transport.notify_queue(0);
 

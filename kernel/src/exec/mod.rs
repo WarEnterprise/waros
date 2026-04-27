@@ -2,6 +2,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use spin::{Lazy, Mutex};
+use x86_64::instructions::interrupts as cpu_interrupts;
+use x86_64::registers::rflags;
 
 use crate::auth::session;
 use crate::task;
@@ -114,11 +116,14 @@ impl ProcessTable {
 
     #[must_use]
     pub fn find_zombie_child(&self, parent_pid: u32, target_pid: i32) -> Option<(u32, i32)> {
-        self.processes.iter().find(|p| {
-            p.parent_pid == parent_pid
-                && p.state == ProcessState::Zombie
-                && (target_pid == -1 || p.pid as i32 == target_pid)
-        }).map(|p| (p.pid, p.exit_code.unwrap_or(0)))
+        self.processes
+            .iter()
+            .find(|p| {
+                p.parent_pid == parent_pid
+                    && p.state == ProcessState::Zombie
+                    && (target_pid == -1 || p.pid as i32 == target_pid)
+            })
+            .map(|p| (p.pid, p.exit_code.unwrap_or(0)))
     }
 }
 
@@ -130,20 +135,46 @@ pub fn init() {
     scheduler.enable();
 }
 
+/// Called from the timer interrupt handler (IRQ0). Uses `try_lock()` to
+/// prevent deadlock: if foreground code holds SCHEDULER, we simply skip
+/// this tick — the scheduler will catch up on the next one.
 pub fn tick() {
-    SCHEDULER.lock().timer_tick();
+    crate::heartbeat_tick();
+    if let Some(mut scheduler) = SCHEDULER.try_lock() {
+        scheduler.timer_tick();
+    }
 }
 
+/// Create or reuse the shell process. All lock acquisitions are wrapped in
+/// `without_interrupts` to prevent deadlock with the timer IRQ handler.
+/// Lock order: always acquire PROCESS_TABLE, release it, THEN acquire
+/// SCHEDULER — never hold both simultaneously.
 pub fn ensure_shell_process() -> u32 {
     let uid = session::current_uid();
-    let mut process_table = PROCESS_TABLE.lock();
-    if let Some(pid) = process_table.shell_pid {
-        if process_table.get(pid).is_some_and(|process| process.uid == uid) {
-            SCHEDULER.lock().set_current_pid(Some(pid));
-            return pid;
+
+    // Phase 1: Check if shell already exists (PROCESS_TABLE only, with IRQ protection).
+    let existing_pid = cpu_interrupts::without_interrupts(|| {
+        let process_table = PROCESS_TABLE.lock();
+        if let Some(pid) = process_table.shell_pid {
+            if process_table
+                .get(pid)
+                .is_some_and(|process| process.uid == uid)
+            {
+                return Some(pid);
+            }
         }
+        None
+    });
+
+    if let Some(pid) = existing_pid {
+        // Phase 1b: Set scheduler current — SCHEDULER only, separate lock scope.
+        cpu_interrupts::without_interrupts(|| {
+            SCHEDULER.lock().set_current_pid(Some(pid));
+        });
+        return pid;
     }
 
+    // Phase 2: Create process (PROCESS_TABLE only, with IRQ protection).
     let process = Process {
         pid: 0,
         parent_pid: 0,
@@ -174,41 +205,88 @@ pub fn ensure_shell_process() -> u32 {
         image_path: String::from("shell"),
         effective_capabilities: crate::security::capabilities::shell_capabilities_for_uid(uid),
     };
-    let pid = process_table.create_process(process).unwrap_or(1);
-    process_table.shell_pid = Some(pid);
-    drop(process_table);
-    crate::security::audit::log_event(
-        crate::security::audit::events::AuditEvent::ProcessSpawned {
-            pid,
-            name: String::from("waros-shell"),
-            uid,
-        },
-    );
-    SCHEDULER.lock().set_current_pid(Some(pid));
+    let pid = cpu_interrupts::without_interrupts(|| {
+        let mut process_table = PROCESS_TABLE.lock();
+        let pid = process_table.create_process(process).unwrap_or(1);
+        process_table.shell_pid = Some(pid);
+        pid
+    });
+    crate::security::audit::log_event(crate::security::audit::events::AuditEvent::ProcessSpawned {
+        pid,
+        name: String::from("waros-shell"),
+        uid,
+    });
+    // Phase 3: Set scheduler current — SCHEDULER only, with IRQ protection.
+    cpu_interrupts::without_interrupts(|| {
+        SCHEDULER.lock().set_current_pid(Some(pid));
+    });
     pid
 }
 
-pub fn mark_running(pid: u32) {
-    if let Some(process) = PROCESS_TABLE.lock().get_mut(pid) {
-        process.state = ProcessState::Running;
-        process.cpu_ticks = process.cpu_ticks.saturating_add(1);
+pub fn reset_shell_process() {
+    crate::serial_println!(
+        "[exec] reset_shell_process begin ticks={} IF={}",
+        crate::arch::x86_64::interrupts::tick_count(),
+        if cpu_interrupts::are_enabled() { "on" } else { "off" }
+    );
+    let shell = cpu_interrupts::without_interrupts(|| {
+        let mut process_table = PROCESS_TABLE.try_lock()?;
+        let pid = process_table.shell_pid.take()?;
+        let task_id = process_table.get(pid).and_then(|process| process.task_id);
+        process_table.remove(pid);
+        Some((pid, task_id))
+    });
+
+    let Some((pid, task_id)) = shell else {
+        crate::serial_println!("[exec] reset_shell_process no-shell");
+        return;
+    };
+
+    cpu_interrupts::without_interrupts(|| {
+        if let Some(mut scheduler) = SCHEDULER.try_lock() {
+            scheduler.dequeue(pid);
+        } else {
+            crate::serial_println!("[exec] reset_shell_process scheduler-busy pid={}", pid);
+        }
+    });
+
+    if let Some(task_id) = task_id {
+        let _ = task::kill(task_id);
     }
-    SCHEDULER.lock().set_current_pid(Some(pid));
+
+    crate::serial_println!("[exec] reset_shell_process done pid={}", pid);
+}
+
+pub fn mark_running(pid: u32) {
+    cpu_interrupts::without_interrupts(|| {
+        if let Some(process) = PROCESS_TABLE.lock().get_mut(pid) {
+            process.state = ProcessState::Running;
+            process.cpu_ticks = process.cpu_ticks.saturating_add(1);
+        }
+    });
+    cpu_interrupts::without_interrupts(|| {
+        SCHEDULER.lock().set_current_pid(Some(pid));
+    });
 }
 
 pub fn mark_exit(pid: u32, exit_code: i32) {
-    if let Some(process) = PROCESS_TABLE.lock().get_mut(pid) {
-        process.state = ProcessState::Zombie;
-        process.exit_code = Some(exit_code);
-    }
-    SCHEDULER.lock().dequeue(pid);
-    crate::security::audit::log_event(
-        crate::security::audit::events::AuditEvent::ProcessExited { pid, exit_code },
-    );
+    cpu_interrupts::without_interrupts(|| {
+        if let Some(process) = PROCESS_TABLE.lock().get_mut(pid) {
+            process.state = ProcessState::Zombie;
+            process.exit_code = Some(exit_code);
+        }
+    });
+    cpu_interrupts::without_interrupts(|| {
+        SCHEDULER.lock().dequeue(pid);
+    });
+    crate::security::audit::log_event(crate::security::audit::events::AuditEvent::ProcessExited {
+        pid,
+        exit_code,
+    });
 }
 
 pub fn current_pid() -> Option<u32> {
-    SCHEDULER.lock().current_pid()
+    cpu_interrupts::without_interrupts(|| SCHEDULER.lock().current_pid())
 }
 
 pub fn current_uid() -> u16 {
@@ -226,74 +304,89 @@ pub fn run_user_process_preserve_zombie(pid: u32) -> Result<i32, ExecError> {
 }
 
 fn run_user_process_with_reap(pid: u32, reap_on_return: bool) -> Result<i32, ExecError> {
-    let shell_pid = ensure_shell_process();
-    SCHEDULER.lock().disable();
-    mark_running(pid);
-    let exit_code = loop {
-        let process = PROCESS_TABLE
-            .lock()
-            .get(pid)
-            .cloned()
-            .ok_or(ExecError::ProcessNotFound)?;
+    let interrupts_were_enabled = rflags::read().contains(rflags::RFlags::INTERRUPT_FLAG);
+    let result = (|| {
+        let shell_pid = ensure_shell_process();
+        SCHEDULER.lock().disable();
+        mark_running(pid);
+        let exit_code = loop {
+            let process = PROCESS_TABLE
+                .lock()
+                .get(pid)
+                .cloned()
+                .ok_or(ExecError::ProcessNotFound)?;
 
-        // Switch to the process's isolated page table before entering ring 3.
-        let kcr3 = loader::kernel_cr3();
-        if process.page_table_phys != 0 && process.page_table_phys != kcr3 {
-            use x86_64::registers::control::{Cr3, Cr3Flags};
-            use x86_64::structures::paging::PhysFrame;
-            use x86_64::PhysAddr;
-            let frame = PhysFrame::containing_address(PhysAddr::new(process.page_table_phys));
-            // SAFETY: process.page_table_phys preserves the non-user kernel/runtime mappings needed
-            // after the CR3 switch.
-            unsafe { Cr3::write(frame, Cr3Flags::empty()); }
-        }
+            // Switch to the process's isolated page table before entering ring 3.
+            let kcr3 = loader::kernel_cr3();
+            if process.page_table_phys != 0 && process.page_table_phys != kcr3 {
+                use x86_64::registers::control::{Cr3, Cr3Flags};
+                use x86_64::structures::paging::PhysFrame;
+                use x86_64::PhysAddr;
+                let frame = PhysFrame::containing_address(PhysAddr::new(process.page_table_phys));
+                // SAFETY: process.page_table_phys preserves the non-user kernel/runtime mappings needed
+                // after the CR3 switch.
+                unsafe {
+                    Cr3::write(frame, Cr3Flags::empty());
+                }
+            }
 
-        let user_return = unsafe {
-            syscall::run_user_process(
-                process.context.rip,
-                process.context.rsp,
-                process.context.rflags,
-                process.context.cs,
-                process.context.ss,
-            )
+            let user_return = unsafe {
+                syscall::run_user_process(
+                    process.context.rip,
+                    process.context.rsp,
+                    process.context.rflags,
+                    process.context.cs,
+                    process.context.ss,
+                )
+            };
+
+            // Restore kernel page table after every ring-3 run, including exec image replacement.
+            if kcr3 != 0 {
+                use x86_64::registers::control::{Cr3, Cr3Flags};
+                use x86_64::structures::paging::PhysFrame;
+                use x86_64::PhysAddr;
+                let frame = PhysFrame::containing_address(PhysAddr::new(kcr3));
+                // SAFETY: KERNEL_CR3 was saved at boot from the bootloader-established CR3.
+                unsafe {
+                    Cr3::write(frame, Cr3Flags::empty());
+                }
+            }
+
+            match user_return {
+                syscall::UserReturn::Exit(exit_code) => break exit_code,
+                syscall::UserReturn::Exec => continue,
+            }
         };
 
-        // Restore kernel page table after every ring-3 run, including exec image replacement.
-        if kcr3 != 0 {
-            use x86_64::registers::control::{Cr3, Cr3Flags};
-            use x86_64::structures::paging::PhysFrame;
-            use x86_64::PhysAddr;
-            let frame = PhysFrame::containing_address(PhysAddr::new(kcr3));
-            // SAFETY: KERNEL_CR3 was saved at boot from the bootloader-established CR3.
-            unsafe { Cr3::write(frame, Cr3Flags::empty()); }
+        {
+            let mut scheduler = SCHEDULER.lock();
+            scheduler.dequeue(pid);
+            scheduler.set_current_pid(Some(shell_pid));
+            scheduler.enable();
         }
 
-        match user_return {
-            syscall::UserReturn::Exit(exit_code) => break exit_code,
-            syscall::UserReturn::Exec => continue,
+        if let Some(process) = PROCESS_TABLE.lock().get_mut(shell_pid) {
+            process.state = ProcessState::Running;
         }
-    };
 
-    {
-        let mut scheduler = SCHEDULER.lock();
-        scheduler.dequeue(pid);
-        scheduler.set_current_pid(Some(shell_pid));
-        scheduler.enable();
+        let teardown_result = loader::teardown_process(pid);
+        if reap_on_return {
+            PROCESS_TABLE.lock().remove(pid);
+        } else if let Some(process) = PROCESS_TABLE.lock().get_mut(pid) {
+            process.memory_pages = 0;
+            process.page_table_phys = 0;
+        }
+        teardown_result?;
+        Ok(exit_code)
+    })();
+
+    if interrupts_were_enabled {
+        cpu_interrupts::enable();
+    } else {
+        cpu_interrupts::disable();
     }
 
-    if let Some(process) = PROCESS_TABLE.lock().get_mut(shell_pid) {
-        process.state = ProcessState::Running;
-    }
-
-    let teardown_result = loader::teardown_process(pid);
-    if reap_on_return {
-        PROCESS_TABLE.lock().remove(pid);
-    } else if let Some(process) = PROCESS_TABLE.lock().get_mut(pid) {
-        process.memory_pages = 0;
-        process.page_table_phys = 0;
-    }
-    teardown_result?;
-    Ok(exit_code)
+    result
 }
 
 pub fn kill_process(pid: u32, exit_code: i32) -> Result<(), ExecError> {
@@ -306,14 +399,17 @@ pub fn kill_process(pid: u32, exit_code: i32) -> Result<(), ExecError> {
     }
 
     let mut process_table = PROCESS_TABLE.lock();
-    let process = process_table.get_mut(pid).ok_or(ExecError::ProcessNotFound)?;
+    let process = process_table
+        .get_mut(pid)
+        .ok_or(ExecError::ProcessNotFound)?;
     process.state = ProcessState::Zombie;
     process.exit_code = Some(exit_code);
     drop(process_table);
     SCHEDULER.lock().dequeue(pid);
-    crate::security::audit::log_event(
-        crate::security::audit::events::AuditEvent::ProcessExited { pid, exit_code },
-    );
+    crate::security::audit::log_event(crate::security::audit::events::AuditEvent::ProcessExited {
+        pid,
+        exit_code,
+    });
     Ok(())
 }
 
@@ -391,13 +487,11 @@ pub fn spawn_shell_command(command_line: &str, priority: Priority) -> Result<u32
         effective_capabilities: crate::security::capabilities::spawn_capabilities(parent_pid, uid),
     };
     let pid = PROCESS_TABLE.lock().create_process(process)?;
-    crate::security::audit::log_event(
-        crate::security::audit::events::AuditEvent::ProcessSpawned {
-            pid,
-            name: command.clone(),
-            uid,
-        },
-    );
+    crate::security::audit::log_event(crate::security::audit::events::AuditEvent::ProcessSpawned {
+        pid,
+        name: command.clone(),
+        uid,
+    });
     SCHEDULER.lock().enqueue(pid, priority);
 
     let command_for_task = command.clone();

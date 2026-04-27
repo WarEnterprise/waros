@@ -71,6 +71,114 @@ impl UsbInterface {
     pub fn boot_mouse(&self) -> bool {
         self.class == 0x03 && self.subclass == 0x01 && self.protocol == 0x02
     }
+
+    /// CDC-ECM: Communications Device Class - Ethernet Control Model
+    /// Class 0x02 (Communications), Subclass 0x06 (ECM)
+    #[must_use]
+    pub fn is_cdc_ecm(&self) -> bool {
+        self.class == 0x02 && self.subclass == 0x06
+    }
+
+    /// CDC-NCM: Communications Device Class - Network Control Model
+    /// Class 0x02 (Communications), Subclass 0x0D (NCM)
+    #[must_use]
+    pub fn is_cdc_ncm(&self) -> bool {
+        self.class == 0x02 && self.subclass == 0x0D
+    }
+
+    /// RNDIS: Microsoft Remote NDIS (class 0x02, subclass 0x02, protocol 0xFF),
+    /// wireless-class RNDIS (0xE0, 0x01, 0x03), or the Android/Windows
+    /// composite profile exposed as MISC/04/01.
+    #[must_use]
+    pub fn is_rndis(&self) -> bool {
+        (self.class == 0x02 && self.subclass == 0x02 && self.protocol == 0xFF)
+            || (self.class == 0xE0 && self.subclass == 0x01 && self.protocol == 0x03)
+            || (self.class == 0xEF && self.subclass == 0x04 && self.protocol == 0x01)
+            || (self.class == 0xEF && self.subclass == 0x01 && self.protocol == 0x01)
+    }
+
+    /// CDC-EEM: Ethernet Emulation Model (used by some USB tethering)
+    #[must_use]
+    pub fn is_cdc_eem(&self) -> bool {
+        self.class == 0x02 && self.subclass == 0x0C
+    }
+
+    /// Any USB network-class interface (CDC-ECM, CDC-NCM, RNDIS, CDC-EEM)
+    #[must_use]
+    pub fn is_network(&self) -> bool {
+        self.is_cdc_ecm() || self.is_cdc_ncm() || self.is_rndis() || self.is_cdc_eem()
+    }
+
+    /// CDC Data interface (paired with a CDC control interface)
+    #[must_use]
+    pub fn is_cdc_data(&self) -> bool {
+        self.class == 0x0A
+    }
+
+    #[must_use]
+    pub fn is_ptp_mtp_like(&self) -> bool {
+        self.class == 0x06
+    }
+
+    #[must_use]
+    pub fn is_adb(&self) -> bool {
+        self.class == 0xFF && self.subclass == 0x42 && self.protocol == 0x01
+    }
+
+    #[must_use]
+    pub fn is_vendor_specific(&self) -> bool {
+        self.class == 0xFF
+    }
+
+    #[must_use]
+    pub fn has_bulk_in(&self) -> bool {
+        self.endpoints.iter().any(|endpoint| {
+            endpoint.direction == EndpointDirection::In
+                && endpoint.transfer_type == TransferType::Bulk
+        })
+    }
+
+    #[must_use]
+    pub fn has_bulk_out(&self) -> bool {
+        self.endpoints.iter().any(|endpoint| {
+            endpoint.direction == EndpointDirection::Out
+                && endpoint.transfer_type == TransferType::Bulk
+        })
+    }
+
+    #[must_use]
+    pub fn has_interrupt_in(&self) -> bool {
+        self.endpoints.iter().any(|endpoint| {
+            endpoint.direction == EndpointDirection::In
+                && endpoint.transfer_type == TransferType::Interrupt
+        })
+    }
+
+    #[must_use]
+    pub fn has_interrupt_out(&self) -> bool {
+        self.endpoints.iter().any(|endpoint| {
+            endpoint.direction == EndpointDirection::Out
+                && endpoint.transfer_type == TransferType::Interrupt
+        })
+    }
+
+    /// Human-readable protocol name for USB network interfaces.
+    #[must_use]
+    pub fn usb_net_protocol_name(&self) -> &'static str {
+        if self.is_cdc_ecm() {
+            "CDC-ECM"
+        } else if self.is_cdc_ncm() {
+            "CDC-NCM"
+        } else if self.is_rndis() {
+            "RNDIS"
+        } else if self.is_cdc_eem() {
+            "CDC-EEM"
+        } else if self.is_cdc_data() {
+            "CDC-Data"
+        } else {
+            "unknown"
+        }
+    }
 }
 
 pub fn parse_configuration_descriptors(data: &[u8]) -> Result<UsbConfiguration, &'static str> {
@@ -136,7 +244,10 @@ pub fn parse_configuration_descriptors(data: &[u8]) -> Result<UsbConfiguration, 
             0x21 if length >= 9 => {
                 if let Some(interface) = interfaces.last_mut() {
                     interface.hid = Some(HidDescriptorInfo {
-                        report_descriptor_length: u16::from_le_bytes([descriptor[7], descriptor[8]]),
+                        report_descriptor_length: u16::from_le_bytes([
+                            descriptor[7],
+                            descriptor[8],
+                        ]),
                     });
                 }
             }
@@ -157,12 +268,30 @@ pub fn parse_configuration_descriptors(data: &[u8]) -> Result<UsbConfiguration, 
 #[must_use]
 pub fn classify_device(device_class: u8, interfaces: &[UsbInterface]) -> DeviceCategory {
     match device_class {
+        0x02 => {
+            // Communications Device Class — check for network sub-protocols
+            if interfaces.iter().any(UsbInterface::is_network) {
+                return DeviceCategory::Network;
+            }
+            return DeviceCategory::UsbDevice;
+        }
         0x03 => return DeviceCategory::Input,
         0x08 => return DeviceCategory::Storage,
         0x09 => return DeviceCategory::UsbDevice,
+        0xE0 | 0xEF => {
+            // Wireless / Miscellaneous — RNDIS can live here
+            if interfaces.iter().any(UsbInterface::is_rndis) {
+                return DeviceCategory::Network;
+            }
+            return DeviceCategory::UsbDevice;
+        }
         _ => {}
     }
 
+    // Interface-level classification (composite devices often set device_class=0x00)
+    if interfaces.iter().any(UsbInterface::is_network) {
+        return DeviceCategory::Network;
+    }
     if interfaces.iter().any(UsbInterface::is_hid) {
         return DeviceCategory::Input;
     }
@@ -171,4 +300,24 @@ pub fn classify_device(device_class: u8, interfaces: &[UsbInterface]) -> DeviceC
     }
 
     DeviceCategory::UsbDevice
+}
+
+/// For a USB network device, identify the specific protocol in use.
+#[must_use]
+pub fn usb_net_protocol(interfaces: &[UsbInterface]) -> &'static str {
+    for iface in interfaces {
+        if iface.is_cdc_ecm() {
+            return "CDC-ECM";
+        }
+        if iface.is_cdc_ncm() {
+            return "CDC-NCM";
+        }
+        if iface.is_rndis() {
+            return "RNDIS";
+        }
+        if iface.is_cdc_eem() {
+            return "CDC-EEM";
+        }
+    }
+    "unknown"
 }

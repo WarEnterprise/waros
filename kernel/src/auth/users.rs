@@ -115,11 +115,7 @@ impl UserDB {
         Ok(uid)
     }
 
-    pub fn authenticate(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> Result<UserAccount, AuthError> {
+    pub fn authenticate(&self, username: &str, password: &str) -> Result<UserAccount, AuthError> {
         let user = self.find_by_name(username).ok_or(AuthError::UserNotFound)?;
         if !user.active {
             return Err(AuthError::AccountDisabled);
@@ -178,6 +174,14 @@ impl UserDB {
             .ok_or(AuthError::UserNotFound)?;
         self.users.remove(index);
         Ok(())
+    }
+
+    pub fn restore_user_for_rollback(&mut self, user: UserAccount) {
+        if self.find_by_uid(user.uid).is_none() {
+            self.next_uid = self.next_uid.max(user.uid.saturating_add(1));
+            self.users.push(user);
+            self.users.sort_by(|left, right| left.uid.cmp(&right.uid));
+        }
     }
 
     pub fn record_login(&mut self, uid: u16) -> Result<u64, AuthError> {
@@ -256,11 +260,15 @@ impl UserDB {
         Ok(Self { users, next_uid })
     }
 
-    pub fn save_to_fs(&self) {
+    pub fn try_save_to_fs(&self) -> Result<(), crate::fs::FsError> {
         let data = self.serialize();
-        let _ = crate::fs::FILESYSTEM
+        crate::fs::FILESYSTEM
             .lock()
-            .write_system(USERS_DB_PATH, &data, false);
+            .write_system(USERS_DB_PATH, &data, false)
+    }
+
+    pub fn save_to_fs(&self) {
+        let _ = self.try_save_to_fs();
     }
 
     #[must_use]
@@ -320,11 +328,7 @@ fn read_string(data: &[u8], cursor: &mut usize, len: usize) -> Result<String, Au
     String::from_utf8(bytes.to_vec()).map_err(|_| AuthError::SerializationError)
 }
 
-fn read_bytes<'a>(
-    data: &'a [u8],
-    cursor: &mut usize,
-    len: usize,
-) -> Result<&'a [u8], AuthError> {
+fn read_bytes<'a>(data: &'a [u8], cursor: &mut usize, len: usize) -> Result<&'a [u8], AuthError> {
     let end = cursor.saturating_add(len);
     let bytes = data
         .get(*cursor..end)
@@ -332,4 +336,3 @@ fn read_bytes<'a>(
     *cursor = end;
     Ok(bytes)
 }
-

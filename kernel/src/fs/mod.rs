@@ -4,15 +4,16 @@ use alloc::vec::Vec;
 
 use spin::{Lazy, Mutex};
 
+use crate::arch::x86_64::interrupts;
+use crate::arch::x86_64::pit::PIT_FREQUENCY_HZ;
 use crate::auth::permissions::protected_path_owner;
 use crate::auth::session;
 use crate::auth::{FilePermissions, UserRole};
-use crate::arch::x86_64::interrupts;
 use crate::memory;
 use crate::{boot_complete_ms, BUILD_DATE, KERNEL_VERSION};
 
 pub const MAX_FILES: usize = 128;
-pub const MAX_FILE_SIZE: usize = 64 * 1024;
+pub const MAX_FILE_SIZE: usize = 1024 * 1024;
 pub const TOTAL_CAPACITY: usize = 4 * 1024 * 1024;
 pub const MAX_PATH_LEN: usize = 96;
 const MAX_COMPONENT_LEN: usize = 31;
@@ -89,13 +90,15 @@ impl WarFS {
         self.write_system(name, data, true)
     }
 
-    pub fn write_system(
-        &mut self,
-        name: &str,
-        data: &[u8],
-        readonly: bool,
-    ) -> Result<(), FsError> {
-        self.write_internal(name, data, 0, UserRole::Admin, FilePermissions::system(), readonly)
+    pub fn write_system(&mut self, name: &str, data: &[u8], readonly: bool) -> Result<(), FsError> {
+        self.write_internal(
+            name,
+            data,
+            0,
+            UserRole::Admin,
+            FilePermissions::system(),
+            readonly,
+        )
     }
 
     pub fn write_as(
@@ -107,6 +110,17 @@ impl WarFS {
         permissions: FilePermissions,
     ) -> Result<(), FsError> {
         self.write_internal(name, data, current_uid, current_role, permissions, false)
+    }
+
+    pub fn write_owned_as(
+        &mut self,
+        name: &str,
+        data: Vec<u8>,
+        current_uid: u16,
+        current_role: UserRole,
+        permissions: FilePermissions,
+    ) -> Result<(), FsError> {
+        self.write_internal_owned(name, data, current_uid, current_role, permissions, false)
     }
 
     pub fn touch(&mut self, name: &str) -> Result<(), FsError> {
@@ -123,12 +137,7 @@ impl WarFS {
         self.write_as(name, &[], current_uid, current_role, permissions)
     }
 
-    pub fn seed_system(
-        &mut self,
-        name: &str,
-        data: &[u8],
-        readonly: bool,
-    ) -> Result<(), FsError> {
+    pub fn seed_system(&mut self, name: &str, data: &[u8], readonly: bool) -> Result<(), FsError> {
         if data.len() > MAX_FILE_SIZE {
             return Err(FsError::FileTooLarge);
         }
@@ -419,13 +428,35 @@ impl WarFS {
 
     #[must_use]
     pub fn owned_file_count(&self, uid: u16) -> usize {
-        self.files.iter().filter(|entry| entry.owner_uid == uid).count()
+        self.files
+            .iter()
+            .filter(|entry| entry.owner_uid == uid)
+            .count()
     }
 
     fn write_internal(
         &mut self,
         name: &str,
         data: &[u8],
+        current_uid: u16,
+        current_role: UserRole,
+        permissions: FilePermissions,
+        readonly: bool,
+    ) -> Result<(), FsError> {
+        self.write_internal_owned(
+            name,
+            data.to_vec(),
+            current_uid,
+            current_role,
+            permissions,
+            readonly,
+        )
+    }
+
+    fn write_internal_owned(
+        &mut self,
+        name: &str,
+        data: Vec<u8>,
         current_uid: u16,
         current_role: UserRole,
         permissions: FilePermissions,
@@ -458,8 +489,8 @@ impl WarFS {
             if !entry.permissions.can_write(current_uid, current_role) {
                 return Err(FsError::PermissionDenied);
             }
-            entry.data.clear();
-            entry.data.extend_from_slice(data);
+            // Reuse large download buffers instead of cloning them back into WarFS.
+            entry.data = data;
             entry.modified_at = now;
             entry.readonly = readonly;
         } else {
@@ -469,7 +500,7 @@ impl WarFS {
 
             self.files.push(FileEntry {
                 name: canonical.clone(),
-                data: data.to_vec(),
+                data,
                 created_at: now,
                 modified_at: now,
                 readonly,
@@ -518,7 +549,11 @@ impl core::fmt::Display for FsError {
             Self::AlreadyExists => formatter.write_str("file already exists"),
             Self::FilesystemFull => formatter.write_str("filesystem full"),
             Self::FilenameTooLong => formatter.write_str("filename too long"),
-            Self::FileTooLarge => formatter.write_str("file exceeds 64 KiB limit"),
+            Self::FileTooLarge => write!(
+                formatter,
+                "file exceeds {} KiB limit",
+                MAX_FILE_SIZE / 1024
+            ),
             Self::ReadOnly => formatter.write_str("file is read-only"),
             Self::InvalidFilename => formatter.write_str("invalid filename"),
             Self::PermissionDenied => formatter.write_str("permission denied"),
@@ -536,10 +571,12 @@ fn seed_system_path(
     data: &[u8],
     readonly: bool,
 ) -> Result<(), FsError> {
-    filesystem.seed_system(path, data, readonly).map_err(|error| {
-        crate::serial_println!("[ERR] WarFS seed {}: {}", path, error);
-        error
-    })
+    filesystem
+        .seed_system(path, data, readonly)
+        .map_err(|error| {
+            crate::serial_println!("[ERR] WarFS seed {}: {}", path, error);
+            error
+        })
 }
 
 fn clear_seed_output(filesystem: &mut WarFS, path: &str) -> Result<(), FsError> {
@@ -588,7 +625,12 @@ Filesystem: {} files max, {} KiB max per file\n",
 
     let mut filesystem = FILESYSTEM.lock();
     seed_system_path(&mut filesystem, &directory_marker_path("/var"), &[], true)?;
-    seed_system_path(&mut filesystem, &directory_marker_path("/var/pkg"), &[], true)?;
+    seed_system_path(
+        &mut filesystem,
+        &directory_marker_path("/var/pkg"),
+        &[],
+        true,
+    )?;
     seed_system_path(
         &mut filesystem,
         &directory_marker_path("/var/pkg/staged"),
@@ -601,7 +643,12 @@ Filesystem: {} files max, {} KiB max per file\n",
         &[],
         true,
     )?;
-    seed_system_path(&mut filesystem, &directory_marker_path("/recovery"), &[], true)?;
+    seed_system_path(
+        &mut filesystem,
+        &directory_marker_path("/recovery"),
+        &[],
+        true,
+    )?;
     seed_system_path(
         &mut filesystem,
         "/recovery/README.txt",
@@ -611,7 +658,12 @@ Filesystem: {} files max, {} KiB max per file\n",
     seed_system_path(&mut filesystem, "/readme.txt", readme.as_bytes(), true)?;
     seed_system_path(&mut filesystem, "/sysinfo.txt", sysinfo.as_bytes(), true)?;
     let smoke_elf = crate::exec::smoke::elf_bytes();
-    seed_system_path(&mut filesystem, crate::exec::smoke::SMOKE_ELF_PATH, &smoke_elf, true)?;
+    seed_system_path(
+        &mut filesystem,
+        crate::exec::smoke::SMOKE_ELF_PATH,
+        &smoke_elf,
+        true,
+    )?;
     seed_system_path(
         &mut filesystem,
         crate::exec::smoke::ABI_READ_SMOKE_FILE_PATH,
@@ -738,7 +790,10 @@ Filesystem: {} files max, {} KiB max per file\n",
         &[],
         true,
     )?;
-    clear_seed_output(&mut filesystem, crate::exec::smoke::ABI_WRITE_SMOKE_FILE_PATH)?;
+    clear_seed_output(
+        &mut filesystem,
+        crate::exec::smoke::ABI_WRITE_SMOKE_FILE_PATH,
+    )?;
     let abi_write_elf = crate::exec::smoke::abi_write_elf_bytes();
     seed_system_path(
         &mut filesystem,
@@ -761,6 +816,35 @@ pub fn write_current(name: &str, data: &[u8]) -> Result<String, FsError> {
     let mut fs = FILESYSTEM.lock();
     let existed = fs.find(&resolved).is_some();
     fs.write_as(&resolved, data, uid, role, permissions)?;
+    drop(fs);
+
+    crate::security::audit::log_event(if existed {
+        crate::security::audit::events::AuditEvent::FileModified {
+            path: resolved.clone(),
+            uid,
+        }
+    } else {
+        crate::security::audit::events::AuditEvent::FileCreated {
+            path: resolved.clone(),
+            uid,
+        }
+    });
+
+    Ok(resolved)
+}
+
+pub fn write_current_owned(name: &str, data: Vec<u8>) -> Result<String, FsError> {
+    let resolved = session::resolve_path(name);
+    if !session::can_access_path(&resolved, true) {
+        return Err(FsError::PermissionDenied);
+    }
+
+    let uid = session::current_uid();
+    let role = session::current_role();
+    let permissions = default_permissions_for(&resolved, uid);
+    let mut fs = FILESYSTEM.lock();
+    let existed = fs.find(&resolved).is_some();
+    fs.write_owned_as(&resolved, data, uid, role, permissions)?;
     drop(fs);
 
     crate::security::audit::log_event(if existed {
@@ -806,12 +890,10 @@ pub fn create_new_current(name: &str, data: &[u8]) -> Result<String, FsError> {
         .lock()
         .create_new_as(&resolved, data, uid, permissions, false)?;
 
-    crate::security::audit::log_event(
-        crate::security::audit::events::AuditEvent::FileCreated {
-            path: resolved.clone(),
-            uid,
-        },
-    );
+    crate::security::audit::log_event(crate::security::audit::events::AuditEvent::FileCreated {
+        path: resolved.clone(),
+        uid,
+    });
 
     Ok(resolved)
 }
@@ -853,12 +935,10 @@ pub fn delete_current(name: &str) -> Result<String, FsError> {
     let role = session::current_role();
     FILESYSTEM.lock().delete_as(&resolved, uid, role)?;
 
-    crate::security::audit::log_event(
-        crate::security::audit::events::AuditEvent::FileDeleted {
-            path: resolved.clone(),
-            uid,
-        },
-    );
+    crate::security::audit::log_event(crate::security::audit::events::AuditEvent::FileDeleted {
+        path: resolved.clone(),
+        uid,
+    });
 
     Ok(resolved)
 }
@@ -983,9 +1063,10 @@ pub fn directory_exists(path: &str) -> bool {
 
     let marker_path = directory_marker_path(&resolved);
     let filesystem = FILESYSTEM.lock();
-    filesystem.list().iter().any(|entry| {
-        entry.name == marker_path || entry.name.starts_with(&(resolved.clone() + "/"))
-    })
+    filesystem
+        .list()
+        .iter()
+        .any(|entry| entry.name == marker_path || entry.name.starts_with(&(resolved.clone() + "/")))
 }
 
 pub fn change_directory(path: &str) -> Result<String, FsError> {
@@ -1111,7 +1192,8 @@ pub fn diff_current(left: &str, right: &str) -> Result<Vec<String>, FsError> {
     let left_binding = read_current(left)?;
     let right_binding = read_current(right)?;
     let left_text = core::str::from_utf8(&left_binding.1).map_err(|_| FsError::InvalidFilename)?;
-    let right_text = core::str::from_utf8(&right_binding.1).map_err(|_| FsError::InvalidFilename)?;
+    let right_text =
+        core::str::from_utf8(&right_binding.1).map_err(|_| FsError::InvalidFilename)?;
     let left_lines: Vec<&str> = left_text.lines().collect();
     let right_lines: Vec<&str> = right_text.lines().collect();
     let max = left_lines.len().max(right_lines.len());
@@ -1163,11 +1245,12 @@ pub fn owner_label(path: &str) -> Option<(u16, String)> {
 
 #[must_use]
 pub fn format_timestamp(ticks: u64) -> String {
-    let seconds = ticks / 100;
+    let hz = u64::from(PIT_FREQUENCY_HZ).max(1);
+    let seconds = ticks / hz;
     let hours = seconds / 3600;
     let minutes = (seconds % 3600) / 60;
     let seconds = seconds % 60;
-    format!("{hours:02}:{minutes:02}:{seconds:02}")
+    format!("boot+{hours:02}:{minutes:02}:{seconds:02}")
 }
 
 #[must_use]

@@ -2,15 +2,44 @@ use alloc::string::String;
 
 #[derive(Debug, Clone)]
 pub enum AuditEvent {
-    LoginSuccess { username: String, uid: u16 },
-    LoginFailed { username: String, reason: String },
-    Logout { username: String, uid: u16 },
-    FileCreated { path: String, uid: u16 },
-    FileModified { path: String, uid: u16 },
-    FileDeleted { path: String, uid: u16 },
-    FileAccessDenied { path: String, uid: u16, operation: String },
-    ProcessSpawned { pid: u32, name: String, uid: u16 },
-    ProcessExited { pid: u32, exit_code: i32 },
+    LoginSuccess {
+        username: String,
+        uid: u16,
+    },
+    LoginFailed {
+        username: String,
+        reason: String,
+    },
+    Logout {
+        username: String,
+        uid: u16,
+    },
+    FileCreated {
+        path: String,
+        uid: u16,
+    },
+    FileModified {
+        path: String,
+        uid: u16,
+    },
+    FileDeleted {
+        path: String,
+        uid: u16,
+    },
+    FileAccessDenied {
+        path: String,
+        uid: u16,
+        operation: String,
+    },
+    ProcessSpawned {
+        pid: u32,
+        name: String,
+        uid: u16,
+    },
+    ProcessExited {
+        pid: u32,
+        exit_code: i32,
+    },
     ProcessExec {
         pid: u32,
         path: String,
@@ -18,7 +47,10 @@ pub enum AuditEvent {
         caps_before: String,
         caps_after: String,
     },
-    CapabilityDenied { pid: u32, capability: String },
+    CapabilityDenied {
+        pid: u32,
+        capability: String,
+    },
     FirewallMatch {
         rule_id: u32,
         direction: String,
@@ -49,11 +81,27 @@ pub enum AuditEvent {
         outcome: String,
         reason: String,
     },
-    PackageInstalled { name: String, version: String, uid: u16 },
-    QuantumRegisterAllocated { pid: u32, qubits: u8 },
-    SecurityPolicyChanged { change: String, uid: u16 },
-    IntegrityViolation { path: String, expected_hash: String, actual_hash: String },
-    SystemBoot { kernel_version: String },
+    PackageInstalled {
+        name: String,
+        version: String,
+        uid: u16,
+    },
+    QuantumRegisterAllocated {
+        pid: u32,
+        qubits: u8,
+    },
+    SecurityPolicyChanged {
+        change: String,
+        uid: u16,
+    },
+    IntegrityViolation {
+        path: String,
+        expected_hash: String,
+        actual_hash: String,
+    },
+    SystemBoot {
+        kernel_version: String,
+    },
 }
 
 impl core::fmt::Display for AuditEvent {
@@ -188,8 +236,7 @@ pub fn event_category(event: &AuditEvent) -> &'static str {
         AuditEvent::FirewallMatch { .. }
         | AuditEvent::TlsValidation { .. }
         | AuditEvent::NetworkConnection { .. } => "network",
-        AuditEvent::PackageVerification { .. }
-        | AuditEvent::PackageInstalled { .. } => "package",
+        AuditEvent::PackageVerification { .. } | AuditEvent::PackageInstalled { .. } => "package",
         AuditEvent::QuantumRegisterAllocated { .. } => "quantum",
         AuditEvent::SecurityPolicyChanged { .. } => "security",
         AuditEvent::IntegrityViolation { .. } => "integrity",

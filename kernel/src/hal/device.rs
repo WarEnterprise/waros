@@ -42,8 +42,16 @@ pub enum DeviceCategory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BusLocation {
-    Pci { bus: u8, device: u8, function: u8 },
-    Usb { controller: DeviceId, port: u8, address: u8 },
+    Pci {
+        bus: u8,
+        device: u8,
+        function: u8,
+    },
+    Usb {
+        controller: DeviceId,
+        port: u8,
+        address: u8,
+    },
     Platform,
     Virtual,
 }
@@ -153,6 +161,7 @@ pub enum KeyboardLayout {
     UsQwerty,
     BrazilAbnt2,
     German,
+    Spanish,
     French,
     Japanese,
     UkQwerty,
@@ -210,6 +219,7 @@ impl KeyboardLayout {
             Self::UsQwerty => "us",
             Self::BrazilAbnt2 => "br",
             Self::German => "de",
+            Self::Spanish => "es",
             Self::French => "fr",
             Self::Japanese => "jp",
             Self::UkQwerty => "uk",

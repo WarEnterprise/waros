@@ -36,6 +36,17 @@ pub struct AcpiSubsystem {
     pub hal_id: DeviceId,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct AcpiStatus {
+    pub available: bool,
+    pub fadt_present: bool,
+    pub pm1a_cnt_blk: u16,
+    pub reset_reg_address: u64,
+    pub reset_value: u8,
+    pub dsdt_address: u64,
+    pub slp_typ_s5: u16,
+}
+
 impl AcpiSubsystem {
     pub fn init(bootloader_rsdp: Option<u64>) -> Result<Self, AcpiError> {
         trace::set_stage(BootStage::Acpi, BreadcrumbTag::AcpiInit);
@@ -116,6 +127,33 @@ pub fn is_available() -> bool {
     ACPI.lock().is_some()
 }
 
+#[must_use]
+pub fn status() -> AcpiStatus {
+    let guard = ACPI.lock();
+    if let Some(acpi) = guard.as_ref() {
+        let fadt = acpi.fadt;
+        AcpiStatus {
+            available: true,
+            fadt_present: fadt.is_some(),
+            pm1a_cnt_blk: acpi.pm1a_cnt_blk,
+            reset_reg_address: fadt.map_or(0, |info| info.reset_reg_address),
+            reset_value: fadt.map_or(0, |info| info.reset_value),
+            dsdt_address: fadt.map_or(0, |info| info.dsdt_address),
+            slp_typ_s5: acpi.slp_typ_s5,
+        }
+    } else {
+        AcpiStatus {
+            available: false,
+            fadt_present: false,
+            pm1a_cnt_blk: 0,
+            reset_reg_address: 0,
+            reset_value: 0,
+            dsdt_address: 0,
+            slp_typ_s5: 0,
+        }
+    }
+}
+
 pub fn shutdown() -> ! {
     if let Some(acpi) = ACPI.lock().as_ref() {
         acpi.shutdown();
@@ -147,8 +185,8 @@ fn find_rsdp(bootloader_rsdp: Option<u64>) -> Result<Rsdp, AcpiError> {
 
     trace::set_stage(BootStage::Acpi, BreadcrumbTag::AcpiRsdpLegacyScan);
     let legacy_start_phys = 0xE0000u64;
-    let start =
-        acpi_direct_map(BreadcrumbTag::AcpiRsdpLegacyScan, legacy_start_phys).ok_or(AcpiError::RsdpNotFound)?;
+    let start = acpi_direct_map(BreadcrumbTag::AcpiRsdpLegacyScan, legacy_start_phys)
+        .ok_or(AcpiError::RsdpNotFound)?;
     serial_println!(
         "[ACPI] RSDP source=legacy-scan range=0x{legacy_start_phys:X}-0x{:X}",
         legacy_start_phys + 0x20000
@@ -160,9 +198,11 @@ fn find_rsdp(bootloader_rsdp: Option<u64>) -> Result<Rsdp, AcpiError> {
             continue;
         }
         let physical_address = legacy_start_phys + offset as u64;
-        if let Ok(rsdp) =
-            parse_rsdp_at(physical_address, BreadcrumbTag::AcpiRsdpLegacyScan, "legacy-scan")
-        {
+        if let Ok(rsdp) = parse_rsdp_at(
+            physical_address,
+            BreadcrumbTag::AcpiRsdpLegacyScan,
+            "legacy-scan",
+        ) {
             return Ok(rsdp);
         }
     }
@@ -209,14 +249,12 @@ fn parse_sdt_entries(address: u64, xsdt: bool) -> Result<Option<FadtInfo>, AcpiE
             continue;
         }
 
-        let dsdt_address =
-            u32::from_le_bytes([child[40], child[41], child[42], child[43]]) as u64;
-        let pm1a_cnt_blk =
-            u32::from_le_bytes([child[64], child[65], child[66], child[67]]) as u16;
+        let dsdt_address = u32::from_le_bytes([child[40], child[41], child[42], child[43]]) as u64;
+        let pm1a_cnt_blk = u32::from_le_bytes([child[64], child[65], child[66], child[67]]) as u16;
         let reset_reg_address = if child.len() >= 129 {
             u64::from_le_bytes([
-                child[116], child[117], child[118], child[119], child[120], child[121],
-                child[122], child[123],
+                child[116], child[117], child[118], child[119], child[120], child[121], child[122],
+                child[123],
             ])
         } else {
             0
@@ -254,7 +292,9 @@ fn find_s5_slp_typ(dsdt_address: u64) -> Option<u16> {
 
     let aml = &dsdt[36..length];
     let pattern = b"_S5_";
-    let index = aml.windows(pattern.len()).position(|window| window == pattern)?;
+    let index = aml
+        .windows(pattern.len())
+        .position(|window| window == pattern)?;
     let tail = &aml[index + pattern.len()..];
 
     for window in tail.windows(8).take(16) {
@@ -297,7 +337,8 @@ fn parse_rsdp_at(
     source_label: &'static str,
 ) -> Result<Rsdp, AcpiError> {
     trace::set_stage(BootStage::Acpi, source_tag);
-    let virtual_address = acpi_direct_map(source_tag, physical_address).ok_or(AcpiError::InvalidTable)?;
+    let virtual_address =
+        acpi_direct_map(source_tag, physical_address).ok_or(AcpiError::InvalidTable)?;
     let header = unsafe { core::slice::from_raw_parts(virtual_address as *const u8, 36) };
     if &header[0..8] != b"RSD PTR " {
         return Err(AcpiError::InvalidTable);

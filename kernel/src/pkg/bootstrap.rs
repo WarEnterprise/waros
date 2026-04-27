@@ -186,7 +186,12 @@ fn signed_package(
     }
 }
 
-fn file(path: &str, source: &str, executable: bool, contents: &str) -> (ManifestFile, WarPackPayload) {
+fn file(
+    path: &str,
+    source: &str,
+    executable: bool,
+    contents: &str,
+) -> (ManifestFile, WarPackPayload) {
     (
         ManifestFile {
             path: path.into(),

@@ -137,6 +137,90 @@ pub fn enable_bus_mastering(device: &PciDevice) {
     );
 }
 
+/// Read a 16-bit value from PCI configuration space.
+#[must_use]
+pub fn pci_config_read16(bus: u8, device: u8, function: u8, offset: u8) -> u16 {
+    let dword = pci_config_read32(bus, device, function, offset & 0xFC);
+    (dword >> ((offset & 2) * 8)) as u16
+}
+
+/// Write a 16-bit value to PCI configuration space (read-modify-write).
+pub fn pci_config_write16(bus: u8, device: u8, function: u8, offset: u8, value: u16) {
+    let aligned = offset & 0xFC;
+    let shift = (offset & 2) * 8;
+    let mut dword = pci_config_read32(bus, device, function, aligned);
+    dword &= !(0xFFFF << shift);
+    dword |= (value as u32) << shift;
+    pci_config_write32(bus, device, function, aligned, dword);
+}
+
+/// Read an 8-bit value from PCI configuration space.
+#[must_use]
+pub fn pci_config_read8(bus: u8, device: u8, function: u8, offset: u8) -> u8 {
+    let dword = pci_config_read32(bus, device, function, offset & 0xFC);
+    (dword >> ((offset & 3) * 8)) as u8
+}
+
+/// Walk the PCI capability list and find a capability by ID.
+/// Returns the offset of the capability header, or None.
+#[must_use]
+pub fn find_pci_capability(device: &PciDevice, cap_id: u8) -> Option<u8> {
+    let status = (pci_config_read32(device.bus, device.device, device.function, 0x04) >> 16) as u16;
+    if status & (1 << 4) == 0 {
+        return None; // capabilities list not supported
+    }
+    let mut offset = pci_config_read8(device.bus, device.device, device.function, 0x34) & 0xFC;
+    let mut visited = 0u8;
+    while offset != 0 && visited < 48 {
+        let id = pci_config_read8(device.bus, device.device, device.function, offset);
+        if id == cap_id {
+            return Some(offset);
+        }
+        offset = pci_config_read8(device.bus, device.device, device.function, offset + 1) & 0xFC;
+        visited += 1;
+    }
+    None
+}
+
+/// Disable ASPM (Active State Power Management) L0s and L1 on a PCI Express device.
+/// Critical for RTL8168-family stability on real hardware.
+pub fn disable_aspm(device: &PciDevice) {
+    // PCI Express Capability ID = 0x10
+    if let Some(pcie_cap) = find_pci_capability(device, 0x10) {
+        let lnkctl_offset = pcie_cap + 0x10; // Link Control Register
+        let lnkctl = pci_config_read16(device.bus, device.device, device.function, lnkctl_offset);
+        let new_lnkctl = lnkctl & !0x0003; // Clear ASPM L0s (bit 0) and L1 (bit 1)
+        if new_lnkctl != lnkctl {
+            pci_config_write16(device.bus, device.device, device.function, lnkctl_offset, new_lnkctl);
+            crate::serial_println!(
+                "[pci] ASPM disabled {:02X}:{:02X}.{} lnkctl 0x{:04X} -> 0x{:04X}",
+                device.bus, device.device, device.function, lnkctl, new_lnkctl
+            );
+        }
+    }
+}
+
+/// Set PCI Express Max Read Request Size to optimize DMA throughput.
+/// size_code: 0=128, 1=256, 2=512, 3=1024, 4=2048, 5=4096 bytes.
+pub fn set_max_read_request_size(device: &PciDevice, size_code: u16) {
+    if let Some(pcie_cap) = find_pci_capability(device, 0x10) {
+        let devctl_offset = pcie_cap + 0x08; // Device Control Register
+        let devctl = pci_config_read16(device.bus, device.device, device.function, devctl_offset);
+        let new_devctl = (devctl & !0x7000) | ((size_code & 0x07) << 12);
+        pci_config_write16(device.bus, device.device, device.function, devctl_offset, new_devctl);
+    }
+}
+
+#[must_use]
+pub fn command_register(device: &PciDevice) -> u16 {
+    pci_config_read32(device.bus, device.device, device.function, 0x04) as u16
+}
+
+#[must_use]
+pub fn status_register(device: &PciDevice) -> u16 {
+    (pci_config_read32(device.bus, device.device, device.function, 0x04) >> 16) as u16
+}
+
 impl PciDevice {
     #[must_use]
     pub fn bar(&self, index: usize) -> PciBar {
@@ -169,6 +253,7 @@ pub fn class_name(class_code: u8, subclass: u8) -> &'static str {
         (0x01, 0x00) => "Mass storage controller",
         (0x01, 0x06) => "SATA controller",
         (0x02, 0x00) => "Ethernet controller",
+        (0x02, 0x80) => "Wireless controller",
         (0x03, 0x00) => "VGA controller",
         (0x06, 0x00) => "Host bridge",
         (0x06, 0x01) => "ISA bridge",

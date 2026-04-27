@@ -8,10 +8,10 @@ use crate::fs::FsError;
 
 use super::{
     copy_from_user_ptr_checked, copy_to_user_ptr_checked, read_user_string_checked,
-    read_warexec_path_checked, write_struct_to_user_checked, WarExecDirEntry, WarExecStat,
-    WarExecPathKind, WAREXEC_DIRENT_NAME_CAPACITY, WAREXEC_FILE_TYPE_DIRECTORY,
-    WAREXEC_FILE_TYPE_REGULAR, WAREXEC_OPEN_CREATE_WRITE, WAREXEC_OPEN_DIRECTORY, EBADF,
-    EEXIST, EINVAL, ENAMETOOLONG, ENOENT, ENOSPC, ENOSYS, EPERM, MAX_USER_STRING_LEN,
+    read_warexec_path_checked, write_struct_to_user_checked, WarExecDirEntry, WarExecPathKind,
+    WarExecStat, EBADF, EEXIST, EINVAL, ENAMETOOLONG, ENOENT, ENOSPC, ENOSYS, EPERM,
+    MAX_USER_STRING_LEN, WAREXEC_DIRENT_NAME_CAPACITY, WAREXEC_FILE_TYPE_DIRECTORY,
+    WAREXEC_FILE_TYPE_REGULAR, WAREXEC_OPEN_CREATE_WRITE, WAREXEC_OPEN_DIRECTORY,
 };
 
 fn map_fs_error(error: FsError) -> i64 {
@@ -100,9 +100,7 @@ pub fn sys_read(fd: u32, buffer: *mut u8, len: usize) -> i64 {
         return EBADF;
     };
     match &mut descriptor.target {
-        DescriptorTarget::File(handle)
-            if matches!(handle.access, FileHandleAccess::ReadOnly) =>
-        {
+        DescriptorTarget::File(handle) if matches!(handle.access, FileHandleAccess::ReadOnly) => {
             handle.offset = start.saturating_add(copied);
             copied as i64
         }
@@ -149,7 +147,8 @@ pub fn sys_write(fd: u32, buffer: *const u8, len: usize) -> i64 {
             if matches!(handle.access, FileHandleAccess::CreateWrite) =>
         {
             let mut process_table = PROCESS_TABLE.lock();
-            let Some(process) = super::current_pid().and_then(|pid| process_table.get_mut(pid)) else {
+            let Some(process) = super::current_pid().and_then(|pid| process_table.get_mut(pid))
+            else {
                 return EPERM;
             };
             let Some(descriptor) = process.fd_table.get_mut(fd) else {
@@ -257,7 +256,11 @@ pub fn sys_close(fd: u32) -> i64 {
     let Some(process) = super::current_pid().and_then(|pid| process_table.get_mut(pid)) else {
         return EPERM;
     };
-    if process.fd_table.close(fd) { 0 } else { EBADF }
+    if process.fd_table.close(fd) {
+        0
+    } else {
+        EBADF
+    }
 }
 
 pub fn sys_stat(path: *const u8, stat_out: *mut u8) -> i64 {

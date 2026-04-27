@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 use crate::quantum;
 
 use super::super::font;
-use super::super::mouse;
 use super::super::framebuffer::{Rect, Surface};
+use super::super::mouse;
 use super::super::theme::Theme;
 use super::super::widgets;
 
@@ -23,7 +23,13 @@ impl QuantumMonitorState {
         let padding = Theme::WINDOW_PADDING;
         let mouse = mouse::current_snapshot();
 
-        font::draw_text(&mut surface, padding, 10, "Quantum Monitor", Theme::QUANTUM_GATE);
+        font::draw_text(
+            &mut surface,
+            padding,
+            10,
+            "Quantum Monitor",
+            Theme::QUANTUM_GATE,
+        );
         if let Some(snapshot) = quantum::gui_snapshot() {
             font::draw_text(
                 &mut surface,
@@ -50,11 +56,23 @@ impl QuantumMonitorState {
                     &alloc::format!("q{}", qubit),
                     Theme::TEXT_SECONDARY,
                 );
-                surface.draw_hline(padding + 24, y, width.saturating_sub(padding * 2 + 40), Theme::QUANTUM_WIRE);
+                surface.draw_hline(
+                    padding + 24,
+                    y,
+                    width.saturating_sub(padding * 2 + 40),
+                    Theme::QUANTUM_WIRE,
+                );
             }
 
             for (column, operation) in snapshot.operations.iter().take(6).enumerate() {
-                draw_operation(&mut surface, operation, column, padding + 24, 94, width.saturating_sub(padding * 2));
+                draw_operation(
+                    &mut surface,
+                    operation,
+                    column,
+                    padding + 24,
+                    94,
+                    width.saturating_sub(padding * 2),
+                );
             }
 
             if let Some(result_line) = snapshot
@@ -121,19 +139,34 @@ impl QuantumMonitorState {
             &mut surface,
             run_rect,
             "Run",
-            widgets::button_style(point_in_rect(mouse.x, mouse.y, run_rect), point_in_rect(mouse.x, mouse.y, run_rect), true, false),
+            widgets::button_style(
+                point_in_rect(mouse.x, mouse.y, run_rect),
+                point_in_rect(mouse.x, mouse.y, run_rect),
+                true,
+                false,
+            ),
         );
         widgets::draw_button(
             &mut surface,
             reset_rect,
             "Reset",
-            widgets::button_style(false, point_in_rect(mouse.x, mouse.y, reset_rect), false, false),
+            widgets::button_style(
+                false,
+                point_in_rect(mouse.x, mouse.y, reset_rect),
+                false,
+                false,
+            ),
         );
         widgets::draw_button(
             &mut surface,
             measure_rect,
             "Measure",
-            widgets::button_style(false, point_in_rect(mouse.x, mouse.y, measure_rect), false, false),
+            widgets::button_style(
+                false,
+                point_in_rect(mouse.x, mouse.y, measure_rect),
+                false,
+                false,
+            ),
         );
     }
 }
@@ -154,9 +187,27 @@ fn draw_operation(
     if let Some((control, target)) = parse_controlled(operation) {
         let y0 = wire_y_start + control * 26;
         let y1 = wire_y_start + target * 26;
-        surface.draw_line(x as i32, y0 as i32, x as i32, y1 as i32, Theme::QUANTUM_WIRE);
-        surface.fill_rect(x.saturating_sub(2), y0.saturating_sub(2), 5, 5, Theme::QUANTUM_GATE);
-        surface.draw_rect(x.saturating_sub(6), y1.saturating_sub(6), 12, 12, Theme::QUANTUM_GATE);
+        surface.draw_line(
+            x as i32,
+            y0 as i32,
+            x as i32,
+            y1 as i32,
+            Theme::QUANTUM_WIRE,
+        );
+        surface.fill_rect(
+            x.saturating_sub(2),
+            y0.saturating_sub(2),
+            5,
+            5,
+            Theme::QUANTUM_GATE,
+        );
+        surface.draw_rect(
+            x.saturating_sub(6),
+            y1.saturating_sub(6),
+            12,
+            12,
+            Theme::QUANTUM_GATE,
+        );
         font::draw_text(
             surface,
             x.saturating_sub(8),
@@ -201,7 +252,11 @@ fn point_in_rect(x: i32, y: i32, rect: Rect) -> bool {
 }
 
 fn parse_single(operation: &str) -> Option<(String, usize)> {
-    let gate = operation.split_whitespace().next()?.trim().trim_end_matches(';');
+    let gate = operation
+        .split_whitespace()
+        .next()?
+        .trim()
+        .trim_end_matches(';');
     if gate.eq_ignore_ascii_case("cx") || gate.eq_ignore_ascii_case("cnot") {
         return None;
     }

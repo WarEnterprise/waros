@@ -7,14 +7,14 @@ use x86_64::instructions::port::Port;
 
 use crate::net::buffer::PacketBuffer;
 use crate::net::pci::{self, PciBar, PciDevice};
-use crate::net::{NetError, NetworkDeviceInfo, NetworkTransport};
+use crate::net::{LinkState, NetError, NetworkDeviceInfo, NetworkTransport};
 
 use super::queue::{Virtqueue, VirtqueueSnapshot};
 use super::transport::LegacyTransport;
 use super::{
-    LEGACY_DEVICE_STATUS, LEGACY_ISR_STATUS, LEGACY_QUEUE_NOTIFY, STATUS_ACKNOWLEDGE,
-    STATUS_DRIVER, STATUS_DRIVER_OK, STATUS_FEATURES_OK, STATUS_FAILED, VIRTIO_NET_F_MAC,
-    VIRTQ_DESC_F_WRITE, VirtioNetHeader,
+    VirtioNetHeader, LEGACY_DEVICE_STATUS, LEGACY_ISR_STATUS, LEGACY_QUEUE_NOTIFY,
+    STATUS_ACKNOWLEDGE, STATUS_DRIVER, STATUS_DRIVER_OK, STATUS_FAILED, STATUS_FEATURES_OK,
+    VIRTIO_NET_F_MAC, VIRTQ_DESC_F_WRITE,
 };
 
 const NETWORK_BUFFER_SIZE: usize = 2048;
@@ -115,6 +115,8 @@ impl VirtioNet {
             rx_frames: self.rx_frames,
             tx_frames: self.tx_frames,
             link_speed_mbps: 1000,
+            link_state: LinkState::Unknown,
+            full_duplex: true,
         }
     }
 
@@ -158,13 +160,8 @@ impl VirtioNet {
         }
         buffer[header_len..total_len].copy_from_slice(frame);
 
-        self.tx_queue.set_descriptor(
-            descriptor_id,
-            buffer.physical(),
-            total_len as u32,
-            0,
-            0,
-        )?;
+        self.tx_queue
+            .set_descriptor(descriptor_id, buffer.physical(), total_len as u32, 0, 0)?;
         self.tx_queue.add_available(descriptor_id)?;
         self.notify_queue(1);
         self.tx_frames = self.tx_frames.saturating_add(1);

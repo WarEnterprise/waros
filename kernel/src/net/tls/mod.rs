@@ -25,6 +25,8 @@ const TLS_RECORD_BUFFER_SIZE: usize = 16_640;
 const TLS_CERTIFICATE_STORE_SIZE: usize = 4_096;
 const TLS_IO_TIMEOUT_MS: u64 = 15_000;
 const TLS_TRUST_ROOT_COUNT: usize = 2;
+const TLS_VERBOSE_TRACE_ENABLED: bool = false;
+const TLS_RECORD_TRACE_ENABLED: bool = false;
 const SUPPORTED_TLS_HOSTS: [&str; 3] = [
     "iam.cloud.ibm.com",
     "quantum.cloud.ibm.com",
@@ -32,18 +34,25 @@ const SUPPORTED_TLS_HOSTS: [&str; 3] = [
 ];
 
 const DIGICERT_GLOBAL_ROOT_G3_HEX: &str = include_str!("anchors/digicert_global_root_g3.hex");
-const GLOBALSIGN_ECC_ROOT_R4_HEX: &str = include_str!("anchors/globalsign_ecc_root_r4.hex");
+const GLOBALSIGN_ROOT_CA_HEX: &str = include_str!("anchors/globalsign_root_ca.hex");
 const PROOF_WARENTERPRISE_LEAF_HEX: &str = include_str!("proof/warenterprise_leaf.hex");
 const PROOF_WE1_INTERMEDIATE_HEX: &str = include_str!("proof/we1_intermediate.hex");
 
 static DIGICERT_GLOBAL_ROOT_G3: Lazy<Vec<u8>> =
     Lazy::new(|| decode_hex_bytes(DIGICERT_GLOBAL_ROOT_G3_HEX));
-static GLOBALSIGN_ECC_ROOT_R4: Lazy<Vec<u8>> =
-    Lazy::new(|| decode_hex_bytes(GLOBALSIGN_ECC_ROOT_R4_HEX));
+static GLOBALSIGN_ROOT_CA: Lazy<Vec<u8>> = Lazy::new(|| decode_hex_bytes(GLOBALSIGN_ROOT_CA_HEX));
 static PROOF_WARENTERPRISE_LEAF: Lazy<Vec<u8>> =
     Lazy::new(|| decode_hex_bytes(PROOF_WARENTERPRISE_LEAF_HEX));
 static PROOF_WE1_INTERMEDIATE: Lazy<Vec<u8>> =
     Lazy::new(|| decode_hex_bytes(PROOF_WE1_INTERMEDIATE_HEX));
+
+macro_rules! tls_trace {
+    ($($arg:tt)*) => {
+        if TLS_VERBOSE_TRACE_ENABLED {
+            serial_println!($($arg)*);
+        }
+    };
+}
 
 #[derive(Clone, Copy)]
 struct HostTrustAnchor {
@@ -111,6 +120,7 @@ impl TlsConnection {
     pub fn https_request(
         stack: &mut NetworkSubsystem,
         method: &str,
+        requested_url: &str,
         parts: &UrlParts,
         extra_headers: &[(&str, &str)],
         body: Option<(&str, &[u8])>,
@@ -128,32 +138,32 @@ impl TlsConnection {
             )));
         };
 
-        serial_println!("[TLS] Resolving DNS for {}...", parts.host);
+        tls_trace!("[TLS] Resolving DNS for {}...", parts.host);
         let remote_ip = stack.resolve_host(&parts.host)?;
-        serial_println!("[TLS] DNS resolved: {} -> {}", parts.host, remote_ip);
-        serial_println!("[TLS] TCP connecting to {}:{}...", remote_ip, parts.port);
+        tls_trace!("[TLS] DNS resolved: {} -> {}", parts.host, remote_ip);
+        tls_trace!("[TLS] TCP connecting to {}:{}...", remote_ip, parts.port);
 
         let stream = KernelTcpStream::connect(stack, &parts.host, remote_ip, parts.port)?;
-        serial_println!("[TLS] TCP connected");
+        tls_trace!("[TLS] TCP connected");
         let mut read_record_buffer = vec![0u8; TLS_RECORD_BUFFER_SIZE];
         let mut write_record_buffer = vec![0u8; TLS_RECORD_BUFFER_SIZE];
         let config = TlsConfig::new()
             .with_ca(Certificate::X509(anchor.der))
             .with_server_name(&parts.host);
         let rng = KernelRng::new();
-        serial_println!("[TLS] Preparing ClientHello...");
-        serial_println!("[TLS]   SNI: {}", parts.host);
-        serial_println!("[TLS]   Cipher suites: TLS_AES_128_GCM_SHA256");
-        serial_println!("[TLS]   Key exchange: secp256r1 (embedded-tls)");
-        serial_println!("[TLS]   Trust anchor: {}", anchor.label);
-        serial_println!("[TLS]   Hostname check: SAN/CN");
-        serial_println!("[TLS]   Time validity: no RTC-backed expiry check");
-        serial_println!(
+        tls_trace!("[TLS] Preparing ClientHello...");
+        tls_trace!("[TLS]   SNI: {}", parts.host);
+        tls_trace!("[TLS]   Cipher suites: TLS_AES_128_GCM_SHA256");
+        tls_trace!("[TLS]   Key exchange: secp256r1 (embedded-tls)");
+        tls_trace!("[TLS]   Trust anchor: {}", anchor.label);
+        tls_trace!("[TLS]   Hostname check: SAN/CN");
+        tls_trace!("[TLS]   Time validity: no RTC-backed expiry check");
+        tls_trace!(
             "[TLS]   Read buffer: {} bytes | Write buffer: {} bytes",
             read_record_buffer.len(),
             write_record_buffer.len()
         );
-        serial_println!(
+        tls_trace!(
             "[TLS]   RNG: {}",
             if rng.using_rdrand() {
                 "RDRAND + xorshift mix"
@@ -168,7 +178,7 @@ impl TlsConnection {
             &mut read_record_buffer,
             &mut write_record_buffer,
         );
-        serial_println!("[TLS] Starting embedded-tls handshake...");
+        tls_trace!("[TLS] Starting embedded-tls handshake...");
         if let Err(error) = tls.open(TlsContext::new(&config, provider)) {
             serial_println!("[TLS] Handshake failed: {}", error);
             log_tls_validation_event(
@@ -179,12 +189,19 @@ impl TlsConnection {
             );
             return Err(tls_error("TLS handshake failed", error));
         }
-        log_tls_validation_event(&parts.host, anchor.label, "allow", "handshake-certificate-accepted");
-        serial_println!("[TLS] TLS 1.3 handshake complete");
+        log_tls_validation_event(
+            &parts.host,
+            anchor.label,
+            "allow",
+            "handshake-certificate-accepted",
+        );
+        tls_trace!("[TLS] TLS 1.3 handshake complete");
 
         let mut request = alloc::format!(
             "{method} {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: WarOS/{}\r\nConnection: close\r\n",
-            parts.path, parts.host, KERNEL_VERSION
+            parts.path,
+            parts.host,
+            KERNEL_VERSION
         );
         if let Some((content_type, body_bytes)) = body {
             request.push_str(&alloc::format!(
@@ -197,15 +214,21 @@ impl TlsConnection {
         }
         request.push_str("\r\n");
 
-        serial_println!("[TLS] Sending HTTPS request headers ({} bytes)...", request.len());
+        tls_trace!(
+            "[TLS] Sending HTTPS request headers ({} bytes)...",
+            request.len()
+        );
         write_all(&mut tls, request.as_bytes())?;
         if let Some((_, body_bytes)) = body {
-            serial_println!("[TLS] Sending HTTPS request body ({} bytes)...", body_bytes.len());
+            tls_trace!(
+                "[TLS] Sending HTTPS request body ({} bytes)...",
+                body_bytes.len()
+            );
             write_all(&mut tls, body_bytes)?;
         }
         tls.flush()
             .map_err(|error| tls_error("TLS flush failed", error))?;
-        serial_println!("[TLS] HTTPS request flushed");
+        tls_trace!("[TLS] HTTPS request flushed");
 
         let mut response = Vec::new();
         let mut buffer = [0u8; 1024];
@@ -213,11 +236,11 @@ impl TlsConnection {
             match tls.read(&mut buffer) {
                 Ok(0) | Err(EmbeddedTlsError::ConnectionClosed) => break,
                 Ok(size) => {
-                    serial_println!("[TLS] Application data read: {} bytes", size);
+                    tls_trace!("[TLS] Application data read: {} bytes", size);
                     response.extend_from_slice(&buffer[..size])
                 }
                 Err(EmbeddedTlsError::Io(kind)) => {
-                    serial_println!("[TLS] Transport closed during HTTPS read: {:?}", kind);
+                    tls_trace!("[TLS] Transport closed during HTTPS read: {:?}", kind);
                     break;
                 }
                 Err(error) => return Err(tls_error("TLS read failed", error)),
@@ -225,7 +248,9 @@ impl TlsConnection {
         }
 
         let _ = tls.close();
-        parse_response(&response)
+        let mut response = parse_response(&response)?;
+        response.effective_url = requested_url.into();
+        Ok(response)
     }
 }
 
@@ -244,7 +269,7 @@ pub fn supported_hosts_summary() -> String {
 #[must_use]
 pub fn trust_policy_summary() -> String {
     alloc::format!(
-        "{} embedded root(s); supported hosts: {}; SAN/CN hostname checks; no RTC-backed expiry check",
+        "{} embedded root(s): DigiCert Global Root G3, GlobalSign Root CA; supported hosts: {}; SAN/CN hostname checks; ECDSA/RSA TLS signatures; no RTC-backed expiry check",
         TLS_TRUST_ROOT_COUNT,
         supported_hosts_summary()
     )
@@ -258,9 +283,11 @@ pub fn run_validation_proof() -> Result<(), &'static str> {
     verifier
         .set_hostname_verification("warenterprise.com")
         .map_err(|_| "TLS proof hostname setup failed")?;
-    let trusted_chain =
-        build_certificate_chain(PROOF_WARENTERPRISE_LEAF.as_slice(), PROOF_WE1_INTERMEDIATE.as_slice())
-            .map_err(|_| "TLS proof chain build failed")?;
+    let trusted_chain = build_certificate_chain(
+        PROOF_WARENTERPRISE_LEAF.as_slice(),
+        PROOF_WE1_INTERMEDIATE.as_slice(),
+    )
+    .map_err(|_| "TLS proof chain build failed")?;
     verifier
         .verify_certificate(
             &Sha256::new(),
@@ -274,7 +301,12 @@ pub fn run_validation_proof() -> Result<(), &'static str> {
             );
             "trusted certificate chain rejected"
         })?;
-    log_tls_validation_event("warenterprise.com", anchor.label, "allow", "proof-trusted-chain");
+    log_tls_validation_event(
+        "warenterprise.com",
+        anchor.label,
+        "allow",
+        "proof-trusted-chain",
+    );
     crate::serial_println!("[PROOF] TLS: trusted certificate chain accepted");
 
     let mut verifier =
@@ -282,9 +314,11 @@ pub fn run_validation_proof() -> Result<(), &'static str> {
     verifier
         .set_hostname_verification("wrong.example")
         .map_err(|_| "TLS proof reject-host setup failed")?;
-    let rejected_chain =
-        build_certificate_chain(PROOF_WARENTERPRISE_LEAF.as_slice(), PROOF_WE1_INTERMEDIATE.as_slice())
-            .map_err(|_| "TLS proof reject chain build failed")?;
+    let rejected_chain = build_certificate_chain(
+        PROOF_WARENTERPRISE_LEAF.as_slice(),
+        PROOF_WE1_INTERMEDIATE.as_slice(),
+    )
+    .map_err(|_| "TLS proof reject chain build failed")?;
     match verifier.verify_certificate(
         &Sha256::new(),
         &Some(Certificate::X509(anchor.der)),
@@ -327,9 +361,9 @@ fn trust_anchor_for_host(host: &str) -> Option<HostTrustAnchor> {
     if host.eq_ignore_ascii_case("quantum.cloud.ibm.com")
         || host.eq_ignore_ascii_case("warenterprise.com")
     {
-        return (!GLOBALSIGN_ECC_ROOT_R4.is_empty()).then_some(HostTrustAnchor {
-            label: "GlobalSign ECC Root CA - R4",
-            der: GLOBALSIGN_ECC_ROOT_R4.as_slice(),
+        return (!GLOBALSIGN_ROOT_CA.is_empty()).then_some(HostTrustAnchor {
+            label: "GlobalSign Root CA",
+            der: GLOBALSIGN_ROOT_CA.as_slice(),
         });
     }
     None
@@ -346,14 +380,12 @@ fn build_certificate_chain<'a>(
 }
 
 fn log_tls_validation_event(host: &str, anchor: &str, outcome: &str, detail: &str) {
-    crate::security::audit::log_event(
-        crate::security::audit::events::AuditEvent::TlsValidation {
-            host: host.into(),
-            anchor: anchor.into(),
-            outcome: outcome.into(),
-            detail: detail.into(),
-        },
-    );
+    crate::security::audit::log_event(crate::security::audit::events::AuditEvent::TlsValidation {
+        host: host.into(),
+        anchor: anchor.into(),
+        outcome: outcome.into(),
+        detail: detail.into(),
+    });
 }
 
 fn decode_hex_bytes(text: &str) -> Vec<u8> {
@@ -452,11 +484,11 @@ impl Read for KernelTcpStream<'_> {
             .ok_or(ErrorKind::NotConnected)?
             .recv(self.stack, buf, TLS_IO_TIMEOUT_MS)
             .map_err(|_| ErrorKind::Other)?;
-        if size > 0 {
+        if size > 0 && TLS_RECORD_TRACE_ENABLED {
             self.pending_rx.extend_from_slice(&buf[..size]);
             log_tls_records("RX", self.server_name, &mut self.pending_rx);
-        } else {
-            serial_println!("[TLS] RX stream closed by peer");
+        } else if size == 0 {
+            tls_trace!("[TLS] RX stream closed by peer");
         }
         Ok(size)
     }
@@ -470,7 +502,7 @@ impl Write for KernelTcpStream<'_> {
             .ok_or(ErrorKind::NotConnected)?
             .send(self.stack, buf, TLS_IO_TIMEOUT_MS)
             .map_err(|_| ErrorKind::Other)?;
-        if written > 0 {
+        if written > 0 && TLS_RECORD_TRACE_ENABLED {
             self.pending_tx.extend_from_slice(&buf[..written]);
             log_tls_records("TX", self.server_name, &mut self.pending_tx);
         }
@@ -478,13 +510,13 @@ impl Write for KernelTcpStream<'_> {
     }
 
     fn flush(&mut self) -> Result<(), Self::Error> {
-        serial_println!("[TLS] Waiting for TCP flush...");
+        tls_trace!("[TLS] Waiting for TCP flush...");
         self.connection
             .as_mut()
             .ok_or(ErrorKind::NotConnected)?
             .flush(self.stack, TLS_IO_TIMEOUT_MS)
             .map_err(|_| ErrorKind::Other)?;
-        serial_println!("[TLS] TCP flush complete");
+        tls_trace!("[TLS] TCP flush complete");
         Ok(())
     }
 }
@@ -622,8 +654,9 @@ fn log_tls_record(direction: &str, host: &str, content_type: u8, version: u16, f
         }
         22 if fragment.len() >= 4 => {
             let handshake_type = fragment[0];
-            let handshake_len =
-                ((fragment[1] as usize) << 16) | ((fragment[2] as usize) << 8) | fragment[3] as usize;
+            let handshake_len = ((fragment[1] as usize) << 16)
+                | ((fragment[2] as usize) << 8)
+                | fragment[3] as usize;
             serial_println!(
                 "[TLS] Handshake msg: type={} ({}) len={}",
                 handshake_type,

@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use spin::{Lazy, Mutex};
 
-const HISTORY_LIMIT: usize = 10;
+const HISTORY_LIMIT: usize = 32;
 
 static HISTORY: Lazy<Mutex<CommandHistory>> = Lazy::new(|| Mutex::new(CommandHistory::new()));
 
@@ -25,6 +25,10 @@ impl CommandHistory {
             return;
         }
 
+        if self.entries.back().is_some_and(|entry| entry == command) {
+            return;
+        }
+
         if self.entries.len() == HISTORY_LIMIT {
             let _ = self.entries.pop_front();
         }
@@ -34,6 +38,10 @@ impl CommandHistory {
 
     fn snapshot(&self) -> Vec<String> {
         self.entries.iter().cloned().collect()
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
     }
 }
 
@@ -46,4 +54,9 @@ pub fn push(command: &str) {
 #[must_use]
 pub fn snapshot() -> Vec<String> {
     HISTORY.lock().snapshot()
+}
+
+/// Clear shell history at session teardown to avoid cross-session leakage.
+pub fn clear() {
+    HISTORY.lock().clear();
 }

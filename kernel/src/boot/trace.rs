@@ -19,6 +19,7 @@ pub enum BootStage {
     Hardware,
     Input,
     Proofs,
+    Interactive,
     Shell,
 }
 
@@ -55,9 +56,11 @@ pub enum BreadcrumbTag {
     SecurityReady,
     NetInit,
     UsbProbe,
+    XhciMmioMap,
     InputReady,
     InterruptsEnabled,
     ProofsActive,
+    InteractiveReady,
     ShellReady,
     PagingActiveCr3,
 }
@@ -71,6 +74,10 @@ static LAST_CR3_PHYS: AtomicU64 = AtomicU64::new(0);
 static LAST_DIRECT_MAP_SOURCE: AtomicU32 = AtomicU32::new(BreadcrumbTag::None as u32);
 static LAST_DIRECT_MAP_PHYS: AtomicU64 = AtomicU64::new(0);
 static LAST_DIRECT_MAP_VIRT: AtomicU64 = AtomicU64::new(0);
+static LAST_MMIO_SOURCE: AtomicU32 = AtomicU32::new(BreadcrumbTag::None as u32);
+static LAST_MMIO_PHYS: AtomicU64 = AtomicU64::new(0);
+static LAST_MMIO_VIRT: AtomicU64 = AtomicU64::new(0);
+static LAST_MMIO_LEN: AtomicU64 = AtomicU64::new(0);
 static LAST_PAGE_FAULT_ADDR: AtomicU64 = AtomicU64::new(0);
 
 pub fn set_stage(stage: BootStage, tag: BreadcrumbTag) {
@@ -105,6 +112,14 @@ pub fn record_direct_map(source: BreadcrumbTag, physical: u64, virtual_address: 
     record_tag(source);
 }
 
+pub fn record_mmio_map(source: BreadcrumbTag, physical: u64, virtual_address: u64, length: u64) {
+    LAST_MMIO_SOURCE.store(source as u32, Ordering::Relaxed);
+    LAST_MMIO_PHYS.store(physical, Ordering::Relaxed);
+    LAST_MMIO_VIRT.store(virtual_address, Ordering::Relaxed);
+    LAST_MMIO_LEN.store(length, Ordering::Relaxed);
+    record_tag(source);
+}
+
 pub fn record_page_fault(address: u64) {
     LAST_PAGE_FAULT_ADDR.store(address, Ordering::Relaxed);
     record_current_cr3();
@@ -121,14 +136,13 @@ pub fn write_panic_breadcrumbs(writer: &mut impl Write) -> fmt::Result {
         BreadcrumbTag::from_raw(LAST_DIRECT_MAP_SOURCE.load(Ordering::Relaxed));
     let last_direct_map_phys = LAST_DIRECT_MAP_PHYS.load(Ordering::Relaxed);
     let last_direct_map_virt = LAST_DIRECT_MAP_VIRT.load(Ordering::Relaxed);
+    let last_mmio_source = BreadcrumbTag::from_raw(LAST_MMIO_SOURCE.load(Ordering::Relaxed));
+    let last_mmio_phys = LAST_MMIO_PHYS.load(Ordering::Relaxed);
+    let last_mmio_virt = LAST_MMIO_VIRT.load(Ordering::Relaxed);
+    let last_mmio_len = LAST_MMIO_LEN.load(Ordering::Relaxed);
     let last_page_fault_addr = LAST_PAGE_FAULT_ADDR.load(Ordering::Relaxed);
 
-    writeln!(
-        writer,
-        "  Boot stage: {} / {}",
-        stage.label(),
-        tag.label()
-    )?;
+    writeln!(writer, "  Boot stage: {} / {}", stage.label(), tag.label())?;
 
     if physical_memory_offset != 0 {
         let limit_end = physical_memory_limit
@@ -157,6 +171,14 @@ pub fn write_panic_breadcrumbs(writer: &mut impl Write) -> fmt::Result {
         )?;
     }
 
+    if last_mmio_virt != 0 && last_mmio_len != 0 {
+        writeln!(
+            writer,
+            "  Last MMIO map: {} phys 0x{last_mmio_phys:016X} -> virt 0x{last_mmio_virt:016X} len 0x{last_mmio_len:X}",
+            last_mmio_source.label()
+        )?;
+    }
+
     if last_page_fault_addr != 0 {
         writeln!(writer, "  Fault CR2: 0x{last_page_fault_addr:016X}")?;
         if let Some(classification) = memory::classify_direct_map_address(last_page_fault_addr) {
@@ -174,6 +196,23 @@ pub fn write_panic_breadcrumbs(writer: &mut impl Write) -> fmt::Result {
                     region.end
                 )?;
             }
+        }
+        if last_mmio_virt != 0
+            && last_mmio_len != 0
+            && last_page_fault_addr >= last_mmio_virt
+            && last_page_fault_addr < last_mmio_virt.saturating_add(last_mmio_len)
+        {
+            writeln!(
+                writer,
+                "  Fault class: {} +0x{:X}",
+                last_mmio_source.label(),
+                last_page_fault_addr - last_mmio_virt
+            )?;
+            writeln!(
+                writer,
+                "  Fault mmio phys: 0x{:016X}",
+                last_mmio_phys + (last_page_fault_addr - last_mmio_virt)
+            )?;
         }
     }
 
@@ -194,9 +233,7 @@ pub fn write_serial_panic_breadcrumbs() {
             .checked_sub(1)
             .and_then(|limit| physical_memory_offset.checked_add(limit))
             .unwrap_or(physical_memory_offset);
-        serial_println!(
-            "[PANIC] phys map: 0x{physical_memory_offset:016X}..0x{limit_end:016X}"
-        );
+        serial_println!("[PANIC] phys map: 0x{physical_memory_offset:016X}..0x{limit_end:016X}");
     }
 
     let rsdp_addr = LAST_RSDP_ADDR.load(Ordering::Relaxed);
@@ -237,6 +274,31 @@ pub fn write_serial_panic_breadcrumbs() {
             }
         }
     }
+
+    let last_mmio_virt = LAST_MMIO_VIRT.load(Ordering::Relaxed);
+    let last_mmio_len = LAST_MMIO_LEN.load(Ordering::Relaxed);
+    if last_mmio_virt != 0 && last_mmio_len != 0 {
+        let source = BreadcrumbTag::from_raw(LAST_MMIO_SOURCE.load(Ordering::Relaxed));
+        let last_mmio_phys = LAST_MMIO_PHYS.load(Ordering::Relaxed);
+        serial_println!(
+            "[PANIC] last mmio map: {} phys 0x{last_mmio_phys:016X} -> virt 0x{last_mmio_virt:016X} len 0x{last_mmio_len:X}",
+            source.label()
+        );
+
+        if last_page_fault_addr >= last_mmio_virt
+            && last_page_fault_addr < last_mmio_virt.saturating_add(last_mmio_len)
+        {
+            serial_println!(
+                "[PANIC] fault class: {} +0x{:X}",
+                source.label(),
+                last_page_fault_addr - last_mmio_virt
+            );
+            serial_println!(
+                "[PANIC] fault mmio phys: 0x{:016X}",
+                last_mmio_phys + (last_page_fault_addr - last_mmio_virt)
+            );
+        }
+    }
 }
 
 impl BootStage {
@@ -252,6 +314,7 @@ impl BootStage {
             x if x == Self::Hardware as u32 => Self::Hardware,
             x if x == Self::Input as u32 => Self::Input,
             x if x == Self::Proofs as u32 => Self::Proofs,
+            x if x == Self::Interactive as u32 => Self::Interactive,
             x if x == Self::Shell as u32 => Self::Shell,
             _ => Self::Unknown,
         }
@@ -270,6 +333,7 @@ impl BootStage {
             Self::Hardware => "hardware",
             Self::Input => "input",
             Self::Proofs => "proofs",
+            Self::Interactive => "interactive",
             Self::Shell => "shell",
         }
     }
@@ -307,9 +371,11 @@ impl BreadcrumbTag {
             x if x == Self::SecurityReady as u32 => Self::SecurityReady,
             x if x == Self::NetInit as u32 => Self::NetInit,
             x if x == Self::UsbProbe as u32 => Self::UsbProbe,
+            x if x == Self::XhciMmioMap as u32 => Self::XhciMmioMap,
             x if x == Self::InputReady as u32 => Self::InputReady,
             x if x == Self::InterruptsEnabled as u32 => Self::InterruptsEnabled,
             x if x == Self::ProofsActive as u32 => Self::ProofsActive,
+            x if x == Self::InteractiveReady as u32 => Self::InteractiveReady,
             x if x == Self::ShellReady as u32 => Self::ShellReady,
             x if x == Self::PagingActiveCr3 as u32 => Self::PagingActiveCr3,
             _ => Self::None,
@@ -348,9 +414,11 @@ impl BreadcrumbTag {
             Self::SecurityReady => "security-ready",
             Self::NetInit => "net-init",
             Self::UsbProbe => "usb-probe",
+            Self::XhciMmioMap => "xhci-mmio-map",
             Self::InputReady => "input-ready",
             Self::InterruptsEnabled => "interrupts-enabled",
             Self::ProofsActive => "proofs-active",
+            Self::InteractiveReady => "interactive-ready",
             Self::ShellReady => "shell-ready",
             Self::PagingActiveCr3 => "paging-active-cr3",
         }

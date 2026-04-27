@@ -47,6 +47,7 @@ impl DnsResolver {
             .network_config
             .and_then(|config| config.dns_server)
             .ok_or(NetError::InitializationFailed("no DNS server configured"))?;
+        let _ = stack.require_route_to(server, "DNS lookup")?;
         {
             use crate::security::firewall;
             use crate::security::firewall::rules::{Action, Direction, Protocol};
@@ -61,7 +62,9 @@ impl DnsResolver {
             );
             if action == Action::Deny {
                 crate::serial_println!("[WarGuard] DENY outbound DNS to {}", server);
-                return Err(NetError::ProtocolError(String::from("firewall: outbound DNS denied")));
+                return Err(NetError::ProtocolError(String::from(
+                    "firewall: outbound DNS denied",
+                )));
             }
         }
         let servers = [IpAddress::Ipv4(server.as_smoltcp())];
@@ -71,9 +74,9 @@ impl DnsResolver {
 
         let query = {
             let (iface, sockets) = (&mut stack.iface, &mut stack.sockets);
-            let iface = iface
-                .as_mut()
-                .ok_or(NetError::InitializationFailed("network interface not ready"))?;
+            let iface = iface.as_mut().ok_or(NetError::InitializationFailed(
+                "network interface not ready",
+            ))?;
             let socket = sockets.get_mut::<dns::Socket>(query_handle);
             socket
                 .start_query(iface.context(), domain, DnsQueryType::A)
@@ -91,8 +94,9 @@ impl DnsResolver {
 
             match result {
                 Ok(addresses) => {
-                    if let Some(IpAddress::Ipv4(address)) =
-                        addresses.into_iter().find(|address| matches!(address, IpAddress::Ipv4(_)))
+                    if let Some(IpAddress::Ipv4(address)) = addresses
+                        .into_iter()
+                        .find(|address| matches!(address, IpAddress::Ipv4(_)))
                     {
                         let resolved = Ipv4Addr::from_smoltcp(address);
                         self.cache.push(DnsCacheEntry {
@@ -104,7 +108,9 @@ impl DnsResolver {
                         return Ok(resolved);
                     }
                     remove_socket(&mut stack.sockets, query_handle);
-                    return Err(NetError::InitializationFailed("DNS response had no IPv4 records"));
+                    return Err(NetError::InitializationFailed(
+                        "DNS response had no IPv4 records",
+                    ));
                 }
                 Err(GetQueryResultError::Pending) => {}
                 Err(GetQueryResultError::Failed) => {
@@ -117,7 +123,13 @@ impl DnsResolver {
                 remove_socket(&mut stack.sockets, query_handle);
                 return Err(NetError::InitializationFailed("DNS query timed out"));
             }
+
+            super::wait_for_runtime_progress();
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.cache.clear();
     }
 
     #[must_use]

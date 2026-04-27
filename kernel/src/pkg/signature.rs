@@ -26,11 +26,7 @@ struct VerifyContext<'a> {
 
 #[must_use]
 pub fn format_trust_root() -> String {
-    alloc::format!(
-        "{} ({})",
-        WARPKG_BOOTSTRAP_KEY_ID,
-        WARPKG_SIGNATURE_SCHEME
-    )
+    alloc::format!("{} ({})", WARPKG_BOOTSTRAP_KEY_ID, WARPKG_SIGNATURE_SCHEME)
 }
 
 pub fn verify_bootstrap_bundle(bundle: &WarPackBundle) -> Result<(), VerifyError> {
@@ -47,7 +43,10 @@ fn verify_bootstrap_bundle_on_dedicated_stack(bundle: &WarPackBundle) -> Result<
     };
 
     unsafe {
-        run_verify_trampoline((&mut context as *mut VerifyContext<'_>).cast::<u8>(), stack_top);
+        run_verify_trampoline(
+            (&mut context as *mut VerifyContext<'_>).cast::<u8>(),
+            stack_top,
+        );
         context.result.assume_init()
     }
 }

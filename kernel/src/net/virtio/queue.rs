@@ -125,7 +125,11 @@ impl Virtqueue {
                     addr: address.as_u64(),
                     len: length,
                     flags,
-                    next: if flags & VIRTQ_DESC_F_NEXT != 0 { next } else { 0 },
+                    next: if flags & VIRTQ_DESC_F_NEXT != 0 {
+                        next
+                    } else {
+                        0
+                    },
                 },
             );
         }

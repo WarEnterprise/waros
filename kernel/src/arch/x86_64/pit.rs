@@ -42,6 +42,37 @@ pub fn elapsed_millis(ticks: u64) -> u64 {
     ticks_ms.saturating_add(sub_tick_ms)
 }
 
+/// Poll the PIT counter until the global tick count advances or the counter wraps
+/// `max_wraps` times. This keeps late boot progress from depending on a timer IRQ
+/// that may not arrive on every machine.
+#[must_use]
+pub fn wait_for_tick_advance(start_ticks: u64, max_wraps: u8) -> bool {
+    if crate::arch::x86_64::interrupts::tick_count() != start_ticks {
+        return true;
+    }
+
+    let mut previous = read_current_count();
+    let mut wraps = 0u8;
+    loop {
+        if crate::arch::x86_64::interrupts::tick_count() != start_ticks {
+            return true;
+        }
+
+        let current = read_current_count();
+        if current > previous {
+            wraps = wraps.saturating_add(1);
+            if wraps >= max_wraps {
+                crate::arch::x86_64::interrupts::note_observed_tick_floor(
+                    start_ticks.saturating_add(u64::from(wraps)),
+                );
+                return false;
+            }
+        }
+        previous = current;
+        core::hint::spin_loop();
+    }
+}
+
 fn read_current_count() -> u16 {
     port::outb(PIT_COMMAND_PORT, PIT_LATCH_COUNT);
     let low = port::inb(PIT_CHANNEL0_PORT);

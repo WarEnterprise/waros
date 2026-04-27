@@ -48,33 +48,32 @@ pub fn render_taskbar(surface: &mut Surface<'_>, width: usize, active_apps: &[Ap
     let ip = net::network_config()
         .map(|config| config.ip.to_string())
         .unwrap_or_else(|| "No network".into());
-    let uptime = interrupts::tick_count() / u64::from(pit::PIT_FREQUENCY_HZ);
-    let clock = alloc::format!(
-        "{:02}:{:02}",
-        uptime / 3600,
-        (uptime % 3600) / 60
-    );
+    let uptime_seconds = interrupts::tick_count() / u64::from(pit::PIT_FREQUENCY_HZ);
+    let hours = uptime_seconds / 3600;
+    let minutes = (uptime_seconds % 3600) / 60;
+    let seconds = uptime_seconds % 60;
+    let runtime = alloc::format!("Uptime {:02}:{:02}:{:02}", hours, minutes, seconds);
 
-    let clock_width = font::text_width(&clock, 1);
-    let separator_width = font::text_width(" · ", 1);
+    let runtime_width = font::text_width(&runtime, 1);
+    let separator_width = font::text_width(" | ", 1);
     let ip_width = font::text_width(&ip, 1);
     font::draw_text(
         surface,
-        width.saturating_sub(clock_width + 12),
+        width.saturating_sub(runtime_width + 12),
         9,
-        &clock,
+        &runtime,
         Theme::TASKBAR_TEXT,
     );
     font::draw_text(
         surface,
-        width.saturating_sub(clock_width + separator_width + 12),
+        width.saturating_sub(runtime_width + separator_width + 12),
         9,
-        " · ",
+        " | ",
         Theme::TEXT_MUTED,
     );
     font::draw_text(
         surface,
-        width.saturating_sub(clock_width + separator_width + ip_width + 12),
+        width.saturating_sub(runtime_width + separator_width + ip_width + 12),
         9,
         &ip,
         Theme::TEXT_SECONDARY,

@@ -25,7 +25,8 @@ pub fn init() -> Result<AuthInitReport, AuthError> {
         Some(db) => (db, false),
         None => {
             let db = UserDB::with_default_root();
-            db.save_to_fs();
+            db.try_save_to_fs()
+                .map_err(|_| AuthError::SerializationError)?;
             (db, true)
         }
     };

@@ -105,7 +105,9 @@ pub fn apply_verified_bundle(
         signed_by: verified.signed_by.clone(),
         signature_scheme: verified.signature_scheme.clone(),
     };
-    manager.installed.retain(|package| package.name != manifest.name);
+    manager
+        .installed
+        .retain(|package| package.name != manifest.name);
     manager.installed.push(installed.clone());
     manager.save_installed_list().map_err(|error| {
         crate::serial_println!(

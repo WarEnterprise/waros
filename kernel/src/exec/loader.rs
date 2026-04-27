@@ -6,8 +6,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use x86_64::registers::control::{Cr3, Cr3Flags};
 use x86_64::structures::paging::mapper::MapToError;
 use x86_64::structures::paging::{
-    FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame,
-    Size4KiB,
+    FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PageTableFlags, PhysFrame, Size4KiB,
 };
 use x86_64::{PhysAddr, VirtAddr};
 
@@ -43,7 +42,9 @@ pub fn kernel_cr3() -> u64 {
 unsafe fn switch_cr3(phys: u64) {
     let frame = PhysFrame::containing_address(PhysAddr::new(phys));
     // SAFETY: Upheld by caller contract.
-    unsafe { Cr3::write(frame, Cr3Flags::empty()); }
+    unsafe {
+        Cr3::write(frame, Cr3Flags::empty());
+    }
 }
 
 /// Allocate a new PML4 frame, zero it, copy the non-user kernel/runtime entries
@@ -59,7 +60,9 @@ pub fn create_user_page_table_pub() -> Result<u64, ExecError> {
 fn create_user_page_table() -> Result<u64, ExecError> {
     let offset = memory::physical_memory_offset().ok_or(ExecError::PageTableError)?;
     let mut allocator_guard = memory::FRAME_ALLOCATOR.lock();
-    let allocator = allocator_guard.as_mut().ok_or(ExecError::MemoryAllocationFailed)?;
+    let allocator = allocator_guard
+        .as_mut()
+        .ok_or(ExecError::MemoryAllocationFailed)?;
 
     // Allocate one 4 KiB frame for the new PML4.
     let new_phys = FrameAllocator::<Size4KiB>::allocate_frame(allocator)
@@ -138,23 +141,27 @@ pub fn spawn_process(
     // The kernel remains accessible because we copied the required non-user PML4 entries.
     let saved_cr3 = kernel_cr3();
     // SAFETY: `new_cr3` preserves the non-user mappings the kernel needs after the CR3 switch.
-    unsafe { switch_cr3(new_cr3); }
+    unsafe {
+        switch_cr3(new_cr3);
+    }
 
-    let result = build_process(path, args, env, uid, parent_pid, priority, &elf, &elf_data, new_cr3);
+    let result = build_process(
+        path, args, env, uid, parent_pid, priority, &elf, &elf_data, new_cr3,
+    );
 
     // Always restore the kernel page table.
     // SAFETY: `saved_cr3` is the valid kernel CR3.
-    unsafe { switch_cr3(saved_cr3); }
+    unsafe {
+        switch_cr3(saved_cr3);
+    }
 
     let process = result?;
     let pid = PROCESS_TABLE.lock().create_process(process)?;
-    crate::security::audit::log_event(
-        crate::security::audit::events::AuditEvent::ProcessSpawned {
-            pid,
-            name: file_name(path),
-            uid,
-        },
-    );
+    crate::security::audit::log_event(crate::security::audit::events::AuditEvent::ProcessSpawned {
+        pid,
+        name: file_name(path),
+        uid,
+    });
     SCHEDULER.lock().enqueue(pid, priority);
     Ok(pid)
 }
@@ -192,7 +199,9 @@ pub fn teardown_process_image(
     // SAFETY: process.page_table_phys preserves the non-user kernel/runtime mappings needed
     // after the CR3 switch.
     if page_table_phys != 0 && page_table_phys != kernel_cr3() {
-        unsafe { switch_cr3(page_table_phys); }
+        unsafe {
+            switch_cr3(page_table_phys);
+        }
     }
 
     let mut mapper = active_mapper()?;
@@ -220,7 +229,9 @@ pub fn teardown_process_image(
     let kcr3 = kernel_cr3();
     if kcr3 != 0 {
         // SAFETY: KERNEL_CR3 was saved from the original kernel CR3 at boot.
-        unsafe { switch_cr3(kcr3); }
+        unsafe {
+            switch_cr3(kcr3);
+        }
     }
 
     // Free the PML4 frame itself (but not intermediate tables — acceptable for now).
@@ -434,11 +445,7 @@ fn map_stack(
     Ok(())
 }
 
-fn setup_user_stack(
-    stack_top: u64,
-    args: &[&str],
-)
-    -> Result<u64, ExecError> {
+fn setup_user_stack(stack_top: u64, args: &[&str]) -> Result<u64, ExecError> {
     let mut sp = stack_top;
 
     let mut arg_ptrs = alloc::vec::Vec::new();
@@ -519,12 +526,10 @@ fn segment_page_range(segment: &ElfSegment) -> (u64, u64) {
 // PT_LOAD segments are writable only while the loader copies file bytes and zero-fills BSS.
 // They remain NX during population so the loader never creates a temporary RWX window.
 fn temporary_segment_page_flags(_segment: &ElfSegment) -> Result<PageTableFlags, ExecError> {
-    Ok(
-        PageTableFlags::PRESENT
-            | PageTableFlags::USER_ACCESSIBLE
-            | PageTableFlags::WRITABLE
-            | PageTableFlags::NO_EXECUTE,
-    )
+    Ok(PageTableFlags::PRESENT
+        | PageTableFlags::USER_ACCESSIBLE
+        | PageTableFlags::WRITABLE
+        | PageTableFlags::NO_EXECUTE)
 }
 
 // Final page permissions follow the ELF segment flags while enforcing W^X for the current

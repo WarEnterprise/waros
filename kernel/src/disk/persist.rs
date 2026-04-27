@@ -6,8 +6,8 @@ use crate::fs::{FileEntry, WarFS};
 use super::format::{
     allocate_blocks, block_count_for_len, count_active_files, count_used_blocks, entry_name,
     read_file_data, read_file_entry, refresh_superblock, set_superblock_state, write_file_data,
-    write_file_entry, DiskFileEntry, FS_STATE_CLEAN, FS_STATE_DIRTY, MAX_FILENAME, MAX_FILES,
-    BLOCK_SIZE,
+    write_file_entry, DiskFileEntry, BLOCK_SIZE, FS_STATE_CLEAN, FS_STATE_DIRTY, MAX_FILENAME,
+    MAX_FILES,
 };
 use super::{is_persistable_path, Disk, DiskError};
 
@@ -28,7 +28,12 @@ pub fn load_filesystem(disk: &mut Disk, fs: &mut WarFS) -> Result<usize, DiskErr
         let mut data = vec![0u8; entry.size as usize];
         if entry.block_count != 0 && entry.size != 0 {
             let mut block_buffer = vec![0u8; entry.block_count as usize * BLOCK_SIZE];
-            read_file_data(disk, entry.start_block, entry.block_count, &mut block_buffer)?;
+            read_file_data(
+                disk,
+                entry.start_block,
+                entry.block_count,
+                &mut block_buffer,
+            )?;
             data.copy_from_slice(&block_buffer[..entry.size as usize]);
         }
 

@@ -2,8 +2,8 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::auth::session;
 use crate::arch::x86_64::interrupts;
+use crate::auth::session;
 use crate::display::console;
 use crate::shell::commands::execute_command;
 
@@ -78,7 +78,13 @@ impl TerminalState {
 
         let prompt = gui_prompt();
         let input_y = height.saturating_sub(line_height + 6);
-        font::draw_text(&mut surface, left_padding, input_y, &prompt, Theme::TERMINAL_PROMPT);
+        font::draw_text(
+            &mut surface,
+            left_padding,
+            input_y,
+            &prompt,
+            Theme::TERMINAL_PROMPT,
+        );
         let prompt_width = font::text_width(&prompt, 1);
         font::draw_text(
             &mut surface,
@@ -112,9 +118,10 @@ impl TerminalState {
             );
             let thumb_height = ((visible_lines * (height.saturating_sub(line_height + 12)))
                 / self.lines.len())
-                .max(18);
+            .max(18);
             let scrollable = self.lines.len().saturating_sub(visible_lines).max(1);
-            let thumb_y = top_padding + ((start * height.saturating_sub(line_height + 12)) / scrollable);
+            let thumb_y =
+                top_padding + ((start * height.saturating_sub(line_height + 12)) / scrollable);
             surface.fill_rounded_rect(
                 track_x,
                 thumb_y,
@@ -147,11 +154,23 @@ impl TerminalState {
     }
 }
 
-fn render_terminal_line(surface: &mut Surface<'_>, x: usize, y: usize, line: &str, max_width_px: usize) {
+fn render_terminal_line(
+    surface: &mut Surface<'_>,
+    x: usize,
+    y: usize,
+    line: &str,
+    max_width_px: usize,
+) {
     if let Some(split) = line.find("]$ ") {
         let prompt = &line[..split + 3];
         let command = &line[split + 3..];
-        font::draw_text(surface, x, y, &truncate_for_width(prompt, max_width_px), Theme::TERMINAL_PROMPT);
+        font::draw_text(
+            surface,
+            x,
+            y,
+            &truncate_for_width(prompt, max_width_px),
+            Theme::TERMINAL_PROMPT,
+        );
         let prompt_width = font::text_width(prompt, 1).min(max_width_px);
         font::draw_text(
             surface,
@@ -168,7 +187,13 @@ fn render_terminal_line(surface: &mut Surface<'_>, x: usize, y: usize, line: &st
     } else {
         Theme::TERMINAL_OUTPUT
     };
-    font::draw_text(surface, x, y, &truncate_for_width(line, max_width_px), color);
+    font::draw_text(
+        surface,
+        x,
+        y,
+        &truncate_for_width(line, max_width_px),
+        color,
+    );
 }
 
 fn is_error_line(line: &str) -> bool {

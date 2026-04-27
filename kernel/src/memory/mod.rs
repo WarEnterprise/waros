@@ -26,6 +26,17 @@ pub struct MemoryStats {
     pub free_frames: usize,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct BootMemorySummary {
+    pub total_regions: usize,
+    pub usable_regions: usize,
+    pub bootloader_regions: usize,
+    pub other_regions: usize,
+    pub usable_bytes: u64,
+    pub max_physical_address: u64,
+    pub direct_map_offset: Option<u64>,
+}
+
 /// Initialize the global physical frame allocator from the firmware memory map.
 pub fn init(memory_regions: &MemoryRegions) -> Result<(), &'static str> {
     let allocator = BitmapAllocator::init(memory_regions)?;
@@ -59,9 +70,15 @@ pub fn physical_memory_offset() -> Option<VirtAddr> {
 }
 
 /// Translate a physical address through the bootloader-provided direct mapping.
+/// This helper is only valid for RAM covered by the bootloader's physical-memory map.
 #[must_use]
 pub fn phys_to_virt(address: PhysAddr) -> Option<VirtAddr> {
     physical_memory_offset().map(|offset| offset + address.as_u64())
+}
+
+/// Map a physical MMIO register window into a dedicated kernel virtual range.
+pub fn map_mmio(address: PhysAddr, size: usize) -> Result<VirtAddr, &'static str> {
+    paging::map_mmio_region(address, size)
 }
 
 /// Return the top physical address reported by the bootloader memory map.
@@ -117,13 +134,48 @@ pub fn stats() -> MemoryStats {
     }
 }
 
+#[must_use]
+pub fn boot_memory_summary() -> BootMemorySummary {
+    let regions = boot_memory_regions().unwrap_or(&[]);
+    let mut usable_regions = 0usize;
+    let mut bootloader_regions = 0usize;
+    let mut other_regions = 0usize;
+    let mut usable_bytes = 0u64;
+
+    for region in regions {
+        match region.kind {
+            MemoryRegionKind::Usable => {
+                usable_regions += 1;
+                usable_bytes = usable_bytes.saturating_add(region.end.saturating_sub(region.start));
+            }
+            MemoryRegionKind::Bootloader => {
+                bootloader_regions += 1;
+            }
+            _ => {
+                other_regions += 1;
+            }
+        }
+    }
+
+    BootMemorySummary {
+        total_regions: regions.len(),
+        usable_regions,
+        bootloader_regions,
+        other_regions,
+        usable_bytes,
+        max_physical_address: max_physical_address(),
+        direct_map_offset: physical_memory_offset().map(|offset| offset.as_u64()),
+    }
+}
+
 /// Return whether an address is safe for the shell hex dumper to inspect.
 #[must_use]
 pub fn is_debug_readable(address: u64) -> bool {
     let physical_memory_offset = PHYSICAL_MEMORY_OFFSET.load(Ordering::Relaxed);
     let max_physical = MAX_PHYSICAL_ADDRESS.load(Ordering::Relaxed);
     let heap_range = heap::HEAP_START..(heap::HEAP_START + heap::HEAP_SIZE);
-    let physical_range = physical_memory_offset..physical_memory_offset.saturating_add(max_physical);
+    let physical_range =
+        physical_memory_offset..physical_memory_offset.saturating_add(max_physical);
 
     heap_range.contains(&address) || physical_range.contains(&address)
 }
