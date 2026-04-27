@@ -39,7 +39,11 @@ fn rdrand_u64() -> Option<u64> {
                 ok = out(reg_byte) success,
             );
         }
-        if success != 0 { Some(value) } else { None }
+        if success != 0 {
+            Some(value)
+        } else {
+            None
+        }
     }
     #[cfg(not(target_arch = "x86_64"))]
     None
@@ -87,6 +91,13 @@ impl EntropyPool {
     }
 
     fn generate(&mut self, buf: &mut [u8]) {
+        // Mix in fresh RDRAND entropy if available (strengthens every output)
+        if HAS_RDRAND.load(Ordering::Relaxed) {
+            if let Some(fresh) = rdrand_u64() {
+                self.mix_bytes(&fresh.to_le_bytes());
+            }
+        }
+
         let mut counter = self.generation;
         let mut offset = 0;
 

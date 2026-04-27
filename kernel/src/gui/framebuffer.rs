@@ -219,14 +219,7 @@ impl<'a> Surface<'a> {
         }
     }
 
-    pub fn draw_line(
-        &mut self,
-        mut x0: i32,
-        mut y0: i32,
-        x1: i32,
-        y1: i32,
-        color: Color,
-    ) {
+    pub fn draw_line(&mut self, mut x0: i32, mut y0: i32, x1: i32, y1: i32, color: Color) {
         let dx = (x1 - x0).abs();
         let sx = if x0 < x1 { 1 } else { -1 };
         let dy = -(y1 - y0).abs();

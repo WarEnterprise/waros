@@ -10,7 +10,9 @@ use spin::Mutex;
 use crate::display::console::Colors;
 use crate::fs;
 use crate::quantum::circuits::run_builtin;
-use crate::quantum::display::{display_probabilities, display_results, display_state, format_basis_state};
+use crate::quantum::display::{
+    display_probabilities, display_results, display_state, format_basis_state,
+};
 use crate::quantum::gates::{
     cnot, cz, hadamard, pauli_x, pauli_y, pauli_z, rx, ry, rz, s_gate, swap, t_gate,
 };
@@ -25,7 +27,9 @@ static NEXT_HANDLE: AtomicU32 = AtomicU32::new(1);
 
 pub fn alloc_process_register(state: QuantumState) -> u32 {
     let handle = NEXT_HANDLE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    PROCESS_REGISTERS.lock().insert(handle, QuantumSession::new(state));
+    PROCESS_REGISTERS
+        .lock()
+        .insert(handle, QuantumSession::new(state));
     handle
 }
 
@@ -33,8 +37,16 @@ pub fn free_process_register(handle: u32) {
     PROCESS_REGISTERS.lock().remove(&handle);
 }
 
-pub fn apply_gate_to_register(handle: u32, gate: u32, target: usize, control: usize, param: u64) -> Result<(), &'static str> {
-    use crate::quantum::gates::{hadamard, pauli_x, pauli_y, pauli_z, s_gate, t_gate, rx, ry, rz, cnot, cz};
+pub fn apply_gate_to_register(
+    handle: u32,
+    gate: u32,
+    target: usize,
+    control: usize,
+    param: u64,
+) -> Result<(), &'static str> {
+    use crate::quantum::gates::{
+        cnot, cz, hadamard, pauli_x, pauli_y, pauli_z, rx, ry, rz, s_gate, t_gate,
+    };
     use crate::quantum::simulator::{apply_1q, apply_2q};
     use core::f64::consts::PI;
 
@@ -53,11 +65,15 @@ pub fn apply_gate_to_register(handle: u32, gate: u32, target: usize, control: us
         4 => apply_1q(&mut session.state, target, &s_gate())?,
         5 => apply_1q(&mut session.state, target, &t_gate())?,
         10 => {
-            if control >= nq { return Err("control qubit out of range"); }
+            if control >= nq {
+                return Err("control qubit out of range");
+            }
             apply_2q(&mut session.state, control, target, &cnot())?;
         }
         11 => {
-            if control >= nq { return Err("control qubit out of range"); }
+            if control >= nq {
+                return Err("control qubit out of range");
+            }
             apply_2q(&mut session.state, control, target, &cz())?;
         }
         20 => {
@@ -86,21 +102,33 @@ pub fn measure_register(handle: u32, shots: usize) -> Result<alloc::string::Stri
     let mut text = alloc::string::String::new();
     for (basis, count) in &results {
         let prob = (*count as f64 / shots as f64) * 100.0;
-        text.push_str(&alloc::format!("|{}> {} ({:.1}%)\n",
-            format_basis_state(*basis, session.state.num_qubits), count, prob));
+        text.push_str(&alloc::format!(
+            "|{}> {} ({:.1}%)\n",
+            format_basis_state(*basis, session.state.num_qubits),
+            count,
+            prob
+        ));
     }
     Ok(text)
 }
 
-pub fn state_vector_text(handle: u32, max_len: usize) -> Result<alloc::string::String, &'static str> {
+pub fn state_vector_text(
+    handle: u32,
+    max_len: usize,
+) -> Result<alloc::string::String, &'static str> {
     let registers = PROCESS_REGISTERS.lock();
     let session = registers.get(&handle).ok_or("invalid handle")?;
     let mut text = alloc::string::String::new();
     for (i, amp) in session.state.amplitudes.iter().enumerate() {
         let p = norm_sq(*amp);
         if p > 1e-6 {
-            text.push_str(&alloc::format!("|{}> ({:.4}+{:.4}i) p={:.4}\n",
-                format_basis_state(i, session.state.num_qubits), amp.0, amp.1, p));
+            text.push_str(&alloc::format!(
+                "|{}> ({:.4}+{:.4}i) p={:.4}\n",
+                format_basis_state(i, session.state.num_qubits),
+                amp.0,
+                amp.1,
+                p
+            ));
         }
         if text.len() >= max_len.saturating_sub(64) {
             break;
@@ -264,9 +292,8 @@ pub fn current_ibm_qasm() -> Option<(String, usize)> {
     let session = guard.as_ref()?;
     let qubits = session.state.num_qubits;
 
-    let mut qasm = format!(
-        "OPENQASM 3.0;\ninclude \"stdgates.inc\";\nqubit[{qubits}] q;\nbit[{qubits}] c;\n"
-    );
+    let mut qasm =
+        format!("OPENQASM 3.0;\ninclude \"stdgates.inc\";\nqubit[{qubits}] q;\nbit[{qubits}] c;\n");
     for operation in session.operations() {
         qasm.push_str(operation);
         qasm.push('\n');
@@ -411,9 +438,7 @@ fn cmd_qrun(args: &[&str]) -> Result<(), &'static str> {
             let control1 = parse_qubit(args, 2)?;
             let target = parse_qubit(args, 3)?;
             apply_toffoli(state, control0, control1, target)?;
-            session.record_operation(format!(
-                "ccx q[{control0}], q[{control1}], q[{target}];"
-            ));
+            session.record_operation(format!("ccx q[{control0}], q[{control1}], q[{target}];"));
             kprint_colored!(Colors::GREEN, "Applied Toffoli: ");
             kprintln!("controls = {}, {}, target = {}", control0, control1, target);
         }

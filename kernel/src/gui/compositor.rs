@@ -106,7 +106,11 @@ impl Compositor {
 
         let (x, y, width, height) = app_type.default_geometry();
         let width = width.clamp(200, self.screen_width.saturating_sub(16));
-        let height = height.clamp(150, self.screen_height.saturating_sub(Theme::TASKBAR_HEIGHT + 16));
+        let height = height.clamp(
+            150,
+            self.screen_height
+                .saturating_sub(Theme::TASKBAR_HEIGHT + 16),
+        );
         let mut window = Window::new(
             self.next_id,
             app_type.title(),
@@ -149,7 +153,11 @@ impl Compositor {
             if self.windows[index].contains(mouse_x, mouse_y) {
                 self.context_menu = None;
                 self.focus_window(window_id);
-                if let Some(window) = self.windows.iter_mut().find(|window| window.id == window_id) {
+                if let Some(window) = self
+                    .windows
+                    .iter_mut()
+                    .find(|window| window.id == window_id)
+                {
                     if window.title_bar_contains(mouse_x, mouse_y) {
                         window.dragging = true;
                         window.drag_offset_x = mouse_x - window.x;
@@ -207,7 +215,8 @@ impl Compositor {
                 let max_x = (self.screen_width.saturating_sub(window.width)) as i32;
                 let max_y = (self.screen_height.saturating_sub(window.height)) as i32;
                 let mut x = (mouse_x - window.drag_offset_x).clamp(0, max_x);
-                let mut y = (mouse_y - window.drag_offset_y).clamp(Theme::TASKBAR_HEIGHT as i32, max_y);
+                let mut y =
+                    (mouse_y - window.drag_offset_y).clamp(Theme::TASKBAR_HEIGHT as i32, max_y);
                 if x <= SNAP_DISTANCE {
                     x = 0;
                 }
@@ -241,7 +250,11 @@ impl Compositor {
     pub fn route_key_to_focused(&mut self, key: u8) {
         if let Some(focused_id) = self.focused_id {
             let mut dirty = None;
-            if let Some(window) = self.windows.iter_mut().find(|window| window.id == focused_id) {
+            if let Some(window) = self
+                .windows
+                .iter_mut()
+                .find(|window| window.id == focused_id)
+            {
                 if window.app.handle_key(key) {
                     dirty = Some(window_rect(window));
                 }
@@ -281,7 +294,8 @@ impl Compositor {
         }
 
         let mouse = mouse::current_snapshot();
-        let mut surface = Surface::new(&mut self.back_buffer, self.screen_width, self.screen_height);
+        let mut surface =
+            Surface::new(&mut self.back_buffer, self.screen_width, self.screen_height);
         desktop::render_desktop(&mut surface);
 
         for window in &mut self.windows {
@@ -295,9 +309,18 @@ impl Compositor {
             render_context_menu(&mut surface, context_menu, mouse.x, mouse.y);
         }
 
-        cursor::render_cursor(&mut surface, mouse.x.max(0) as usize, mouse.y.max(0) as usize);
+        cursor::render_cursor(
+            &mut surface,
+            mouse.x.max(0) as usize,
+            mouse.y.max(0) as usize,
+        );
 
-        flush_regions_to_screen(surface.pixels(), self.screen_width, self.screen_height, &self.dirty_regions);
+        flush_regions_to_screen(
+            surface.pixels(),
+            self.screen_width,
+            self.screen_height,
+            &self.dirty_regions,
+        );
         self.dirty_regions.clear();
         self.needs_redraw = false;
     }
@@ -378,7 +401,11 @@ impl Compositor {
             }
             ContextAction::ClearTerminal => {
                 if let ContextMenuTarget::Terminal(window_id) = target {
-                    if let Some(window) = self.windows.iter_mut().find(|window| window.id == window_id) {
+                    if let Some(window) = self
+                        .windows
+                        .iter_mut()
+                        .find(|window| window.id == window_id)
+                    {
                         window.app.clear_terminal();
                     }
                     self.invalidate();
@@ -391,14 +418,33 @@ impl Compositor {
 
 fn render_context_menu(surface: &mut Surface<'_>, menu: &ContextMenu, mouse_x: i32, mouse_y: i32) {
     let height = context_menu_height(menu);
-    surface.fill_rounded_rect(menu.x, menu.y, menu.width, height, 4, Theme::CONTEXT_MENU_BG);
-    surface.draw_rounded_rect(menu.x, menu.y, menu.width, height, 4, Theme::CONTEXT_MENU_BORDER);
+    surface.fill_rounded_rect(
+        menu.x,
+        menu.y,
+        menu.width,
+        height,
+        4,
+        Theme::CONTEXT_MENU_BG,
+    );
+    surface.draw_rounded_rect(
+        menu.x,
+        menu.y,
+        menu.width,
+        height,
+        4,
+        Theme::CONTEXT_MENU_BORDER,
+    );
 
     for (index, action) in menu.actions.iter().enumerate() {
         let item_rect = context_menu_item_rect(menu, index);
         if let Some(separator) = menu.separator_before {
             if separator == index {
-                surface.draw_hline(menu.x + 8, item_rect.y - 3, menu.width.saturating_sub(16), Theme::WINDOW_SEPARATOR);
+                surface.draw_hline(
+                    menu.x + 8,
+                    item_rect.y - 3,
+                    menu.width.saturating_sub(16),
+                    Theme::WINDOW_SEPARATOR,
+                );
             }
         }
 
@@ -462,7 +508,11 @@ fn context_menu_hit_test(menu: &ContextMenu, mouse_x: i32, mouse_y: i32) -> Opti
 }
 
 fn context_menu_height(menu: &ContextMenu) -> usize {
-    let separator = if menu.separator_before.is_some() { 6 } else { 0 };
+    let separator = if menu.separator_before.is_some() {
+        6
+    } else {
+        0
+    };
     menu.actions.len() * menu.item_height + 8 + separator
 }
 

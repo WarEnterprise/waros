@@ -16,6 +16,19 @@ impl DhcpConfig {
     pub fn cidr_string(&self) -> alloc::string::String {
         alloc::format!("{}/{}", self.ip, self.prefix_len)
     }
+
+    #[must_use]
+    pub fn is_on_link(&self, address: Ipv4Addr) -> bool {
+        let mask = u32::from_be_bytes(self.subnet_mask.0);
+        let local = u32::from_be_bytes(self.ip.0);
+        let remote = u32::from_be_bytes(address.0);
+        (local & mask) == (remote & mask)
+    }
+
+    #[must_use]
+    pub fn can_reach(&self, address: Ipv4Addr) -> bool {
+        self.is_on_link(address) || self.gateway.is_some()
+    }
 }
 
 impl<'a> From<&dhcpv4::Config<'a>> for DhcpConfig {
@@ -24,7 +37,11 @@ impl<'a> From<&dhcpv4::Config<'a>> for DhcpConfig {
         let ip = Ipv4Addr::from_smoltcp(config.address.address());
         let subnet_mask = mask_from_prefix_len(prefix_len);
         let gateway = config.router.map(Ipv4Addr::from_smoltcp);
-        let dns_server = config.dns_servers.first().copied().map(Ipv4Addr::from_smoltcp);
+        let dns_server = config
+            .dns_servers
+            .first()
+            .copied()
+            .map(Ipv4Addr::from_smoltcp);
 
         Self {
             ip,

@@ -30,7 +30,14 @@ pub fn draw_text_scaled(
     }
 }
 
-fn draw_glyph(surface: &mut Surface<'_>, x: usize, y: usize, character: char, color: Color, scale: usize) {
+fn draw_glyph(
+    surface: &mut Surface<'_>,
+    x: usize,
+    y: usize,
+    character: char,
+    color: Color,
+    scale: usize,
+) {
     let glyph = glyphs::glyph(character);
     for (row_index, row) in glyph.raster().iter().enumerate() {
         for (column_index, alpha) in row.iter().copied().enumerate() {
@@ -56,12 +63,12 @@ fn blend(background: u32, foreground: u32, alpha: u8) -> u32 {
     let alpha = u16::from(alpha);
     let inverse_alpha = u16::from(u8::MAX) - alpha;
 
-    let red = ((u16::from(bg_red) * inverse_alpha) + (u16::from(fg_red) * alpha))
-        / u16::from(u8::MAX);
+    let red =
+        ((u16::from(bg_red) * inverse_alpha) + (u16::from(fg_red) * alpha)) / u16::from(u8::MAX);
     let green = ((u16::from(bg_green) * inverse_alpha) + (u16::from(fg_green) * alpha))
         / u16::from(u8::MAX);
-    let blue = ((u16::from(bg_blue) * inverse_alpha) + (u16::from(fg_blue) * alpha))
-        / u16::from(u8::MAX);
+    let blue =
+        ((u16::from(bg_blue) * inverse_alpha) + (u16::from(fg_blue) * alpha)) / u16::from(u8::MAX);
 
     ((red as u32) << 16) | ((green as u32) << 8) | blue as u32
 }

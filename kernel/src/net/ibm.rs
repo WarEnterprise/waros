@@ -357,8 +357,8 @@ fn fetch_bearer_token(credentials: &ResolvedCredentials) -> Result<String, IBMEr
             response.status_code, message
         )));
     }
-    let payload: IAMTokenResponse =
-        serde_json::from_slice(&response.body).map_err(|error| IBMError::Parse(error.to_string()))?;
+    let payload: IAMTokenResponse = serde_json::from_slice(&response.body)
+        .map_err(|error| IBMError::Parse(error.to_string()))?;
     Ok(payload.access_token)
 }
 
@@ -392,8 +392,7 @@ where
     let bearer = fetch_bearer_token(&credentials)?;
     let authorization = format!("Bearer {bearer}");
     let url = format!("{IBM_RUNTIME_BASE_URL}{path}");
-    let payload =
-        serde_json::to_vec(body).map_err(|error| IBMError::Parse(error.to_string()))?;
+    let payload = serde_json::to_vec(body).map_err(|error| IBMError::Parse(error.to_string()))?;
     let response = http_post_with_headers(
         &url,
         "application/json",
@@ -446,13 +445,15 @@ fn hex_digit(value: u8) -> char {
     }
 }
 
-fn convert_ibm_result(payload: Value, output_bits: Option<usize>) -> Result<IBMJobResult, IBMError> {
+fn convert_ibm_result(
+    payload: Value,
+    output_bits: Option<usize>,
+) -> Result<IBMJobResult, IBMError> {
     let envelope: IBMJobResultEnvelope =
         serde_json::from_value(payload).map_err(|error| IBMError::Parse(error.to_string()))?;
-    let primitive = envelope
-        .results
-        .first()
-        .ok_or_else(|| IBMError::Parse("IBM result payload did not contain any PUB results.".into()))?;
+    let primitive = envelope.results.first().ok_or_else(|| {
+        IBMError::Parse("IBM result payload did not contain any PUB results.".into())
+    })?;
 
     let counts = if let Some(counts) = extract_counts(&primitive.data, output_bits) {
         counts

@@ -217,14 +217,22 @@ pub fn reject_pending_update(reason: &str) -> Result<UpdateTransaction, PkgError
     state.recovery_reason = Some(String::from("pending update rejected"));
     let snapshot = transaction.clone();
     save_state(&state)?;
-    log_update_state(&snapshot.package_name, &snapshot.to_version, "failed", reason);
+    log_update_state(
+        &snapshot.package_name,
+        &snapshot.to_version,
+        "failed",
+        reason,
+    );
     Ok(snapshot)
 }
 
 pub fn rollback_current_update() -> Result<UpdateTransaction, PkgError> {
     super::require_pkg_install()?;
     let mut state = load_state()?;
-    let transaction = state.current.as_mut().ok_or(PkgError::RollbackUnavailable)?;
+    let transaction = state
+        .current
+        .as_mut()
+        .ok_or(PkgError::RollbackUnavailable)?;
     let rollback_path = transaction.rollback_path.clone();
     let rollback = load_rollback_record(&rollback_path)?;
 
@@ -351,7 +359,8 @@ pub fn prepare_boot() -> BootHealthReport {
                     );
                     alloc::format!(
                         "{} {} failed health check before shell-ready; recovery requested",
-                        transaction.package_name, transaction.to_version
+                        transaction.package_name,
+                        transaction.to_version
                     )
                 } else if transaction.boot_observed {
                     transaction.phase = UpdatePhase::Failed;
@@ -369,7 +378,8 @@ pub fn prepare_boot() -> BootHealthReport {
                     );
                     alloc::format!(
                         "{} {} was not confirmed before reboot; recovery requested",
-                        transaction.package_name, transaction.to_version
+                        transaction.package_name,
+                        transaction.to_version
                     )
                 } else {
                     transaction.boot_started = true;
@@ -377,17 +387,20 @@ pub fn prepare_boot() -> BootHealthReport {
                         Some(String::from("boot started; awaiting confirmation"));
                     alloc::format!(
                         "{} {} pending confirmation",
-                        transaction.package_name, transaction.to_version
+                        transaction.package_name,
+                        transaction.to_version
                     )
                 }
             }
             UpdatePhase::Staged => alloc::format!(
                 "{} {} staged for explicit apply",
-                transaction.package_name, transaction.to_version
+                transaction.package_name,
+                transaction.to_version
             ),
             UpdatePhase::Confirmed => alloc::format!(
                 "{} {} confirmed",
-                transaction.package_name, transaction.to_version
+                transaction.package_name,
+                transaction.to_version
             ),
             UpdatePhase::Failed => {
                 state.recovery_requested = true;
@@ -396,12 +409,14 @@ pub fn prepare_boot() -> BootHealthReport {
                 }
                 alloc::format!(
                     "{} {} failed and requires recovery",
-                    transaction.package_name, transaction.to_version
+                    transaction.package_name,
+                    transaction.to_version
                 )
             }
             UpdatePhase::RolledBack => alloc::format!(
                 "{} {} rolled back",
-                transaction.package_name, transaction.to_version
+                transaction.package_name,
+                transaction.to_version
             ),
         };
     }
@@ -429,7 +444,8 @@ pub fn note_shell_ready() -> Result<Option<String>, PkgError> {
     transaction.last_boot_note = Some(String::from("shell-ready reached; confirmation required"));
     let message = alloc::format!(
         "{} {} reached shell-ready; confirmation required",
-        transaction.package_name, transaction.to_version
+        transaction.package_name,
+        transaction.to_version
     );
     save_state(&state)?;
     Ok(Some(message))
@@ -467,7 +483,8 @@ pub fn short_status() -> String {
             } else if state.recovery_requested {
                 alloc::format!(
                     "manual recovery requested ({})",
-                    state.recovery_reason
+                    state
+                        .recovery_reason
                         .unwrap_or_else(|| String::from("unspecified"))
                 )
             } else {
@@ -514,7 +531,9 @@ fn apply_verified_bundle_bytes(
 
     let transaction = UpdateTransaction {
         package_name: manifest.name.clone(),
-        from_version: previous_installed.as_ref().map(|package| package.version.clone()),
+        from_version: previous_installed
+            .as_ref()
+            .map(|package| package.version.clone()),
         to_version: manifest.version.clone(),
         source_path: source_path.into(),
         staged_path: staged_override.or_else(|| {
@@ -531,7 +550,9 @@ fn apply_verified_bundle_bytes(
         boot_started: false,
         boot_observed: false,
         failure_reason: None,
-        last_boot_note: Some(String::from("offline apply completed; awaiting boot confirmation")),
+        last_boot_note: Some(String::from(
+            "offline apply completed; awaiting boot confirmation",
+        )),
     };
     state.current = Some(transaction.clone());
     state.recovery_requested = false;
@@ -699,7 +720,8 @@ fn render_state(state: &UpdateState) -> String {
     if let Some(transaction) = &state.current {
         lines.push(alloc::format!(
             "  Package:           {} {}",
-            transaction.package_name, transaction.to_version
+            transaction.package_name,
+            transaction.to_version
         ));
         if let Some(from_version) = &transaction.from_version {
             lines.push(alloc::format!("  Previous version:  {}", from_version));
@@ -708,14 +730,21 @@ fn render_state(state: &UpdateState) -> String {
             "  State:             {}",
             transaction.phase.as_str()
         ));
-        lines.push(alloc::format!("  Source:            {}", transaction.source_path));
+        lines.push(alloc::format!(
+            "  Source:            {}",
+            transaction.source_path
+        ));
         if let Some(staged_path) = &transaction.staged_path {
             lines.push(alloc::format!("  Staged bundle:     {}", staged_path));
         }
-        lines.push(alloc::format!("  Rollback record:   {}", transaction.rollback_path));
+        lines.push(alloc::format!(
+            "  Rollback record:   {}",
+            transaction.rollback_path
+        ));
         lines.push(alloc::format!(
             "  Boot health:       started={} shell-ready={}",
-            transaction.boot_started, transaction.boot_observed
+            transaction.boot_started,
+            transaction.boot_observed
         ));
         if let Some(reason) = &transaction.failure_reason {
             lines.push(alloc::format!("  Failure reason:    {}", reason));
@@ -728,7 +757,11 @@ fn render_state(state: &UpdateState) -> String {
     }
     lines.push(alloc::format!(
         "  Recovery request:  {}",
-        if state.recovery_requested { "yes" } else { "no" }
+        if state.recovery_requested {
+            "yes"
+        } else {
+            "no"
+        }
     ));
     if let Some(reason) = &state.recovery_reason {
         lines.push(alloc::format!("  Recovery reason:   {}", reason));
@@ -755,7 +788,10 @@ fn log_update_state(name: &str, version: &str, state: &str, detail: &str) {
         crate::security::audit::events::AuditEvent::SecurityPolicyChanged {
             change: alloc::format!(
                 "update_state name={} ver={} state={} detail={}",
-                name, version, state, detail
+                name,
+                version,
+                state,
+                detail
             ),
             uid: crate::exec::current_uid(),
         },

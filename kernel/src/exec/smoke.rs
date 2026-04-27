@@ -3,7 +3,9 @@ use alloc::vec::Vec;
 
 use crate::auth::session;
 
-use super::{loader, process::Priority, run_user_process, run_user_process_preserve_zombie, ExecError};
+use super::{
+    loader, process::Priority, run_user_process, run_user_process_preserve_zombie, ExecError,
+};
 
 pub const SMOKE_ELF_PATH: &str = "/bin/warexec-smoke.elf";
 pub const SMOKE_ELF_EXIT_CODE: i32 = 42;
@@ -192,7 +194,8 @@ fn build_write_exit_smoke_elf() -> Vec<u8> {
     let message = SMOKE_ELF_STDOUT.as_bytes();
     let message_offset = CODE_SIZE;
     let entry_point = ELF_BASE_VADDR + (ELF_HEADER_SIZE + PROGRAM_HEADER_SIZE) as u64;
-    let message_vaddr = ELF_BASE_VADDR + (ELF_HEADER_SIZE + PROGRAM_HEADER_SIZE + message_offset) as u64;
+    let message_vaddr =
+        ELF_BASE_VADDR + (ELF_HEADER_SIZE + PROGRAM_HEADER_SIZE + message_offset) as u64;
     let lea_disp = (message_vaddr - (entry_point + 17)) as u32;
     let message_len = message.len() as u32;
 
@@ -234,7 +237,11 @@ pub fn run_abi_offset_smoke() -> Result<i32, ExecError> {
 }
 
 pub fn run_abi_argv_smoke() -> Result<i32, ExecError> {
-    let args = [ABI_ARGV_SMOKE_ELF_PATH, ABI_ARGV_SMOKE_ARG1, ABI_ARGV_SMOKE_ARG2];
+    let args = [
+        ABI_ARGV_SMOKE_ELF_PATH,
+        ABI_ARGV_SMOKE_ARG1,
+        ABI_ARGV_SMOKE_ARG2,
+    ];
     run_program_with_args(ABI_ARGV_SMOKE_ELF_PATH, &args)
 }
 
@@ -345,8 +352,8 @@ fn run_program_with_args(path: &str, args: &[&str]) -> Result<i32, ExecError> {
 }
 
 fn discard_process(pid: u32) {
-    super::SCHEDULER.lock().dequeue(pid);
     super::PROCESS_TABLE.lock().remove(pid);
+    super::SCHEDULER.lock().dequeue(pid);
 }
 
 fn build_read_abi_smoke_elf() -> Vec<u8> {
@@ -1237,7 +1244,13 @@ fn build_readdir_abi_smoke_elf() -> Vec<u8> {
 
     // exit(51)
     payload.extend_from_slice(&[0xB8, 0x3C, 0x00, 0x00, 0x00]);
-    payload.extend_from_slice(&[0xBF, ABI_READDIR_SMOKE_ELF_EXIT_CODE as u8, 0x00, 0x00, 0x00]);
+    payload.extend_from_slice(&[
+        0xBF,
+        ABI_READDIR_SMOKE_ELF_EXIT_CODE as u8,
+        0x00,
+        0x00,
+        0x00,
+    ]);
     payload.extend_from_slice(&[0x0F, 0x05]);
 
     let fail_offset = payload.len();
@@ -1429,15 +1442,27 @@ fn build_path_abi_smoke_elf() -> Vec<u8> {
     payload.push(0);
 
     patch_rel32(&mut payload, start_line_disp_offset, start_line_offset);
-    patch_rel32(&mut payload, absolute_stat_path_disp_offset, absolute_path_offset);
+    patch_rel32(
+        &mut payload,
+        absolute_stat_path_disp_offset,
+        absolute_path_offset,
+    );
     patch_rel32(&mut payload, stat_call_fail_jump, fail_offset);
     patch_rel32(&mut payload, stat_size_fail_jump, fail_offset);
     patch_rel32(&mut payload, stat_type_fail_jump, fail_offset);
-    patch_rel32(&mut payload, absolute_open_path_disp_offset, absolute_path_offset);
+    patch_rel32(
+        &mut payload,
+        absolute_open_path_disp_offset,
+        absolute_path_offset,
+    );
     patch_rel32(&mut payload, absolute_open_fail_jump, fail_offset);
     patch_rel32(&mut payload, absolute_close_fail_jump, fail_offset);
     patch_rel32(&mut payload, abs_ok_line_disp_offset, abs_ok_line_offset);
-    patch_rel32(&mut payload, relative_open_path_disp_offset, relative_path_offset);
+    patch_rel32(
+        &mut payload,
+        relative_open_path_disp_offset,
+        relative_path_offset,
+    );
     patch_rel32(&mut payload, relative_open_fail_jump, fail_offset);
     patch_rel32(&mut payload, rel_err_line_disp_offset, rel_err_line_offset);
 
@@ -1669,7 +1694,11 @@ fn build_write_abi_smoke_elf() -> Vec<u8> {
     }
     patch_rel32(&mut payload, reopen_close_fail_jump, fail_offset);
     patch_rel32(&mut payload, size_line_disp_offset, size_line_offset);
-    patch_rel32(&mut payload, readback_prefix_disp_offset, readback_prefix_offset);
+    patch_rel32(
+        &mut payload,
+        readback_prefix_disp_offset,
+        readback_prefix_offset,
+    );
     patch_rel32(&mut payload, newline_disp_offset, newline_offset);
 
     build_single_segment_rx_elf(&payload)
@@ -1820,7 +1849,9 @@ fn build_arg_report_smoke_elf(
         let disp_offset = payload.len();
         payload.extend_from_slice(&[0, 0, 0, 0]);
         payload.push(0xBA);
-        payload.extend_from_slice(&(header_line.as_ref().map_or(0, |line| line.len()) as u32).to_le_bytes());
+        payload.extend_from_slice(
+            &(header_line.as_ref().map_or(0, |line| line.len()) as u32).to_le_bytes(),
+        );
         payload.extend_from_slice(&[0x0F, 0x05]);
         Some(disp_offset)
     } else {

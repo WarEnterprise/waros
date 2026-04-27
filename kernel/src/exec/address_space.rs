@@ -82,7 +82,13 @@ impl AddressSpace {
     }
 
     #[must_use]
-    fn range_within_region(&self, start: u64, end: u64, region_start: u64, region_end: u64) -> bool {
+    fn range_within_region(
+        &self,
+        start: u64,
+        end: u64,
+        region_start: u64,
+        region_end: u64,
+    ) -> bool {
         region_end > region_start && start >= region_start && end <= region_end
     }
 }

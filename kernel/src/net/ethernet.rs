@@ -25,7 +25,12 @@ pub struct EthernetFrame {
 
 impl EthernetFrame {
     #[must_use]
-    pub fn new(dst_mac: [u8; ETH_ALEN], src_mac: [u8; ETH_ALEN], ethertype: u16, payload: Vec<u8>) -> Self {
+    pub fn new(
+        dst_mac: [u8; ETH_ALEN],
+        src_mac: [u8; ETH_ALEN],
+        ethertype: u16,
+        payload: Vec<u8>,
+    ) -> Self {
         Self {
             header: EthernetHeader {
                 dst_mac,

@@ -5,14 +5,10 @@ use alloc::vec::Vec;
 
 use spin::Mutex;
 
-use integrity::{IntegrityEntry, IntegrityViolation, compute_hash, hash_to_hex, verify_entry};
+use integrity::{compute_hash, hash_to_hex, verify_entry, IntegrityEntry, IntegrityViolation};
 
 /// Critical system paths to monitor.
-const MONITORED_PATHS: &[&str] = &[
-    "/etc/users.db",
-    "/etc/firewall.conf",
-    "/var/pkg/index.json",
-];
+const MONITORED_PATHS: &[&str] = &["/etc/users.db", "/etc/firewall.conf", "/var/pkg/index.json"];
 
 pub struct WarVault {
     entries: Vec<IntegrityEntry>,

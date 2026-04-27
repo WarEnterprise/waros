@@ -36,7 +36,11 @@ pub fn simulate_bb84(n_qubits: usize) -> Bb84Result {
     for _ in 0..n {
         let r = entropy::random_u64();
         alice_bits.push((r & 1) as u8);
-        alice_bases.push(if (r >> 1) & 1 == 0 { Basis::Z } else { Basis::X });
+        alice_bases.push(if (r >> 1) & 1 == 0 {
+            Basis::Z
+        } else {
+            Basis::X
+        });
     }
 
     // Bob: random measurement bases

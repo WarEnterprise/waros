@@ -27,9 +27,21 @@ pub fn enforce_wx(segments: &mut [MemorySegment]) -> usize {
 /// Log W^X status for each segment type to serial.
 pub fn log_segment_protections(segments: &[MemorySegment]) {
     for seg in segments {
-        let r = if seg.flags.contains(SegmentFlags::READ) { "R" } else { "-" };
-        let w = if seg.flags.contains(SegmentFlags::WRITE) { "W" } else { "-" };
-        let x = if seg.flags.contains(SegmentFlags::EXECUTE) { "X" } else { "-" };
+        let r = if seg.flags.contains(SegmentFlags::READ) {
+            "R"
+        } else {
+            "-"
+        };
+        let w = if seg.flags.contains(SegmentFlags::WRITE) {
+            "W"
+        } else {
+            "-"
+        };
+        let x = if seg.flags.contains(SegmentFlags::EXECUTE) {
+            "X"
+        } else {
+            "-"
+        };
         crate::serial_println!(
             "[W^X] 0x{:016X} size 0x{:X} {}{}{}",
             seg.vaddr,

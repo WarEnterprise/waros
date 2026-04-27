@@ -24,7 +24,15 @@ pub struct Window {
 
 impl Window {
     #[must_use]
-    pub fn new(id: u32, title: &str, x: i32, y: i32, width: usize, height: usize, app: AppKind) -> Self {
+    pub fn new(
+        id: u32,
+        title: &str,
+        x: i32,
+        y: i32,
+        width: usize,
+        height: usize,
+        app: AppKind,
+    ) -> Self {
         let width = width.max(200);
         let height = height.max(150);
         let content_width = width.saturating_sub(2);
@@ -139,12 +147,22 @@ impl Window {
                 Theme::CURSOR_BORDER,
             );
         }
-        font::draw_text(surface, x + 40, y + 8, &self.title, Theme::WINDOW_TITLE_TEXT);
+        font::draw_text(
+            surface,
+            x + 40,
+            y + 8,
+            &self.title,
+            Theme::WINDOW_TITLE_TEXT,
+        );
 
         let content_width = self.content_width();
         let content_height = self.content_height();
-        self.app
-            .render(&mut self.content, content_width, content_height, self.focused);
+        self.app.render(
+            &mut self.content,
+            content_width,
+            content_height,
+            self.focused,
+        );
         surface.blit(
             &self.content,
             content_width,
@@ -156,7 +174,12 @@ impl Window {
         let handle_x = x + self.width.saturating_sub(12);
         let handle_y = y + self.height.saturating_sub(10);
         for offset in [0usize, 4, 8] {
-            surface.fill_circle(handle_x + offset, handle_y + offset / 2, 1, Theme::WINDOW_RESIZE_HANDLE);
+            surface.fill_circle(
+                handle_x + offset,
+                handle_y + offset / 2,
+                1,
+                Theme::WINDOW_RESIZE_HANDLE,
+            );
         }
 
         if self.flash_frames > 0 {

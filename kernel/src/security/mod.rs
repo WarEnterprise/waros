@@ -21,10 +21,10 @@ pub fn init() {
     } else {
         "unavailable"
     };
-    boot_ok_security(&alloc::format!(
-        "Entropy pool initialized (RDRAND: {})",
-        rdrand_str
-    ), start);
+    boot_ok_security(
+        &alloc::format!("Entropy pool initialized (RDRAND: {})", rdrand_str),
+        start,
+    );
 
     // Self-test entropy
     if !crypt::entropy::self_test() {
@@ -40,7 +40,10 @@ pub fn init() {
     let start = crate::arch::x86_64::interrupts::tick_count();
     firewall::init();
     boot_ok_security(
-        &alloc::format!("WarGuard firewall enabled ({} rules)", firewall::rule_count()),
+        &alloc::format!(
+            "WarGuard firewall enabled ({} rules)",
+            firewall::rule_count()
+        ),
         start,
     );
 
@@ -63,20 +66,27 @@ pub fn init() {
         "[PROOF] WarShield: TLS validation wired (embedded trust anchors for supported hosts; no RTC expiry)"
     );
     crate::serial_println!("[PROOF] WarShield: ASLR wired (stack randomization, 8-bit entropy)");
-    crate::serial_println!("[PROOF] WarShield: W^X enforced (loader rejects W+X, verify_wx post-check)");
-    crate::serial_println!("[PROOF] WarShield: capabilities wired (halt/reboot/useradd/userdel/format/profile)");
+    crate::serial_println!(
+        "[PROOF] WarShield: W^X enforced (loader rejects W+X, verify_wx post-check)"
+    );
+    crate::serial_println!(
+        "[PROOF] WarShield: capabilities wired (halt/reboot/useradd/userdel/format/profile)"
+    );
     crate::serial_println!(
         "[PROOF] WarShield: runtime hardening + resilience foundation ready for Pass 4 proofs"
     );
 }
 
 fn boot_ok_security(message: &str, _start_ticks: u64) {
-    let elapsed_ms = crate::arch::x86_64::pit::elapsed_millis(
-        crate::arch::x86_64::interrupts::tick_count(),
-    );
+    let elapsed_ms =
+        crate::arch::x86_64::pit::elapsed_millis(crate::arch::x86_64::interrupts::tick_count());
     crate::kprint_colored!(crate::display::console::Colors::GREEN, "[OK]");
     crate::kprint!(" WarShield: {}", message);
-    crate::kprint_colored!(crate::display::console::Colors::DIM, " ({:>3} ms)", elapsed_ms);
+    crate::kprint_colored!(
+        crate::display::console::Colors::DIM,
+        " ({:>3} ms)",
+        elapsed_ms
+    );
     crate::kprintln!();
     crate::serial_println!("[OK] WarShield: {} ({} ms)", message, elapsed_ms);
 }
@@ -92,7 +102,11 @@ pub fn format_status() -> String {
         "disabled"
     };
     let entropy = crypt::entropy::entropy_bits();
-    let rdrand = if crypt::entropy::has_rdrand() { "available" } else { "unavailable" };
+    let rdrand = if crypt::entropy::has_rdrand() {
+        "available"
+    } else {
+        "unavailable"
+    };
 
     let fw_status = firewall::format_status();
 

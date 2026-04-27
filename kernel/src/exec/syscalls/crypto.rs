@@ -6,7 +6,11 @@ pub fn sys_kem_keygen(_public_key: *mut u8, _secret_key: *mut u8) -> i64 {
     ENOSYS
 }
 
-pub fn sys_kem_encapsulate(_public_key: *const u8, _ciphertext: *mut u8, _shared_secret: *mut u8) -> i64 {
+pub fn sys_kem_encapsulate(
+    _public_key: *const u8,
+    _ciphertext: *mut u8,
+    _shared_secret: *mut u8,
+) -> i64 {
     ENOSYS
 }
 
@@ -18,11 +22,21 @@ pub fn sys_kem_decapsulate(
     ENOSYS
 }
 
-pub fn sys_sign(_secret_key: *const u8, _message: *const u8, _len: usize, _signature: *mut u8) -> i64 {
+pub fn sys_sign(
+    _secret_key: *const u8,
+    _message: *const u8,
+    _len: usize,
+    _signature: *mut u8,
+) -> i64 {
     ENOSYS
 }
 
-pub fn sys_verify(_public_key: *const u8, _message: *const u8, _len: usize, _signature: *const u8) -> i64 {
+pub fn sys_verify(
+    _public_key: *const u8,
+    _message: *const u8,
+    _len: usize,
+    _signature: *const u8,
+) -> i64 {
     ENOSYS
 }
 

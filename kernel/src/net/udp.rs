@@ -114,6 +114,8 @@ pub fn send_udp(
             let _ = stack.sockets.remove(handle);
             return Ok(None);
         }
+
+        super::wait_for_runtime_progress();
     }
 }
 

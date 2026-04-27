@@ -237,11 +237,7 @@ pub fn read_file_data(
     disk.read_sectors(start_sector, total_sectors as u32, buffer)
 }
 
-pub fn write_file_data(
-    disk: &mut Disk,
-    start_block: u32,
-    data: &[u8],
-) -> Result<u32, DiskError> {
+pub fn write_file_data(disk: &mut Disk, start_block: u32, data: &[u8]) -> Result<u32, DiskError> {
     let blocks_needed = block_count_for_len(data.len());
     if blocks_needed == 0 {
         return Ok(0);
@@ -250,7 +246,11 @@ pub fn write_file_data(
     let start_sector = DATA_START_SECTOR + start_block as u64 * SECTORS_PER_BLOCK;
     let mut padded = vec![0u8; blocks_needed as usize * BLOCK_SIZE];
     padded[..data.len()].copy_from_slice(data);
-    disk.write_sectors(start_sector, (blocks_needed as u64 * SECTORS_PER_BLOCK) as u32, &padded)?;
+    disk.write_sectors(
+        start_sector,
+        (blocks_needed as u64 * SECTORS_PER_BLOCK) as u32,
+        &padded,
+    )?;
     Ok(blocks_needed)
 }
 

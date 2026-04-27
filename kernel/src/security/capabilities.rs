@@ -2,6 +2,8 @@ use alloc::string::String;
 
 use bitflags::bitflags;
 
+use crate::auth::{self, UserRole, USER_DB};
+
 bitflags! {
     /// WarOS capability bitfield — bits 0-15 standard, bits 16-31 WarOS-exclusive.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,8 +69,7 @@ pub const USER_DEFAULT: Capabilities = Capabilities::from_bits_truncate(
         | Capabilities::CRYPTO_PQ.bits()
         | Capabilities::CRYPTO_KEYGEN.bits()
         | Capabilities::AI_INFERENCE.bits()
-        | Capabilities::NET_BIND_SERVICE.bits()
-        | Capabilities::PKG_INSTALL.bits(),
+        | Capabilities::NET_BIND_SERVICE.bits(),
 );
 
 /// Sandboxed processes get nothing.
@@ -101,11 +102,7 @@ const ALL_CAPABILITIES: [(Capabilities, &str); 22] = [
 
 /// Determine the default capability set for a given uid.
 pub fn default_for_uid(uid: u16) -> Capabilities {
-    if uid == 0 {
-        ADMIN_DEFAULT
-    } else {
-        USER_DEFAULT
-    }
+    default_for_identity(uid, role_for_uid(uid))
 }
 
 #[must_use]
@@ -117,7 +114,9 @@ pub fn current_capabilities() -> Option<Capabilities> {
 #[must_use]
 pub fn process_capabilities(pid: u32) -> Option<Capabilities> {
     let process_table = crate::exec::PROCESS_TABLE.lock();
-    process_table.get(pid).map(|process| process.effective_capabilities)
+    process_table
+        .get(pid)
+        .map(|process| process.effective_capabilities)
 }
 
 #[must_use]
@@ -143,9 +142,7 @@ pub fn shell_capabilities_for_uid(uid: u16) -> Capabilities {
 #[must_use]
 pub fn spawn_capabilities(parent_pid: u32, uid: u16) -> Capabilities {
     let baseline = default_for_uid(uid);
-    process_capabilities(parent_pid)
-        .unwrap_or_else(|| session_capabilities_for_uid(uid))
-        & baseline
+    process_capabilities(parent_pid).unwrap_or_else(|| session_capabilities_for_uid(uid)) & baseline
 }
 
 /// Exec keeps the current process identity and may only preserve or narrow capability bits.
@@ -314,8 +311,34 @@ pub fn format_capabilities(caps: Capabilities) -> String {
     lines.join("\n")
 }
 
+fn default_for_identity(uid: u16, role: UserRole) -> Capabilities {
+    if uid == 0 || role == UserRole::Admin {
+        ADMIN_DEFAULT
+    } else {
+        USER_DEFAULT
+    }
+}
+
+fn role_for_uid(uid: u16) -> UserRole {
+    if let Some(user) = auth::session::current_user() {
+        if user.uid == uid {
+            return user.role;
+        }
+    }
+
+    USER_DB
+        .lock()
+        .find_by_uid(uid)
+        .map(|user| user.role)
+        .unwrap_or(if uid == 0 {
+            UserRole::Admin
+        } else {
+            UserRole::User
+        })
+}
+
 fn cleanup_spawned_process(pid: u32) {
     let _ = crate::exec::loader::teardown_process(pid);
-    crate::exec::SCHEDULER.lock().dequeue(pid);
     crate::exec::PROCESS_TABLE.lock().remove(pid);
+    crate::exec::SCHEDULER.lock().dequeue(pid);
 }

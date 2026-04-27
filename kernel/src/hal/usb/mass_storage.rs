@@ -93,7 +93,8 @@ pub struct UsbMassStorageInfo {
 impl UsbMassStorageInfo {
     #[must_use]
     pub fn capacity_bytes(self) -> u64 {
-        self.capacity_sectors.saturating_mul(u64::from(self.sector_size))
+        self.capacity_sectors
+            .saturating_mul(u64::from(self.sector_size))
     }
 }
 

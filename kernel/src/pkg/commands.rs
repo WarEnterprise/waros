@@ -148,7 +148,8 @@ pub fn handle(args: &[&str]) {
                 Err(error) => report_error(error),
             }
         }
-        "list" => match with_manager(|manager| Ok::<_, super::PkgError>(manager.installed.clone())) {
+        "list" => match with_manager(|manager| Ok::<_, super::PkgError>(manager.installed.clone()))
+        {
             Ok(installed) => {
                 if installed.is_empty() {
                     kprintln!("No packages installed.");

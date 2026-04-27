@@ -113,4 +113,3 @@ pub fn protected_path_owner(path: &str) -> Option<(u16, String)> {
         .find_by_name(username)
         .map(|user| (user.uid, user.username.clone()))
 }
-

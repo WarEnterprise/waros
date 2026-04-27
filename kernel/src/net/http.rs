@@ -4,10 +4,14 @@ use alloc::vec::Vec;
 use super::tcp::TcpConnection;
 use super::{ipv4::Ipv4Addr, NetError, NetworkSubsystem};
 
+const HTTP_GET_REDIRECT_LIMIT: u8 = 5;
+
 pub struct HttpResponse {
     pub status_code: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    pub effective_url: String,
+    pub redirects_followed: u8,
 }
 
 pub struct UrlParts {
@@ -60,13 +64,134 @@ pub fn http_get_with_headers(
     url: &str,
     extra_headers: &[(&str, &str)],
 ) -> Result<HttpResponse, NetError> {
-    let parts = parse_url(url)?;
-    match parts.scheme.as_str() {
-        "http" => plain_request(stack, "GET", &parts, extra_headers, None),
+    let mut current_url = url.to_string();
+    let mut redirects_followed = 0u8;
+
+    loop {
+        let parts = parse_url(&current_url)?;
+        let response = http_request_once(
+            stack,
+            "GET",
+            &current_url,
+            &parts,
+            extra_headers,
+            None,
+            redirects_followed,
+        )?;
+        if !is_redirect_status(response.status_code) {
+            return Ok(response);
+        }
+        if redirects_followed >= HTTP_GET_REDIRECT_LIMIT {
+            return Err(NetError::ProtocolError(alloc::format!(
+                "HTTP redirect limit exceeded after {} hop(s) for {}",
+                redirects_followed,
+                url
+            )));
+        }
+        let Some(location) = header_value(&response.headers, "Location") else {
+            return Err(NetError::ProtocolError(alloc::format!(
+                "HTTP {} redirect from {} did not include a Location header",
+                response.status_code,
+                response.effective_url
+            )));
+        };
+        current_url = resolve_redirect_url(&parts, location)?;
+        redirects_followed = redirects_followed.saturating_add(1);
+    }
+}
+
+fn http_request_once(
+    stack: &mut NetworkSubsystem,
+    method: &str,
+    requested_url: &str,
+    parts: &UrlParts,
+    extra_headers: &[(&str, &str)],
+    body: Option<(&str, &[u8])>,
+    redirects_followed: u8,
+) -> Result<HttpResponse, NetError> {
+    let mut response = match parts.scheme.as_str() {
+        "http" => plain_request(stack, method, parts, extra_headers, body),
         "https" => {
-            super::tls::TlsConnection::https_request(stack, "GET", &parts, extra_headers, None)
+            super::tls::TlsConnection::https_request(stack, method, requested_url, parts, extra_headers, body)
         }
         _ => Err(NetError::InitializationFailed("unsupported URL scheme")),
+    }?;
+    response.effective_url = requested_url.to_string();
+    response.redirects_followed = redirects_followed;
+    Ok(response)
+}
+
+fn is_redirect_status(status_code: u16) -> bool {
+    matches!(status_code, 301 | 302 | 307 | 308)
+}
+
+fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(header, _)| header.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
+}
+
+fn resolve_redirect_url(parts: &UrlParts, location: &str) -> Result<String, NetError> {
+    if location.contains("://") {
+        return Ok(location.to_string());
+    }
+
+    if let Some(authority) = location.strip_prefix("//") {
+        return Ok(alloc::format!("{}://{}", parts.scheme, authority));
+    }
+
+    if let Some(path) = location.strip_prefix('/') {
+        return Ok(alloc::format!(
+            "{}://{}{}{}",
+            parts.scheme,
+            parts.host,
+            explicit_port_suffix(parts),
+            if path.is_empty() {
+                String::from("/")
+            } else {
+                alloc::format!("/{path}")
+            }
+        ));
+    }
+
+    let base_path = base_directory(&parts.path);
+    Ok(alloc::format!(
+        "{}://{}{}{}{}",
+        parts.scheme,
+        parts.host,
+        explicit_port_suffix(parts),
+        base_path,
+        location
+    ))
+}
+
+fn explicit_port_suffix(parts: &UrlParts) -> String {
+    let default_port = match parts.scheme.as_str() {
+        "http" => 80,
+        "https" => 443,
+        _ => parts.port,
+    };
+    if parts.port == default_port {
+        String::new()
+    } else {
+        alloc::format!(":{}", parts.port)
+    }
+}
+
+fn base_directory(path: &str) -> String {
+    let without_query = path.split('?').next().unwrap_or(path);
+    let without_fragment = without_query.split('#').next().unwrap_or(without_query);
+    if without_fragment.is_empty() || without_fragment == "/" {
+        return String::from("/");
+    }
+    if without_fragment.ends_with('/') {
+        return without_fragment.to_string();
+    }
+    match without_fragment.rsplit_once('/') {
+        Some((prefix, _)) if prefix.is_empty() => String::from("/"),
+        Some((prefix, _)) => alloc::format!("{prefix}/"),
+        None => String::from("/"),
     }
 }
 
@@ -87,17 +212,15 @@ pub fn http_post_with_headers(
     extra_headers: &[(&str, &str)],
 ) -> Result<HttpResponse, NetError> {
     let parts = parse_url(url)?;
-    match parts.scheme.as_str() {
-        "http" => plain_request(stack, "POST", &parts, extra_headers, Some((content_type, body))),
-        "https" => super::tls::TlsConnection::https_request(
-            stack,
-            "POST",
-            &parts,
-            extra_headers,
-            Some((content_type, body)),
-        ),
-        _ => Err(NetError::InitializationFailed("unsupported URL scheme")),
-    }
+    http_request_once(
+        stack,
+        "POST",
+        url,
+        &parts,
+        extra_headers,
+        Some((content_type, body)),
+        0,
+    )
 }
 
 fn plain_request(
@@ -112,7 +235,9 @@ fn plain_request(
 
     let mut request = alloc::format!(
         "{method} {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: WarOS/{}\r\nConnection: close\r\n",
-        parts.path, parts.host, crate::KERNEL_VERSION
+        parts.path,
+        parts.host,
+        crate::KERNEL_VERSION
     );
     if let Some((content_type, body_bytes)) = body {
         request.push_str(&alloc::format!(
@@ -140,19 +265,23 @@ pub(crate) fn parse_response(bytes: &[u8]) -> Result<HttpResponse, NetError> {
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
         .map(|index| index + 4)
-        .ok_or(NetError::InitializationFailed("HTTP response missing headers"))?;
+        .ok_or(NetError::InitializationFailed(
+            "HTTP response missing headers",
+        ))?;
 
     let header_text = core::str::from_utf8(&bytes[..header_end])
         .map_err(|_| NetError::InitializationFailed("HTTP headers are not UTF-8"))?;
     let mut lines = header_text.split("\r\n").filter(|line| !line.is_empty());
-    let status_line = lines
-        .next()
-        .ok_or(NetError::InitializationFailed("HTTP response missing status line"))?;
+    let status_line = lines.next().ok_or(NetError::InitializationFailed(
+        "HTTP response missing status line",
+    ))?;
     let status_code = status_line
         .split_whitespace()
         .nth(1)
         .and_then(|value| value.parse::<u16>().ok())
-        .ok_or(NetError::InitializationFailed("HTTP status line is invalid"))?;
+        .ok_or(NetError::InitializationFailed(
+            "HTTP status line is invalid",
+        ))?;
 
     let mut headers = Vec::new();
     let mut chunked = false;
@@ -179,6 +308,8 @@ pub(crate) fn parse_response(bytes: &[u8]) -> Result<HttpResponse, NetError> {
         status_code,
         headers,
         body,
+        effective_url: String::new(),
+        redirects_followed: 0,
     })
 }
 
@@ -201,7 +332,9 @@ fn decode_chunked_body(bytes: &[u8]) -> Result<Vec<u8>, NetError> {
         }
         let end = cursor.saturating_add(size);
         if end > bytes.len() {
-            return Err(NetError::InitializationFailed("chunk exceeds response length"));
+            return Err(NetError::InitializationFailed(
+                "chunk exceeds response length",
+            ));
         }
         body.extend_from_slice(&bytes[cursor..end]);
         cursor = end.saturating_add(2);

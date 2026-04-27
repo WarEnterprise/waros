@@ -25,7 +25,20 @@ static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
         .set_handler_fn(interrupts::divide_error_handler);
     idt[InterruptIndex::Timer.as_u8()].set_handler_fn(interrupts::timer_interrupt_handler);
     idt[InterruptIndex::Keyboard.as_u8()].set_handler_fn(interrupts::keyboard_interrupt_handler);
+    idt[InterruptIndex::Keyboard.as_u8() + 1].set_handler_fn(interrupts::irq2_interrupt_handler);
+    idt[InterruptIndex::Keyboard.as_u8() + 2].set_handler_fn(interrupts::irq3_interrupt_handler);
+    idt[InterruptIndex::Keyboard.as_u8() + 3].set_handler_fn(interrupts::irq4_interrupt_handler);
+    idt[InterruptIndex::Keyboard.as_u8() + 4].set_handler_fn(interrupts::irq5_interrupt_handler);
+    idt[InterruptIndex::Keyboard.as_u8() + 5].set_handler_fn(interrupts::irq6_interrupt_handler);
+    idt[InterruptIndex::Keyboard.as_u8() + 6].set_handler_fn(interrupts::irq7_interrupt_handler);
+    idt[InterruptIndex::Keyboard.as_u8() + 7].set_handler_fn(interrupts::irq8_interrupt_handler);
+    idt[InterruptIndex::Keyboard.as_u8() + 8].set_handler_fn(interrupts::irq9_interrupt_handler);
+    idt[InterruptIndex::Keyboard.as_u8() + 9].set_handler_fn(interrupts::irq10_interrupt_handler);
+    idt[InterruptIndex::Keyboard.as_u8() + 10].set_handler_fn(interrupts::irq11_interrupt_handler);
     idt[InterruptIndex::Mouse.as_u8()].set_handler_fn(interrupts::mouse_interrupt_handler);
+    idt[InterruptIndex::Mouse.as_u8() + 1].set_handler_fn(interrupts::irq13_interrupt_handler);
+    idt[InterruptIndex::Mouse.as_u8() + 2].set_handler_fn(interrupts::irq14_interrupt_handler);
+    idt[InterruptIndex::Mouse.as_u8() + 3].set_handler_fn(interrupts::irq15_interrupt_handler);
     idt
 });
 

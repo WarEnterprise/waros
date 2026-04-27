@@ -22,10 +22,11 @@ struct SyscallCpuLocalCell(UnsafeCell<SyscallCpuLocal>);
 // serialized kernel control flow.
 unsafe impl Sync for SyscallCpuLocalCell {}
 
-static SYSCALL_CPU_LOCAL: SyscallCpuLocalCell = SyscallCpuLocalCell(UnsafeCell::new(SyscallCpuLocal {
-    user_rsp: 0,
-    kernel_rsp: 0,
-}));
+static SYSCALL_CPU_LOCAL: SyscallCpuLocalCell =
+    SyscallCpuLocalCell(UnsafeCell::new(SyscallCpuLocal {
+        user_rsp: 0,
+        kernel_rsp: 0,
+    }));
 
 #[unsafe(no_mangle)]
 static mut WAROS_USER_RETURN_RSP: u64 = 0;
@@ -217,7 +218,8 @@ pub unsafe fn run_user_process(
 ) -> UserReturn {
     // SAFETY: The caller guarantees that the entry point and stack belong to a mapped
     // ring-3 image and that the process kernel stack/TSS are already active.
-    let exit_code = unsafe { waros_run_user_process(entry, user_stack, user_rflags, user_cs, user_ss) };
+    let exit_code =
+        unsafe { waros_run_user_process(entry, user_stack, user_rflags, user_cs, user_ss) };
     let return_kind = unsafe { WAROS_USER_RETURN_KIND };
     if return_kind == UserReturnKind::Exec as u8 {
         UserReturn::Exec
@@ -236,7 +238,8 @@ pub extern "C" fn syscall_dispatch(
     arg5: u64,
     arg6: u64,
 ) -> i64 {
-    if let Some(pid) = SCHEDULER.lock().current_pid() {
+    let current_pid = SCHEDULER.lock().current_pid();
+    if let Some(pid) = current_pid {
         if let Some(process) = PROCESS_TABLE.lock().get_mut(pid) {
             process.syscall_count = process.syscall_count.saturating_add(1);
         }
@@ -262,11 +265,22 @@ pub extern "C" fn syscall_dispatch(
 
         // Implemented but still experimental or not boot-smoke-proven as a stable ABI.
         8 => syscalls::file::sys_seek(arg1 as u32, arg2 as i64, arg3 as u32),
-        9 => syscalls::memory::sys_mmap(arg1, arg2, arg3 as u32, arg4 as u32, arg5 as u32, arg6 as i64),
+        9 => syscalls::memory::sys_mmap(
+            arg1,
+            arg2,
+            arg3 as u32,
+            arg4 as u32,
+            arg5 as u32,
+            arg6 as i64,
+        ),
         11 => syscalls::memory::sys_munmap(arg1, arg2),
         20 => syscalls::process::sys_getpid(),
         39 => syscalls::process::sys_getppid(),
-        59 => syscalls::process::sys_execve(arg1 as *const u8, arg2 as *const *const u8, arg3 as *const *const u8), // experimental narrow in-place ELF replacement path
+        59 => syscalls::process::sys_execve(
+            arg1 as *const u8,
+            arg2 as *const *const u8,
+            arg3 as *const *const u8,
+        ), // experimental narrow in-place ELF replacement path
         61 => syscalls::process::sys_wait4(arg1 as i32, arg2 as *mut i32, arg3 as u32), // narrow exited-child wait/reap path only
         79 => syscalls::file::sys_getcwd(arg1 as *mut u8, arg2 as usize),
         80 => syscalls::file::sys_chdir(arg1 as *const u8),
@@ -292,10 +306,28 @@ pub extern "C" fn syscall_dispatch(
         311 => syscalls::quantum::sys_ibm_status(arg1 as *const u8, arg2 as *mut u8),
         320 => syscalls::quantum::sys_qkd_bb84(arg1 as u32, arg2 as *mut u8),
         400 => syscalls::crypto::sys_kem_keygen(arg1 as *mut u8, arg2 as *mut u8),
-        401 => syscalls::crypto::sys_kem_encapsulate(arg1 as *const u8, arg2 as *mut u8, arg3 as *mut u8),
-        402 => syscalls::crypto::sys_kem_decapsulate(arg1 as *const u8, arg2 as *const u8, arg3 as *mut u8),
-        410 => syscalls::crypto::sys_sign(arg1 as *const u8, arg2 as *const u8, arg3 as usize, arg4 as *mut u8),
-        411 => syscalls::crypto::sys_verify(arg1 as *const u8, arg2 as *const u8, arg3 as usize, arg4 as *const u8),
+        401 => syscalls::crypto::sys_kem_encapsulate(
+            arg1 as *const u8,
+            arg2 as *mut u8,
+            arg3 as *mut u8,
+        ),
+        402 => syscalls::crypto::sys_kem_decapsulate(
+            arg1 as *const u8,
+            arg2 as *const u8,
+            arg3 as *mut u8,
+        ),
+        410 => syscalls::crypto::sys_sign(
+            arg1 as *const u8,
+            arg2 as *const u8,
+            arg3 as usize,
+            arg4 as *mut u8,
+        ),
+        411 => syscalls::crypto::sys_verify(
+            arg1 as *const u8,
+            arg2 as *const u8,
+            arg3 as usize,
+            arg4 as *const u8,
+        ),
         420 => syscalls::crypto::sys_sha3_256(arg1 as *const u8, arg2 as usize, arg3 as *mut u8),
         421 => syscalls::crypto::sys_random_bytes(arg1 as *mut u8, arg2 as usize),
         500 => syscalls::ai::sys_ai_load_model(arg1 as *const u8), // currently stubbed

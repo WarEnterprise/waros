@@ -1,7 +1,7 @@
 use alloc::string::ToString;
 
-use crate::auth::session;
 use crate::arch::x86_64::{interrupts, pit};
+use crate::auth::session;
 use crate::fs;
 use crate::memory;
 use crate::net;
@@ -36,6 +36,7 @@ impl SystemInfoState {
             .map(|config| config.cidr_string())
             .unwrap_or_else(|| "offline".into());
         let files = fs::file_count_for_user(session::current_uid());
+        let timezone = crate::ui::timezone();
         let quantum_state = quantum::active_register()
             .map(|(qubits, _)| alloc::format!("{qubits} qubits"))
             .unwrap_or_else(|| "idle".into());
@@ -55,8 +56,8 @@ impl SystemInfoState {
             alloc::format!("Memory: {} MiB free", (memory_stats.free_frames * 4) / 1024),
             alloc::format!("Files: {}", files),
             alloc::format!("Network: {}", network),
+            alloc::format!("Time: monotonic only | TZ {}", timezone.label()),
             alloc::format!("Quantum: {}", quantum_state),
-            alloc::format!("Files: {}", files),
         ];
 
         let max_lines = height.saturating_sub(padding_y * 2) / line_step;
@@ -66,7 +67,13 @@ impl SystemInfoState {
             } else {
                 Theme::TEXT_PRIMARY
             };
-            font::draw_text(&mut surface, padding_x, padding_y + index * line_step, line, color);
+            font::draw_text(
+                &mut surface,
+                padding_x,
+                padding_y + index * line_step,
+                line,
+                color,
+            );
         }
     }
 }

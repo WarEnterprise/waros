@@ -266,7 +266,11 @@ fn run_vqe_demo() -> Result<(), &'static str> {
     let energy = hydrogen_energy(theta0, theta1)?;
 
     kprintln!("  Ansatz: Ry-linear on 2 qubits with one entangling CNOT.");
-    kprintln!("  Parameters: theta0 = {:.3}, theta1 = {:.3}", theta0, theta1);
+    kprintln!(
+        "  Parameters: theta0 = {:.3}, theta1 = {:.3}",
+        theta0,
+        theta1
+    );
     kprintln!("  Hamiltonian: reduced H2 STO-3G model");
     kprintln!();
     kprint_colored!(Colors::GREEN, "Estimated energy: ");
@@ -397,8 +401,7 @@ fn hydrogen_energy(theta0: f64, theta1: f64) -> Result<f64, &'static str> {
     apply_1q(&mut state, 1, &ry(theta1))?;
     apply_2q(&mut state, 0, 1, &cnot())?;
 
-    Ok(-1.0524
-        + 0.3979 * expectation_z(&state, 1)
+    Ok(-1.0524 + 0.3979 * expectation_z(&state, 1)
         - 0.3979 * expectation_z(&state, 0)
         - 0.0112 * expectation_zz(&state, 0, 1)
         + 0.1809 * expectation_xx(&state, 0, 1))
@@ -410,7 +413,11 @@ fn expectation_z(state: &QuantumState, qubit: usize) -> f64 {
         .iter()
         .enumerate()
         .map(|(basis, amplitude)| {
-            let eigenvalue = if ((basis >> qubit) & 1) == 0 { 1.0 } else { -1.0 };
+            let eigenvalue = if ((basis >> qubit) & 1) == 0 {
+                1.0
+            } else {
+                -1.0
+            };
             eigenvalue * norm_sq(*amplitude)
         })
         .sum()

@@ -5,7 +5,14 @@ use super::theme::Theme;
 pub fn render_desktop(surface: &mut Surface<'_>) {
     let width = surface.width();
     let height = surface.height();
-    surface.fill_vertical_gradient(0, 0, width, height, Theme::DESKTOP_BG, Theme::DESKTOP_BG_BOTTOM);
+    surface.fill_vertical_gradient(
+        0,
+        0,
+        width,
+        height,
+        Theme::DESKTOP_BG,
+        Theme::DESKTOP_BG_BOTTOM,
+    );
 
     for y in (0..height).step_by(40) {
         for x in (0..width).step_by(40) {

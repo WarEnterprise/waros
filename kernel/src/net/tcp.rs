@@ -33,6 +33,7 @@ impl TcpConnection {
         remote_port: u16,
         timeout_ms: u64,
     ) -> Result<Self, NetError> {
+        let _ = stack.require_route_to(remote_ip, "TCP connect")?;
         let local_port = stack.allocate_local_port();
 
         // WarGuard firewall check: outbound TCP
@@ -55,9 +56,9 @@ impl TcpConnection {
                     remote_ip,
                     remote_port
                 );
-                return Err(NetError::ProtocolError(
-                    alloc::string::String::from("firewall: outbound TCP denied"),
-                ));
+                return Err(NetError::ProtocolError(alloc::string::String::from(
+                    "firewall: outbound TCP denied",
+                )));
             }
         }
 
@@ -69,9 +70,9 @@ impl TcpConnection {
 
         {
             let (iface, sockets) = (&mut stack.iface, &mut stack.sockets);
-            let iface = iface
-                .as_mut()
-                .ok_or(NetError::InitializationFailed("network interface not ready"))?;
+            let iface = iface.as_mut().ok_or(NetError::InitializationFailed(
+                "network interface not ready",
+            ))?;
             let socket = sockets.get_mut::<tcp::Socket>(handle);
             socket
                 .connect(
@@ -116,6 +117,8 @@ impl TcpConnection {
                 let _ = stack.sockets.remove(handle);
                 return Err(NetError::InitializationFailed("TCP connection timed out"));
             }
+
+            super::wait_for_runtime_progress();
         }
     }
 
@@ -148,16 +151,14 @@ impl TcpConnection {
             if stack.now_ms() >= deadline {
                 return Err(NetError::InitializationFailed("TCP send timed out"));
             }
+
+            super::wait_for_runtime_progress();
         }
 
         Ok(written)
     }
 
-    pub fn flush(
-        &mut self,
-        stack: &mut NetworkSubsystem,
-        timeout_ms: u64,
-    ) -> Result<(), NetError> {
+    pub fn flush(&mut self, stack: &mut NetworkSubsystem, timeout_ms: u64) -> Result<(), NetError> {
         let deadline = stack.now_ms().saturating_add(timeout_ms);
         loop {
             stack.poll_network();
@@ -171,6 +172,8 @@ impl TcpConnection {
             if stack.now_ms() >= deadline {
                 return Err(NetError::InitializationFailed("TCP flush timed out"));
             }
+
+            super::wait_for_runtime_progress();
         }
     }
 
@@ -205,6 +208,8 @@ impl TcpConnection {
             if stack.now_ms() >= deadline {
                 return Err(NetError::InitializationFailed("TCP receive timed out"));
             }
+
+            super::wait_for_runtime_progress();
         }
     }
 
@@ -243,6 +248,8 @@ impl TcpConnection {
             } else if stack.now_ms() >= deadline {
                 return Err(NetError::InitializationFailed("TCP receive timed out"));
             }
+
+            super::wait_for_runtime_progress();
         }
     }
 
@@ -263,6 +270,8 @@ impl TcpConnection {
             if closed || stack.now_ms() >= deadline {
                 break;
             }
+
+            super::wait_for_runtime_progress();
         }
         let _ = stack.sockets.remove(self.handle);
         Ok(())

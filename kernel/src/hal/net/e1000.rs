@@ -10,7 +10,7 @@ use x86_64::PhysAddr;
 use crate::memory;
 use crate::net::buffer::{DmaRegion, PacketBuffer};
 use crate::net::pci::{self, PciBar, PciDevice};
-use crate::net::{NetError, NetworkDeviceInfo, NetworkTransport};
+use crate::net::{LinkState, NetError, NetworkDeviceInfo, NetworkTransport};
 
 const NUM_TX_DESCS: usize = 64;
 const NUM_RX_DESCS: usize = 64;
@@ -156,6 +156,7 @@ impl E1000 {
 
     #[must_use]
     pub fn info(&self) -> NetworkDeviceInfo {
+        let link_up = self.link_up();
         NetworkDeviceInfo {
             name: "Intel E1000",
             driver: "e1000",
@@ -167,7 +168,13 @@ impl E1000 {
             pending_frames: 0,
             rx_frames: self.rx_frames,
             tx_frames: self.tx_frames,
-            link_speed_mbps: self.link_speed(),
+            link_speed_mbps: if link_up { self.link_speed() } else { 0 },
+            link_state: if link_up {
+                LinkState::Up
+            } else {
+                LinkState::Down
+            },
+            full_duplex: true,
         }
     }
 
@@ -272,7 +279,10 @@ impl E1000 {
         let base = self.tx_desc_region.physical().as_u64();
         self.write_reg(E1000_TDBAL, base as u32);
         self.write_reg(E1000_TDBAH, (base >> 32) as u32);
-        self.write_reg(E1000_TDLEN, (NUM_TX_DESCS * size_of::<E1000TxDesc>()) as u32);
+        self.write_reg(
+            E1000_TDLEN,
+            (NUM_TX_DESCS * size_of::<E1000TxDesc>()) as u32,
+        );
         self.write_reg(E1000_TDH, 0);
         self.write_reg(E1000_TDT, 0);
         self.write_reg(E1000_TIPG, 0x0060_200A);
@@ -292,7 +302,10 @@ impl E1000 {
         let base = self.rx_desc_region.physical().as_u64();
         self.write_reg(E1000_RDBAL, base as u32);
         self.write_reg(E1000_RDBAH, (base >> 32) as u32);
-        self.write_reg(E1000_RDLEN, (NUM_RX_DESCS * size_of::<E1000RxDesc>()) as u32);
+        self.write_reg(
+            E1000_RDLEN,
+            (NUM_RX_DESCS * size_of::<E1000RxDesc>()) as u32,
+        );
         self.write_reg(E1000_RDH, 0);
         self.write_reg(E1000_RDT, (NUM_RX_DESCS - 1) as u32);
         self.write_reg(E1000_RCTL, RCTL_EN | RCTL_BAM | RCTL_SECRC);

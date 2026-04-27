@@ -19,9 +19,11 @@ pub fn init() {
 pub fn _print(args: fmt::Arguments<'_>) {
     use core::fmt::Write;
 
-    interrupts::without_interrupts(|| {
-        let _ = SERIAL1.lock().write_fmt(args);
-    });
+    // Keep IRQ latency bounded: never hold interrupts off while pushing a full
+    // formatted line to UART (which can block per-byte at line speed).
+    if let Some(mut serial) = SERIAL1.try_lock() {
+        let _ = serial.write_fmt(args);
+    }
 }
 
 #[macro_export]

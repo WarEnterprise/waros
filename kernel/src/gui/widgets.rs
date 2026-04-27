@@ -15,7 +15,13 @@ pub fn draw_button(surface: &mut Surface<'_>, rect: Rect, label: &str, style: Bu
     surface.draw_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3, style.border);
 
     if let Some(underline) = style.underline {
-        surface.fill_rect(rect.x + 2, rect.y + rect.height.saturating_sub(3), rect.width.saturating_sub(4), 2, underline);
+        surface.fill_rect(
+            rect.x + 2,
+            rect.y + rect.height.saturating_sub(3),
+            rect.width.saturating_sub(4),
+            2,
+            underline,
+        );
     }
 
     let text_width = font::text_width(label, 1);
@@ -25,12 +31,7 @@ pub fn draw_button(surface: &mut Surface<'_>, rect: Rect, label: &str, style: Bu
 }
 
 #[must_use]
-pub fn button_style(
-    active: bool,
-    hovered: bool,
-    accent: bool,
-    underline: bool,
-) -> ButtonStyle {
+pub fn button_style(active: bool, hovered: bool, accent: bool, underline: bool) -> ButtonStyle {
     let background = if accent {
         if hovered {
             Theme::BUTTON_ACCENT_HOVER
@@ -55,7 +56,11 @@ pub fn button_style(
         background,
         border: Theme::WINDOW_BORDER,
         text,
-        underline: if underline { Some(Theme::TASKBAR_ACCENT) } else { None },
+        underline: if underline {
+            Some(Theme::TASKBAR_ACCENT)
+        } else {
+            None
+        },
     }
 }
 

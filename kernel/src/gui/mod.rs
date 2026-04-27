@@ -36,13 +36,16 @@ pub fn start_gui() {
         return;
     }
 
-    let Some((width, height)) = console::with_console(|console| (console.width_pixels(), console.height_pixels())) else {
+    let Some((width, height)) =
+        console::with_console(|console| (console.width_pixels(), console.height_pixels()))
+    else {
         GUI_ACTIVE.store(false, Ordering::Relaxed);
         crate::kprintln!("[WarOS] GUI unavailable: framebuffer console not initialized.");
         return;
     };
 
     mouse::init_mouse(width as i32, height as i32);
+    console::claim_screen_owner(console::ScreenOwner::Gui, "gui-start");
     console::set_rendering_enabled(false);
 
     let mut compositor = Compositor::new(width, height);
@@ -56,7 +59,7 @@ pub fn start_gui() {
 
     loop {
         task::tick();
-        hal::usb::poll();
+        hal::usb::poll_runtime();
         let _ = net::poll();
 
         if !session::is_logged_in() {
@@ -97,7 +100,8 @@ pub fn start_gui() {
         while let Some(key) = hal::input::read_char() {
             if key == 0x1B {
                 console::set_rendering_enabled(true);
-                console::clear_screen();
+                console::claim_screen_owner(console::ScreenOwner::Shell, "gui-exit-esc");
+                let _ = console::clear_screen_for(console::ScreenOwner::Shell, "gui-exit-esc");
                 GUI_ACTIVE.store(false, Ordering::SeqCst);
                 return;
             }
@@ -109,7 +113,8 @@ pub fn start_gui() {
 
         if compositor.should_exit_to_shell() {
             console::set_rendering_enabled(true);
-            console::clear_screen();
+            console::claim_screen_owner(console::ScreenOwner::Shell, "gui-exit-shell");
+            let _ = console::clear_screen_for(console::ScreenOwner::Shell, "gui-exit-shell");
             GUI_ACTIVE.store(false, Ordering::SeqCst);
             return;
         }
@@ -120,6 +125,7 @@ pub fn start_gui() {
     }
 
     console::set_rendering_enabled(true);
-    console::clear_screen();
+    console::claim_screen_owner(console::ScreenOwner::Shell, "gui-exit-loop");
+    let _ = console::clear_screen_for(console::ScreenOwner::Shell, "gui-exit-loop");
     GUI_ACTIVE.store(false, Ordering::SeqCst);
 }

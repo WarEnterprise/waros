@@ -6,6 +6,7 @@ use super::PROCESS_TABLE;
 
 pub const DEFAULT_TIME_SLICE: u64 = 10;
 pub const QUANTUM_TIME_SLICE: u64 = 50;
+const RUN_QUEUE_CAPACITY: usize = 256;
 
 pub struct Scheduler {
     run_queues: [VecDeque<u32>; 7],
@@ -19,7 +20,7 @@ impl Scheduler {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            run_queues: Default::default(),
+            run_queues: core::array::from_fn(|_| VecDeque::with_capacity(RUN_QUEUE_CAPACITY)),
             current_pid: None,
             idle_pid: 0,
             context_switch_count: 0,
@@ -35,22 +36,29 @@ impl Scheduler {
         self.enabled = false;
     }
 
+    /// Called from the timer interrupt (via `exec::tick()`).
+    ///
+    /// Uses `try_lock()` for PROCESS_TABLE to prevent deadlock: the timer
+    /// IRQ already holds SCHEDULER, and foreground code may hold
+    /// PROCESS_TABLE. Using `lock()` here would spin forever.
     pub fn timer_tick(&mut self) {
         if !self.enabled {
             return;
         }
 
         if let Some(pid) = self.current_pid {
-            let mut process_table = PROCESS_TABLE.lock();
-            if let Some(process) = process_table.get_mut(pid) {
-                process.cpu_ticks = process.cpu_ticks.saturating_add(1);
-                process.time_slice = process.time_slice.saturating_sub(1);
-                if process.time_slice == 0 {
-                    process.state = ProcessState::Ready;
-                    process.time_slice = self.time_slice_for(process.priority);
-                    self.enqueue(pid, process.priority);
+            if let Some(mut process_table) = PROCESS_TABLE.try_lock() {
+                if let Some(process) = process_table.get_mut(pid) {
+                    process.cpu_ticks = process.cpu_ticks.saturating_add(1);
+                    process.time_slice = process.time_slice.saturating_sub(1);
+                    if process.time_slice == 0 {
+                        process.state = ProcessState::Ready;
+                        process.time_slice = self.time_slice_for(process.priority);
+                        self.enqueue(pid, process.priority);
+                    }
                 }
             }
+            // If try_lock fails, skip accounting this tick — harmless.
         }
 
         self.select_next();
@@ -58,8 +66,15 @@ impl Scheduler {
 
     pub fn enqueue(&mut self, pid: u32, priority: Priority) {
         let queue_index = priority as usize;
-        if queue_index < self.run_queues.len() && !self.run_queues[queue_index].contains(&pid) {
-            self.run_queues[queue_index].push_back(pid);
+        if queue_index >= self.run_queues.len() {
+            return;
+        }
+        let queue = &mut self.run_queues[queue_index];
+        if queue.contains(&pid) {
+            return;
+        }
+        if queue.len() < queue.capacity() {
+            queue.push_back(pid);
         }
     }
 
@@ -90,13 +105,17 @@ impl Scheduler {
         self.idle_pid
     }
 
+    /// Select the next process to run. Called from `timer_tick()` which runs
+    /// in IRQ context holding SCHEDULER. Uses `try_lock()` for PROCESS_TABLE
+    /// to avoid deadlock with foreground code.
     fn select_next(&mut self) {
         for queue in &mut self.run_queues {
             if let Some(pid) = queue.pop_front() {
                 self.set_current_pid(Some(pid));
-                let mut process_table = PROCESS_TABLE.lock();
-                if let Some(process) = process_table.get_mut(pid) {
-                    process.state = ProcessState::Running;
+                if let Some(mut process_table) = PROCESS_TABLE.try_lock() {
+                    if let Some(process) = process_table.get_mut(pid) {
+                        process.state = ProcessState::Running;
+                    }
                 }
                 return;
             }

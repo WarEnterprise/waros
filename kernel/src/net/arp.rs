@@ -24,7 +24,9 @@ pub struct ArpCache {
 impl ArpCache {
     #[must_use]
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     #[must_use]
@@ -34,7 +36,10 @@ impl ArpCache {
 
     #[must_use]
     pub fn lookup(&self, ip: Ipv4Addr) -> Option<[u8; 6]> {
-        self.entries.iter().find(|entry| entry.ip == ip).map(|entry| entry.mac)
+        self.entries
+            .iter()
+            .find(|entry| entry.ip == ip)
+            .map(|entry| entry.mac)
     }
 
     pub fn insert(&mut self, ip: Ipv4Addr, mac: [u8; 6], timestamp_ms: u64) {
@@ -48,6 +53,10 @@ impl ArpCache {
             mac,
             timestamp_ms,
         });
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
     }
 
     pub fn observe_frame(&mut self, frame: &[u8], timestamp_ms: u64) {
@@ -78,7 +87,11 @@ impl ArpCache {
 }
 
 #[must_use]
-pub fn build_request_frame(sender_mac: [u8; 6], sender_ip: Ipv4Addr, target_ip: Ipv4Addr) -> Vec<u8> {
+pub fn build_request_frame(
+    sender_mac: [u8; 6],
+    sender_ip: Ipv4Addr,
+    target_ip: Ipv4Addr,
+) -> Vec<u8> {
     let mut payload = Vec::with_capacity(ARP_HEADER_LEN);
     payload.extend_from_slice(&ARP_ETHERNET.to_be_bytes());
     payload.extend_from_slice(&ARP_IPV4.to_be_bytes());
